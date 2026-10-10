@@ -1,0 +1,11 @@
+.theos/
+packages/
+# Copied in from menu/ by scripts/build.sh
+mods/*/menu/
+*.ipa
+*.deb
+# Signing files never belong in this repo; keep them in ~/.accretion-signing
+*.p12
+*.mobileprovision
+*.pem
+__pycache__/

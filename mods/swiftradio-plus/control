@@ -1,0 +1,9 @@
+Package: io.github.accretionmods.swiftradio-plus
+Name: Swift Radio+
+Version: 1.0.0
+Architecture: iphoneos-arm
+Description: Force dark mode and keep the screen awake in Swift Radio.
+Maintainer: Accretion
+Author: Accretion
+Section: Tweaks
+Depends: mobilesubstrate

@@ -1,0 +1,46 @@
+{
+  "name": "Accretion Mods",
+  "identifier": "io.github.accretionmods",
+  "subtitle": "Modded apps built by Accretion.",
+  "description": "Free and open-source apps with mods and single-player cheats built in. No paid unlocks, no online cheats.\n\nSource and rules: https://github.com/AccretionMods/mods",
+  "sourceURL": "https://raw.githubusercontent.com/AccretionMods/mods/main/mods.json",
+  "iconURL": "https://getaccretion.github.io/assets/icon.png",
+  "website": "https://github.com/AccretionMods/mods",
+  "nsfw": false,
+  "featuredApps": [
+    "io.github.accretionmods.swiftradio"
+  ],
+  "apps": [
+    {
+      "name": "Swift Radio+",
+      "bundleIdentifier": "io.github.accretionmods.swiftradio",
+      "developerName": "Accretion",
+      "subtitle": "Open-source radio player with an Accretion mod menu.",
+      "localizedDescription": "Swift Radio, the open-source radio app, with the Accretion mod menu built in.\n\nMod menu (tap the floating button):\n• Force dark mode\n• Keep screen awake\n\nBuilt from the official unsigned release. Installs next to the original app.",
+      "iconURL": "https://getaccretion.github.io/icons/af99183d63e586e7.jpg",
+      "category": "entertainment",
+      "screenshots": [],
+      "versions": [
+        {
+          "version": "4.0.0",
+          "date": "2026-10-10T19:56:50Z",
+          "size": 6680385,
+          "downloadURL": "https://github.com/AccretionMods/mods/releases/download/swiftradio-plus-v1.0.0-app4.0.0/swiftradio-plus_4.0.0_accretion.ipa",
+          "minOSVersion": "17.0",
+          "localizedDescription": "Mod 1.0.0 for Swift Radio+ 4.0.0."
+        }
+      ],
+      "version": "4.0.0",
+      "versionDate": "2026-10-10T19:56:50Z",
+      "versionDescription": "Mod 1.0.0 for Swift Radio+ 4.0.0.",
+      "downloadURL": "https://github.com/AccretionMods/mods/releases/download/swiftradio-plus-v1.0.0-app4.0.0/swiftradio-plus_4.0.0_accretion.ipa",
+      "size": 6680385,
+      "accretionMod": {
+        "id": "swiftradio-plus",
+        "kind": "tweak",
+        "modVersion": "1.0.0"
+      }
+    }
+  ],
+  "news": []
+}
