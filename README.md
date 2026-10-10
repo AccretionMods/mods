@@ -71,3 +71,17 @@ scripts/local_ipa.sh swiftradio-plus "" /mnt/c/Users/<you>/Downloads
 It installs cyan into `~/.cyan` the first time, builds the tweak, downloads `base.ipa_url`, checks it,
 and writes an unsigned `<mod>_<appversion>_accretion.ipa`. Sign it before installing: Sideloadly or
 AltStore/SideStore with an Apple ID, or Feather with a developer certificate.
+
+## Tweak library
+
+`tweaks.json` is the tweak catalog the Accretion app reads. When someone signs an app listed in a
+tweak's `targets`, the app suggests it under Advanced → Modify → Tweaks, and one tap downloads and
+injects it. Files download from each tweak's own project; nothing is re-hosted here.
+
+Each entry needs `id`, `name`, `description`, `targets` (bundle IDs), `version`, `debURL` (https
+`.deb` or `.dylib`), `license`, and optionally `requires` (extra files it needs), `projectURL` and
+`author`. Check changes with:
+
+```
+python3 scripts/validate_tweaks.py --check-links
+```

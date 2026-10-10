@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "tweaks": [
+    {
+      "id": "me.foxster.donteatmycontent",
+      "name": "DontEatMyContent",
+      "description": "Stops YouTube videos being cut off by the notch or Dynamic Island when zoomed to fill the screen.",
+      "targets": ["com.google.ios.youtube"],
+      "version": "1.1.12",
+      "debURL": "https://github.com/therealFoxster/DontEatMyContent/releases/download/v1.1.12/me.foxster.donteatmycontent_1.1.12_iphoneos-arm64.deb",
+      "requires": [],
+      "license": "MIT",
+      "projectURL": "https://github.com/therealFoxster/DontEatMyContent",
+      "author": "therealFoxster"
+    }
+  ]
+}
