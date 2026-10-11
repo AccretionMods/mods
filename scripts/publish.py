@@ -59,7 +59,14 @@ def main():
         sys.exit(f"mods/{a.mod}/mod.json not found")
     bundle = meta["bundle_id"]
     key = upload_key()
-    body = {"bundle_id": bundle, "version": a.app_version, "size": os.path.getsize(a.ipa)}
+    body = {
+        "bundle_id": bundle,
+        "version": a.app_version,
+        "size": os.path.getsize(a.ipa),
+        # the What's new post: "Swift Radio+ 4.0.0" with what the mod does
+        "name": meta.get("display_name") or meta["name"],
+        "notes": f"Mod {meta['version']} for {meta['name']} {a.app_version}.\n\n{meta.get('description', '')}"[:4000],
+    }
 
     signed = call(f"{FUNCTIONS}/upload", key, body)["signedUrl"]
     with open(a.ipa, "rb") as f:
