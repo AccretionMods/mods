@@ -9,3 +9,4 @@ mods/*/menu/
 *.mobileprovision
 *.pem
 __pycache__/
+.upload-key

@@ -25,7 +25,7 @@
           "version": "4.0.0",
           "date": "2026-10-10T19:56:50Z",
           "size": 6680385,
-          "downloadURL": "https://github.com/AccretionMods/mods/releases/download/swiftradio-plus-v1.0.0-app4.0.0/swiftradio-plus_4.0.0_accretion.ipa",
+          "downloadURL": "https://bbcjpinhvlxocjxlyplt.supabase.co/functions/v1/download?app=io.github.accretionmods.swiftradio&version=4.0.0",
           "minOSVersion": "17.0",
           "localizedDescription": "Mod 1.0.0 for Swift Radio+ 4.0.0."
         }
@@ -33,7 +33,7 @@
       "version": "4.0.0",
       "versionDate": "2026-10-10T19:56:50Z",
       "versionDescription": "Mod 1.0.0 for Swift Radio+ 4.0.0.",
-      "downloadURL": "https://github.com/AccretionMods/mods/releases/download/swiftradio-plus-v1.0.0-app4.0.0/swiftradio-plus_4.0.0_accretion.ipa",
+      "downloadURL": "https://bbcjpinhvlxocjxlyplt.supabase.co/functions/v1/download?app=io.github.accretionmods.swiftradio&version=4.0.0",
       "size": 6680385,
       "accretionMod": {
         "id": "swiftradio-plus",

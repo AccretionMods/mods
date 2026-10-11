@@ -27,7 +27,8 @@ mods/<name>/
 scripts/
   build.sh            build one mod's .dylib
   check_ipa.sh        check an .ipa: Payload/*.app present, not FairPlay-encrypted
-  update_source.py    record a build and regenerate mods.json
+  publish.py          upload a build privately and record it
+  update_source.py    regenerate mods.json
 mods.json             generated AltStore source (do not edit)
 releases.json         generated list of published builds (do not edit)
 ```
@@ -46,17 +47,21 @@ releases.json         generated list of published builds (do not edit)
    Read values anywhere with `[AMMenu boolForKey:]` / `[AMMenu floatForKey:]`.
 4. Bump `version` in `mod.json` for every change you publish.
 
-## Build
+## Build and publish
 
-Actions → **Build mod** → Run workflow:
+Build locally (WSL with Theos): `scripts/local_ipa.sh <mod>` builds the tweak, checks the base
+.ipa, injects the tweak with [cyan](https://github.com/asdfzxcvbn/pyzule-rw) and checks the result.
 
-- `mod`: the folder name, for example `swiftradio-plus`.
-- `ipa_url` (optional): a decrypted base .ipa. Leave empty to use `base.ipa_url` from `mod.json`.
+Then publish it privately:
 
-The run builds the tweak, checks the base .ipa, injects the tweak with
-[cyan](https://github.com/asdfzxcvbn/pyzule-rw), checks the result, publishes
-`<mod>_<appversion>_accretion.ipa` as a release and commits the updated `mods.json`.
-Inputs and logs are public.
+```sh
+python3 scripts/publish.py --mod swiftradio-plus --ipa out/swiftradio-plus_4.0.0_accretion.ipa --app-version 4.0.0
+```
+
+The .ipa goes to Accretion's private storage, never a public release. Signed-in Accretion users
+(and their personal source links) download it through the store's download server, which is
+where `mods.json` points. The upload key lives in the git-ignored `.upload-key` file (or the
+`ACCRETION_UPLOAD_KEY` variable). Commit and push the updated `releases.json` and `mods.json`.
 
 Tweaks that hook methods depend on Cydia Substrate; cyan bundles ElleKit in its place automatically.
 
