@@ -30,8 +30,12 @@ mods/<name>/
 scripts/
   build.sh            build one mod's .dylib
   check_ipa.sh        check an .ipa: Payload/*.app present, not FairPlay-encrypted
+  local_ipa.sh        build a mod's unsigned .ipa on Linux or WSL
   publish.py          upload a build privately and record it
   update_source.py    regenerate mods.json
+  sign.sh             sign an .ipa with your own certificate, for your own devices
+  install_zsign.sh    install zsign (the open-source signer sign.sh uses)
+  validate_tweaks.py  check tweaks.json
 mods.json             generated AltStore source (do not edit)
 releases.json         generated list of published builds (do not edit)
 ```
