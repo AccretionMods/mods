@@ -1,13 +1,16 @@
 # Accretion Mods
 
-Ready-to-install modified apps, built in GitHub Actions and listed in [Accretion](https://getaccretion.github.io).
-Each app is a finished .ipa with the mod already inside. Install it from the store like any other app.
+Ready-to-install modified apps, built locally and listed in [Accretion](https://getaccretion.github.io).
+Each app is a finished .ipa with the mod already inside. Install it from the store, or from the
+Accretion app, while signed in, like any other app.
 
-AltStore / SideStore / Feather source:
+## Source
 
-```
-https://raw.githubusercontent.com/AccretionMods/mods/main/mods.json
-```
+Downloads need an Accretion account: they go through the store's download server, so the plain
+`mods.json` link in this repo no longer installs anything on its own.
+
+For AltStore / SideStore / Feather, use your personal source link from the store:
+Edit profile → "Your download links" → Accretion Mods.
 
 ## Rules
 
@@ -49,33 +52,31 @@ releases.json         generated list of published builds (do not edit)
 
 ## Build and publish
 
-Build locally (WSL with Theos): `scripts/local_ipa.sh <mod>` builds the tweak, checks the base
-.ipa, injects the tweak with [cyan](https://github.com/asdfzxcvbn/pyzule-rw) and checks the result.
-
-Then publish it privately:
-
-```sh
-python3 scripts/publish.py --mod swiftradio-plus --ipa out/swiftradio-plus_4.0.0_accretion.ipa --app-version 4.0.0
-```
-
-The .ipa goes to Accretion's private storage, never a public release. Signed-in Accretion users
-(and their personal source links) download it through the store's download server, which is
-where `mods.json` points. The upload key lives in the git-ignored `.upload-key` file (or the
-`ACCRETION_UPLOAD_KEY` variable). Commit and push the updated `releases.json` and `mods.json`.
-
-Tweaks that hook methods depend on Cydia Substrate; cyan bundles ElleKit in its place automatically.
-
-## Build locally (Linux or WSL)
-
-With [Theos](https://theos.dev/docs/installation) in `~/theos`:
+There is no GitHub Actions build. Mods are built locally on Linux or WSL, with
+[Theos](https://theos.dev/docs/installation) in `~/theos`:
 
 ```
 scripts/local_ipa.sh swiftradio-plus "" /mnt/c/Users/<you>/Downloads
 ```
 
-It installs cyan into `~/.cyan` the first time, builds the tweak, downloads `base.ipa_url`, checks it,
-and writes an unsigned `<mod>_<appversion>_accretion.ipa`. Sign it before installing: Sideloadly or
-AltStore/SideStore with an Apple ID, or Feather with a developer certificate.
+It installs [cyan](https://github.com/asdfzxcvbn/pyzule-rw) into `~/.cyan` the first time, builds the
+tweak, downloads `base.ipa_url`, checks it, injects the tweak, checks the result, and writes an unsigned
+`<mod>_<appversion>_accretion.ipa`. To test it yourself, sign it first: Sideloadly or AltStore/SideStore
+with an Apple ID, or Feather with a developer certificate.
+
+Tweaks that hook methods depend on Cydia Substrate; cyan bundles ElleKit in its place automatically.
+
+Then publish it privately:
+
+```sh
+python3 scripts/publish.py --mod swiftradio-plus --ipa swiftradio-plus_4.0.0_accretion.ipa --app-version 4.0.0 [--min-os 15.0]
+```
+
+The .ipa is uploaded to Accretion's private storage through the store's upload function, never as a
+public GitHub release. `publish.py` then updates `releases.json` and `mods.json` with download-server
+links, which signed-in Accretion users (and their personal source links) download through. The upload
+key comes from the git-ignored `.upload-key` file or the `ACCRETION_UPLOAD_KEY` variable. Commit and
+push the updated `releases.json` and `mods.json`.
 
 ## Tweak library
 
