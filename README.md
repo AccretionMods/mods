@@ -32,6 +32,7 @@ scripts/
   check_ipa.sh        check an .ipa: Payload/*.app present, not FairPlay-encrypted
   local_ipa.sh        build a mod's unsigned .ipa on Linux or WSL
   publish.py          upload a build privately and record it
+  stage.sh            publish without the upload key, through the Publish mod workflow
   update_source.py    regenerate mods.json
   sign.sh             sign an .ipa with your own certificate, for your own devices
   install_zsign.sh    install zsign (the open-source signer sign.sh uses)
@@ -56,7 +57,7 @@ releases.json         generated list of published builds (do not edit)
 
 ## Build and publish
 
-There is no GitHub Actions build. Mods are built locally on Linux or WSL, with
+There is no GitHub Actions build (only a publish step, below). Mods are built locally on Linux or WSL, with
 [Theos](https://theos.dev/docs/installation) in `~/theos`:
 
 ```
@@ -70,7 +71,18 @@ with an Apple ID, or Feather with a developer certificate.
 
 Tweaks that hook methods depend on Cydia Substrate; cyan bundles ElleKit in its place automatically.
 
-Then publish it privately:
+Then publish it privately. Without the upload key (any machine with `gh` and write access):
+
+```sh
+scripts/stage.sh swiftradio-plus swiftradio-plus_4.0.0_accretion.ipa 4.0.0 [15.0]
+```
+
+This puts the .ipa in a draft release (visible only to people with write access) and starts the
+**Publish mod** workflow. The workflow checks the .ipa (it must be an app with the mod's own bundle
+ID), uploads it with the repo's `ACCRETION_UPLOAD_KEY` secret, commits `releases.json` and
+`mods.json`, and deletes the draft.
+
+Or directly, with the upload key on your machine:
 
 ```sh
 python3 scripts/publish.py --mod swiftradio-plus --ipa swiftradio-plus_4.0.0_accretion.ipa --app-version 4.0.0 [--min-os 15.0]

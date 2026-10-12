@@ -1,0 +1,115 @@
+name: Publish mod
+
+# Publishes a mod build without the person or machine that built it holding the upload key.
+#   1. scripts/stage.sh puts the .ipa in a DRAFT release here (drafts are visible only to people
+#      with write access, so the file stays private) and starts this workflow.
+#   2. This checks the .ipa, uploads it to Accretion's private storage with the
+#      ACCRETION_UPLOAD_KEY repo secret (scripts/publish.py), commits releases.json and
+#      mods.json, and deletes the draft.
+on:
+  workflow_dispatch:
+    inputs:
+      mod:
+        description: "Mod folder under mods/, like swiftradio-plus"
+        required: true
+      app_version:
+        description: "Base app version, like 4.0.0"
+        required: true
+      draft:
+        description: "Draft release holding the .ipa (scripts/stage.sh names it)"
+        required: true
+      min_os:
+        description: "Minimum iOS, like 17.0 (empty: the mod's default)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-mod
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      MOD: ${{ inputs.mod }}
+      APP_VERSION: ${{ inputs.app_version }}
+      DRAFT: ${{ inputs.draft }}
+      MIN_OS: ${{ inputs.min_os }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+
+      - name: Check the inputs
+        run: |
+          set -euo pipefail
+          [[ "$MOD" =~ ^[a-z0-9-]+$ ]] && [ -f "mods/$MOD/mod.json" ] || { echo "::error::No mod named \"$MOD\""; exit 1; }
+          [[ "$APP_VERSION" =~ ^[0-9][0-9A-Za-z.-]{0,40}$ ]] || { echo "::error::\"$APP_VERSION\" isn't a version"; exit 1; }
+          [[ "$DRAFT" =~ ^stage-[A-Za-z0-9.-]+$ ]] || { echo "::error::\"$DRAFT\" isn't a staged draft name"; exit 1; }
+          [ -z "$MIN_OS" ] || [[ "$MIN_OS" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] || { echo "::error::\"$MIN_OS\" isn't an iOS version"; exit 1; }
+
+      - name: Fetch the .ipa from the draft
+        id: fetch
+        run: |
+          set -euo pipefail
+          release=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+            | jq -c --arg d "$DRAFT" '[.[] | select(.draft and .name == $d)] | first // empty')
+          [ -n "$release" ] || { echo "::error::No draft release named $DRAFT"; exit 1; }
+          asset=$(jq -r '[.assets[] | select(.name | endswith(".ipa"))] | if length == 1 then .[0].id else empty end' <<< "$release")
+          [ -n "$asset" ] || { echo "::error::$DRAFT needs exactly one .ipa"; exit 1; }
+          gh api -H "Accept: application/octet-stream" "repos/$GITHUB_REPOSITORY/releases/assets/$asset" > "$RUNNER_TEMP/mod.ipa"
+          echo "release=$(jq -r .id <<< "$release")" >> "$GITHUB_OUTPUT"
+
+      # The file must be an app whose bundle ID is the mod's own
+      - name: Check the .ipa
+        run: |
+          set -euo pipefail
+          python3 - "$RUNNER_TEMP/mod.ipa" "mods/$MOD/mod.json" <<'PY'
+          import json, plistlib, re, sys, zipfile
+          ipa, meta = sys.argv[1], json.load(open(sys.argv[2]))
+          try:
+              z = zipfile.ZipFile(ipa)
+          except zipfile.BadZipFile:
+              sys.exit("::error::The file isn't an .ipa (not a zip)")
+          plists = [n for n in z.namelist() if re.fullmatch(r"Payload/[^/]+\.app/Info\.plist", n)]
+          if len(plists) != 1:
+              sys.exit("::error::The .ipa needs exactly one Payload/<name>.app/Info.plist")
+          info = plistlib.loads(z.read(plists[0]))
+          for key in ("CFBundleIdentifier", "CFBundleExecutable", "CFBundleShortVersionString"):
+              if not info.get(key):
+                  sys.exit(f"::error::Info.plist has no {key}")
+          app = plists[0].rsplit("/", 1)[0]
+          if f"{app}/{info['CFBundleExecutable']}" not in z.namelist():
+              sys.exit("::error::The app's executable is missing")
+          if info["CFBundleIdentifier"] != meta["bundle_id"]:
+              sys.exit(f"::error::Bundle ID {info['CFBundleIdentifier']} isn't the mod's {meta['bundle_id']}")
+          print(f"ok: {info['CFBundleIdentifier']} {info['CFBundleShortVersionString']}")
+          PY
+
+      - name: Upload privately and update the source
+        env:
+          ACCRETION_UPLOAD_KEY: ${{ secrets.ACCRETION_UPLOAD_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$ACCRETION_UPLOAD_KEY" || { echo "::error::The ACCRETION_UPLOAD_KEY secret isn't set"; exit 1; }
+          python3 scripts/publish.py --mod "$MOD" --ipa "$RUNNER_TEMP/mod.ipa" --app-version "$APP_VERSION" ${MIN_OS:+--min-os "$MIN_OS"}
+
+      - name: Commit the source
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add releases.json mods.json
+          git diff --cached --quiet && exit 0
+          git commit -m "Publish $MOD for $APP_VERSION"
+          git pull --rebase --quiet origin main
+          git push origin main
+
+      - name: Delete the draft
+        if: always() && steps.fetch.outputs.release
+        run: gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/${{ steps.fetch.outputs.release }}"
