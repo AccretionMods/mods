@@ -26,73 +26,102 @@ menu/                 shared floating mod menu (AMMenu), compiled into every mod
 mods/<name>/
   Makefile, control   Theos tweak
   Tweak.x             the mod itself
-  mod.json            listing details, target app, published bundle ID
+  mod.json            listing details, target app, base .ipa (link + sha256), published bundle ID
 scripts/
+  new_mod.sh          start a new mod from the template (reads the base .ipa, records its sha256)
   build.sh            build one mod's .dylib
-  check_ipa.sh        check an .ipa: Payload/*.app present, not FairPlay-encrypted
-  local_ipa.sh        build a mod's unsigned .ipa on Linux or WSL
+  local_ipa.sh        build a mod's unsigned .ipa (Linux, WSL or macOS; the Build mod workflow runs it)
+  check_mod_ipa.py    check a built .ipa before publishing (an app with the mod's bundle ID)
+  check_ipa.sh        check an .ipa on macOS: Payload/*.app present, not FairPlay-encrypted
   publish.py          upload a build privately and record it
-  stage.sh            publish without the upload key, through the Publish mod workflow
+  stage.sh            publish a build from your machine without the upload key
   update_source.py    regenerate mods.json
+  validate_mods.py    check every mod folder and mod.json
+  watch_bases.py      find base apps with a newer release (the Watch base apps workflow)
   sign.sh             sign an .ipa with your own certificate, for your own devices
   install_zsign.sh    install zsign (the open-source signer sign.sh uses)
   validate_tweaks.py  check tweaks.json
+tests/                version rules
 mods.json             generated AltStore source (do not edit)
 releases.json         generated list of published builds (do not edit)
 ```
 
+## Versions
+
+A build is published as `<base app version>-mod<mod version>`, like `4.0.0-mod1.1.0`, and the .ipa's
+own version is set to the same string. So a new mod version for the same app version is still an
+update in the store and in Accretion, and installed copies match what's published. Versions compare
+number by number (`4.0.0-mod1.10.0` is newer than `4.0.0-mod1.9.0`; `4.1.0-mod1.0.0` is newer than
+both). Bump `version` in `mod.json` for every change you publish.
+
 ## Add a mod
 
-1. Copy `mods/swiftradio-plus` to `mods/<name>` (lowercase letters, digits and dashes).
-2. Edit `mod.json`:
-   - `target_bundle_id`: the base app's bundle ID. The build stops if the .ipa doesn't match.
-   - `bundle_id`: a new ID under `io.github.accretionmods.`, so the mod installs next to the original
-     and doesn't replace it in the store (the store keeps one app per bundle ID).
-   - `display_name`, `description`, `category`, `icon_url`, `tested_app_version`.
-   - `base.ipa_url`: where the build downloads the base .ipa.
+1. Start it from the template:
+
+   ```sh
+   scripts/new_mod.sh my-app-plus https://github.com/<owner>/<app>/releases/download/<tag>/<app>.ipa games
+   ```
+
+   It downloads the base .ipa once, reads its bundle ID, name and version, records its sha256, and
+   writes `mods/my-app-plus/` with a Makefile, control, filter plist, a `Tweak.x` with one example
+   switch, and `mod.json`.
+2. Edit `mod.json`: `description`, `subtitle`, `icon_url`, `base.repo` (the app's GitHub repository,
+   so the weekly watch can track it) and `base.license`. The rest is filled in:
+   - `bundle_id` is a new ID under `io.github.accretionmods.`, so the mod installs next to the
+     original app (the store keeps one app per bundle ID).
+   - `base.ipa_url` and `base.sha256`: the build refuses any other file.
    - `remove_extensions`: `encrypted` (default) or `all`.
-3. Write `Tweak.x`. Register switches and sliders with `AMMenu.shared` in `%ctor`, then call `[AMMenu.shared install]`.
-   Read values anywhere with `[AMMenu boolForKey:]` / `[AMMenu floatForKey:]`.
-4. Bump `version` in `mod.json` for every change you publish.
+3. Write `Tweak.x`. Register switches and sliders with `AMMenu.shared` in `%ctor`, then call
+   `[AMMenu.shared install]`. Read values anywhere with `[AMMenu boolForKey:]` / `[AMMenu floatForKey:]`.
+4. Push. CI checks every `mod.json` (`scripts/validate_mods.py`), the tweak library, the scripts and
+   the version rules.
 
 ## Build and publish
 
-There is no GitHub Actions build (only a publish step, below). Mods are built locally on Linux or WSL, with
-[Theos](https://theos.dev/docs/installation) in `~/theos`:
+**In the cloud (recommended, works from a phone):** Actions → **Build mod** → Run workflow → the mod's
+folder name. It runs on GitHub's macOS runner with Theos and cyan pinned to exact commits, downloads
+the base .ipa from `base.ipa_url` and refuses it unless it matches `base.sha256`, builds and injects
+the tweak, sets the version, checks the result, uploads it straight to Accretion's private storage
+(the repo's `ACCRETION_UPLOAD_KEY` secret) and commits `releases.json` and `mods.json`. The .ipa is
+never kept as a workflow artifact or release asset (anyone signed in to GitHub can download those).
+Turn off **Publish** to build and check only.
 
-```
-scripts/local_ipa.sh swiftradio-plus "" /mnt/c/Users/<you>/Downloads
-```
-
-It installs [cyan](https://github.com/asdfzxcvbn/pyzule-rw) into `~/.cyan` the first time, builds the
-tweak, downloads `base.ipa_url`, checks it, injects the tweak, checks the result, and writes an unsigned
-`<mod>_<appversion>_accretion.ipa`. To test it yourself, sign it first: Sideloadly or AltStore/SideStore
-with an Apple ID, or Feather with a developer certificate.
-
-Tweaks that hook methods depend on Cydia Substrate; cyan bundles ElleKit in its place automatically.
-
-Then publish it privately. Without the upload key (any machine with `gh` and write access):
+**On your machine:** Linux, WSL or macOS with [Theos](https://theos.dev/docs/installation) in
+`~/theos`. Theos can't build from a folder whose path has spaces, so work from a clone outside such
+folders (in WSL, for example `~/mods`):
 
 ```sh
-scripts/stage.sh swiftradio-plus swiftradio-plus_4.0.0_accretion.ipa 4.0.0 [15.0]
+scripts/local_ipa.sh swiftradio-plus "" ~/out
+```
+
+It installs [cyan](https://github.com/asdfzxcvbn/pyzule-rw) into `~/.cyan` the first time (pinned
+commit), builds the tweak, downloads and checks the base .ipa, injects the tweak and writes an unsigned
+`<mod>_<version>_accretion.ipa`. To test it yourself, sign it first: Sideloadly or AltStore/SideStore
+with an Apple ID, or Feather with a developer certificate. Tweaks that hook methods depend on Cydia
+Substrate; cyan bundles it in automatically.
+
+Publish a local build without the upload key (any machine with `gh` and write access):
+
+```sh
+scripts/stage.sh swiftradio-plus ~/out/swiftradio-plus_4.0.0-mod1.0.0_accretion.ipa [15.0]
 ```
 
 This puts the .ipa in a draft release (visible only to people with write access) and starts the
-**Publish mod** workflow. The workflow checks the .ipa (it must be an app with the mod's own bundle
-ID), uploads it with the repo's `ACCRETION_UPLOAD_KEY` secret, commits `releases.json` and
-`mods.json`, and deletes the draft.
-
-Or directly, with the upload key on your machine:
+**Publish mod** workflow, which checks it, uploads it privately, commits the source and deletes the
+draft. Or directly, with the upload key on your machine (`.upload-key` or `ACCRETION_UPLOAD_KEY`):
 
 ```sh
-python3 scripts/publish.py --mod swiftradio-plus --ipa swiftradio-plus_4.0.0_accretion.ipa --app-version 4.0.0 [--min-os 15.0]
+python3 scripts/publish.py --mod swiftradio-plus --ipa ~/out/swiftradio-plus_4.0.0-mod1.0.0_accretion.ipa [--min-os 15.0]
 ```
 
-The .ipa is uploaded to Accretion's private storage through the store's upload function, never as a
-public GitHub release. `publish.py` then updates `releases.json` and `mods.json` with download-server
-links, which signed-in Accretion users (and their personal source links) download through. The upload
-key comes from the git-ignored `.upload-key` file or the `ACCRETION_UPLOAD_KEY` variable. Commit and
-push the updated `releases.json` and `mods.json`.
+then commit and push the updated `releases.json` and `mods.json`.
+
+## Keeping mods current
+
+The **Watch base apps** workflow runs every Monday (or on demand). For each mod whose `base.repo` is a
+GitHub repository, it compares the app's latest release with `tested_app_version` and opens one issue
+per newer version with the update steps: new `base.ipa_url` and `base.sha256`, new
+`tested_app_version`, then **Build mod**. It never builds anything by itself.
 
 ## Tweak library
 

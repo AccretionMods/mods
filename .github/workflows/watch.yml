@@ -1,0 +1,23 @@
+name: Watch base apps
+
+# Mondays: for each mod built on a GitHub-hosted open-source app, check whether the app has a
+# newer release than the mod was tested on, and open an issue with the update steps (one per
+# version, no duplicates). Builds nothing; updating stays a deliberate Build mod run.
+on:
+  schedule:
+    - cron: "41 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check base apps
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/watch_bases.py

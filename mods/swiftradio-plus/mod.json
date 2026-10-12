@@ -17,6 +17,7 @@
     "open_source": true,
     "license": "MIT",
     "repo": "https://github.com/analogcode/Swift-Radio-Pro",
-    "ipa_url": "https://github.com/analogcode/Swift-Radio-Pro/releases/download/v4.0.0/swift-radio-v4.0.0-unsigned.ipa"
+    "ipa_url": "https://github.com/analogcode/Swift-Radio-Pro/releases/download/v4.0.0/swift-radio-v4.0.0-unsigned.ipa",
+    "sha256": "2a6f79c1a2bc88ca9abdd68665a7a89549c607e82425aece249f6c5e36922c38"
   }
 }

@@ -5,13 +5,14 @@ build). Never edit either JSON file by hand; run this instead.
 
 Usage:
   python3 scripts/update_source.py                      # just rebuild mods.json
-  python3 scripts/update_source.py --mod NAME --ipa FILE --url URL --app-version X [--min-os Y]
+  python3 scripts/update_source.py --mod NAME --ipa FILE --url URL --version X [--min-os Y]
 """
 
 import argparse
 import glob
 import json
 import os
+import re
 from datetime import datetime, timezone
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -33,26 +34,40 @@ def save(name, data):
         f.write("\n")
 
 
-def record(releases, mod, ipa, url, app_version, min_os):
+def store_version(app_version, mod_version):
+    """The version a build is published under: the base app's version plus the mod's, like
+    4.0.0-mod1.1.0, so a new mod version for the same app version is still an update. The .ipa's
+    CFBundleShortVersionString is set to the same string, so installed copies compare equal."""
+    return f"{app_version}-mod{mod_version}"
+
+
+def app_version_of(version):
+    """4.0.0-mod1.1.0 -> 4.0.0 (and 4.0.0 -> 4.0.0, for builds published before mod versions)."""
+    return str(version).split("-mod", 1)[0]
+
+
+def record(releases, mod, ipa, url, version, min_os):
     meta = load(f"mods/{mod}/mod.json", None)
     if meta is None:
         raise SystemExit(f"mods/{mod}/mod.json not found")
     entry = {
-        "version": app_version,
+        "version": version,
+        "appVersion": app_version_of(version),
         "modVersion": meta["version"],
         "date": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "size": os.path.getsize(ipa),
         "downloadURL": url,
         "minOSVersion": min_os or meta.get("min_os") or "15.0",
     }
-    # One entry per app version: a rebuild of the same app version replaces the older build.
-    rest = [r for r in releases.get(mod, []) if r["version"] != app_version]
+    # One entry per published version: a rebuild of the same version replaces the older build.
+    rest = [r for r in releases.get(mod, []) if r["version"] != version]
     # AltStore wants versions newest first, even if an older app version is built later.
     releases[mod] = sorted([entry] + rest, key=lambda r: (version_key(r["version"]), r["date"]), reverse=True)
 
 
 def version_key(v):
-    return tuple(int(p) if p.isdigit() else 0 for p in str(v).replace("-", ".").split("."))
+    """'4.0.0-mod1.10.0' -> (4, 0, 0, 1, 10, 0): every number in order, like the app and the store."""
+    return tuple(int(n) for n in re.findall(r"\d+", str(v)))
 
 
 def app_entry(mod, meta, builds):
@@ -63,7 +78,7 @@ def app_entry(mod, meta, builds):
             "size": b["size"],
             "downloadURL": b["downloadURL"],
             "minOSVersion": b["minOSVersion"],
-            "localizedDescription": f"Mod {b['modVersion']} for {meta['name']} {b['version']}.",
+            "localizedDescription": f"Mod {b['modVersion']} for {meta['name']} {b.get('appVersion') or app_version_of(b['version'])}.",
         }
         for b in builds
     ]
@@ -119,14 +134,14 @@ def main():
     p.add_argument("--mod")
     p.add_argument("--ipa")
     p.add_argument("--url")
-    p.add_argument("--app-version")
+    p.add_argument("--version", help="published version, like 4.0.0-mod1.1.0")
     p.add_argument("--min-os")
     a = p.parse_args()
     releases = load("releases.json", {})
     if a.mod:
-        if not (a.ipa and a.url and a.app_version):
-            p.error("--mod needs --ipa, --url and --app-version")
-        record(releases, a.mod, a.ipa, a.url, a.app_version, a.min_os)
+        if not (a.ipa and a.url and a.version):
+            p.error("--mod needs --ipa, --url and --version")
+        record(releases, a.mod, a.ipa, a.url, a.version, a.min_os)
         save("releases.json", releases)
     source = build_source(releases)
     save("mods.json", source)

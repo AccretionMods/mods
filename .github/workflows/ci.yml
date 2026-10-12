@@ -1,0 +1,31 @@
+name: CI
+
+# Every push and pull request: every mod.json and tweaks.json is valid, the scripts parse, and the
+# version rules hold. Nothing is built or published here.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Mods
+        run: python3 scripts/validate_mods.py
+      - name: Tweak library
+        run: python3 scripts/validate_tweaks.py
+      - name: Scripts parse
+        run: |
+          for f in scripts/*.sh; do bash -n "$f"; done
+          python3 -m py_compile scripts/*.py
+      - name: Source is up to date
+        run: |
+          python3 scripts/update_source.py > /dev/null
+          git diff --exit-code mods.json || { echo "::error::mods.json is out of date: run scripts/update_source.py"; exit 1; }
+      - name: Version rules
+        run: python3 -m unittest discover -s tests -v
