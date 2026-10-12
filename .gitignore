@@ -10,3 +10,10 @@ mods/*/menu/
 *.pem
 __pycache__/
 .upload-key
+
+# assistant files (kept in the private handbook)
+CLAUDE.md
+CLAUDE.local.md
+AGENTS.md
+REPLICATE.md
+PRIVATE.md
