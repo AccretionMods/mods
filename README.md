@@ -26,9 +26,10 @@ menu/                 shared floating mod menu (AMMenu), compiled into every mod
 mods/<name>/
   Makefile, control   Theos tweak
   Tweak.x             the mod itself
-  mod.json            listing details, target app, base .ipa (link + sha256), published bundle ID
+  mod.json            listing details, target app, base .ipa (link or private + sha256), published bundle ID
 scripts/
   new_mod.sh          start a new mod from the template (reads the base .ipa, records its sha256)
+  base.py             keep a base .ipa or tweak .deb in private storage, found by its sha256
   build.sh            build one mod's .dylib
   local_ipa.sh        build a mod's unsigned .ipa (Linux, WSL or macOS; the Build mod workflow runs it)
   check_mod_ipa.py    check a built .ipa before publishing (an app with the mod's bundle ID)
@@ -76,11 +77,33 @@ both). Bump `version` in `mod.json` for every change you publish.
 4. Push. CI checks every `mod.json` (`scripts/validate_mods.py`), the tweak library, the scripts and
    the version rules.
 
+### Private bases and ready-made tweaks
+
+When the base .ipa can't be at a public link, pass a local file instead of the link:
+
+```sh
+scripts/new_mod.sh my-app-plus ~/intake/MyApp.ipa games
+```
+
+It uploads the file to Accretion's private storage (`scripts/base.py put`, needs the upload key) and
+writes `"base": {"private": true, "sha256": "..."}` with no `ipa_url`. Builds fetch it by its sha256.
+
+To inject a ready-made tweak `.deb` instead of building one, upload it the same way and add its
+checksum to `mod.json`; the mod then needs no Makefile, control or Tweak.x:
+
+```sh
+python3 scripts/base.py put ~/intake/tweak.deb      # prints the sha256
+# mod.json: "deb": {"sha256": "<that sha256>"}
+```
+
+`scripts/local_ipa.sh` and **Build mod** fetch both and check their checksums. Locally,
+`DEB=<file>` uses a local copy of the .deb instead of fetching it.
+
 ## Build and publish
 
 **In the cloud (recommended, works from a phone):** Actions → **Build mod** → Run workflow → the mod's
 folder name. It runs on GitHub's macOS runner with Theos and cyan pinned to exact commits, downloads
-the base .ipa from `base.ipa_url` and refuses it unless it matches `base.sha256`, builds and injects
+the base .ipa from `base.ipa_url` (or private storage) and refuses it unless it matches `base.sha256`, builds and injects
 the tweak, sets the version, checks the result, uploads it straight to Accretion's private storage
 (the repo's `ACCRETION_UPLOAD_KEY` secret) and commits `releases.json` and `mods.json`. The .ipa is
 never kept as a workflow artifact or release asset (anyone signed in to GitHub can download those).
