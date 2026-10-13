@@ -4,7 +4,9 @@ mod uses any more.
   python3 scripts/intake.py [folder]          upload every .ipa / .deb in the folder (default: the
                                               INTAKE environment variable, else C:/AccretionMods/intake),
                                               print each file's sha256, bundle ID and version, and move
-                                              it to <folder>/done
+                                              it to INTAKE_DONE (default C:/AccretionMods/done): outside
+                                              the synced inbox, so a phone-to-PC cloud folder (5 GB free
+                                              on OneDrive) empties itself once S3 has the file
   python3 scripts/intake.py --unused          list private files (bases/<sha256>) no mod.json names
                                               (needs BUILDS_BUCKET and AWS credentials that can list it)
 
@@ -20,10 +22,11 @@ import shutil
 import sys
 import zipfile
 
-from base import put, sha256_of
+from base import put
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT = os.environ.get("INTAKE") or "C:/AccretionMods/intake"
+DONE = os.environ.get("INTAKE_DONE") or "C:/AccretionMods/done"
 
 
 def describe(path):
@@ -45,13 +48,12 @@ def upload_folder(folder):
     if not files:
         print(f"nothing to upload in {folder}")
         return
-    done = os.path.join(folder, "done")
-    os.makedirs(done, exist_ok=True)
+    os.makedirs(DONE, exist_ok=True)
     for path in files:
         what = describe(path)
         put(path)  # prints the sha256
         print(f"  {os.path.basename(path)}: {what}")
-        shutil.move(path, os.path.join(done, os.path.basename(path)))
+        shutil.move(path, os.path.join(DONE, os.path.basename(path)))
     print('Put the sha256 in mod.json: "base": {"private": true, "sha256": ...} or "deb": {"sha256": ...}')
 
 
