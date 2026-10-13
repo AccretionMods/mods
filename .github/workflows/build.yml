@@ -42,12 +42,17 @@ jobs:
           ref: main
 
       - name: Check the mod
+        id: check
         run: |
           set -euo pipefail
           [[ "$MOD" =~ ^[a-z0-9-]+$ ]] && [ -f "mods/$MOD/mod.json" ] || { echo "::error::No mod named \"$MOD\""; exit 1; }
           python3 scripts/validate_mods.py "$MOD"
+          # a ready-made .deb (mod.json "deb") is injected as is: nothing to compile
+          python3 -c 'import json,sys; print("deb=" + ("true" if "deb" in json.load(open(sys.argv[1])) else "false"))' \
+            "mods/$MOD/mod.json" >> "$GITHUB_OUTPUT"
 
       - name: Install Theos
+        if: steps.check.outputs.deb != 'true'
         run: |
           set -euo pipefail
           sudo xcode-select -s /Applications/Xcode_26.3.0.app

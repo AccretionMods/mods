@@ -30,6 +30,7 @@ mods/<name>/
 scripts/
   new_mod.sh          start a new mod from the template (reads the base .ipa, records its sha256)
   base.py             keep a base .ipa or tweak .deb in private storage, found by its sha256
+  intake.py           upload everything in the intake folder privately; --unused lists stored files no mod uses
   build.sh            build one mod's .dylib
   local_ipa.sh        build a mod's unsigned .ipa (Linux, WSL or macOS; the Build mod workflow runs it)
   check_mod_ipa.py    check a built .ipa before publishing (an app with the mod's bundle ID)
