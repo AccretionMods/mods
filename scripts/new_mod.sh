@@ -2,7 +2,9 @@
 # Start a new mod from the template: downloads the base .ipa once to read its bundle ID, name and
 # version and to record its sha256, then writes mods/<name>/ ready to edit and build.
 #
-# Usage: scripts/new_mod.sh <name> <https link to the base .ipa> [category]
+# Usage: scripts/new_mod.sh <name> <https link to the base .ipa, or a local .ipa file> [category]
+#   a local file is kept private: uploaded to Accretion's storage with scripts/base.py and found by
+#   its sha256 (mod.json: base.private), never at a public link
 #   name: lowercase letters, digits and dashes, like  my-app-plus
 #   category: games, entertainment, utilities, photo-video, social, lifestyle, developer, other
 # Then: edit mods/<name>/Tweak.x and mod.json (description, icon_url), and build it locally
@@ -16,13 +18,20 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 dir="$root/mods/$name"
 
 [[ "$name" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || { echo "name must be lowercase letters, digits and dashes" >&2; exit 1; }
-[[ "$url" == https://* ]] || { echo "the base .ipa link must be https" >&2; exit 1; }
+[[ "$url" == https://* ]] || [ -f "$url" ] || { echo "the base .ipa must be an https link or a local file" >&2; exit 1; }
 [ ! -e "$dir" ] || { echo "mods/$name already exists" >&2; exit 1; }
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-echo "==> Downloading the base .ipa"
-curl -fsSL --retry 3 -o "$work/base.ipa" "$url"
+if [[ "$url" == https://* ]]; then
+    echo "==> Downloading the base .ipa"
+    curl -fsSL --retry 3 -o "$work/base.ipa" "$url"
+else
+    cp "$url" "$work/base.ipa"
+    echo "==> Uploading the base .ipa privately"
+    python3 "$root/scripts/base.py" put "$work/base.ipa" > /dev/null
+    url=""
+fi
 
 # bundle ID, display name, version, sha256 of the base app
 read -r target app_name app_version sha < <(python3 - "$work/base.ipa" <<'PY'
@@ -117,7 +126,9 @@ meta = {
     "remove_extensions": "encrypted",
     "icon_url": "https://getaccretion.github.io/assets/icon.png",
     "screenshots": [],
-    "base": {"open_source": True, "license": "", "repo": "", "ipa_url": url, "sha256": sha},
+    "base": {"open_source": True, "license": "", "repo": "", "ipa_url": url, "sha256": sha}
+    if url
+    else {"private": True, "open_source": False, "sha256": sha},
 }
 with open(path, "w", encoding="utf-8", newline="\n") as f:
     json.dump(meta, f, indent=2, ensure_ascii=False)

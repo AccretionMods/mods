@@ -2,7 +2,8 @@ name: Build mod
 
 # Builds a mod and publishes it, from anywhere (the GitHub app on a phone: Actions -> Build mod ->
 # Run, type the mod's folder name). Same steps as scripts/local_ipa.sh on a PC:
-#   Theos and cyan pinned to exact commits; the base .ipa only from mod.json's base.ipa_url and only
+#   Theos and cyan pinned to exact commits; the base .ipa only from mod.json's base.ipa_url (or, for a
+#   private base, from Accretion's storage via scripts/base.py) and only
 #   if it matches base.sha256; the tweak injected; the result checked.
 # Then the .ipa goes straight to Accretion's private storage (scripts/publish.py with the
 # ACCRETION_UPLOAD_KEY secret) and releases.json / mods.json are committed. The .ipa is never kept
@@ -61,6 +62,8 @@ jobs:
         id: build
         env:
           REQUIRE_BASE_SHA256: "1"
+          # fetches a private base (mod.json base.private) from Accretion's storage
+          ACCRETION_UPLOAD_KEY: ${{ secrets.ACCRETION_UPLOAD_KEY }}
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/out"

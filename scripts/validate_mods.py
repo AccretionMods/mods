@@ -27,9 +27,15 @@ def check(mod, meta):
     folder = os.path.join(ROOT, "mods", mod)
     if not re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", mod):
         problems.append("folder name must be lowercase letters, digits and dashes")
-    for name in ("Makefile", "control", "Tweak.x"):
-        if not os.path.isfile(os.path.join(folder, name)):
-            problems.append(f"missing {name}")
+    deb = meta.get("deb")
+    if deb is not None:
+        # a ready-made tweak .deb, kept privately like a private base (scripts/base.py)
+        if not re.fullmatch(r"[0-9a-f]{64}", str((deb or {}).get("sha256", ""))):
+            problems.append("deb.sha256 must be the .deb's sha256 (64 lowercase hex characters)")
+    else:
+        for name in ("Makefile", "control", "Tweak.x"):
+            if not os.path.isfile(os.path.join(folder, name)):
+                problems.append(f"missing {name}")
     for key in REQUIRED:
         if not meta.get(key):
             problems.append(f"mod.json needs {key}")
@@ -52,8 +58,11 @@ def check(mod, meta):
     if meta.get("icon_url") and not https(meta["icon_url"]):
         problems.append("icon_url must be an https link")
     base = meta.get("base") or {}
-    if not https(base.get("ipa_url")):
-        problems.append("base.ipa_url must be an https link to the base .ipa")
+    if base.get("private") is True:
+        if base.get("ipa_url"):
+            problems.append("a private base has no ipa_url (scripts/base.py keeps it by sha256)")
+    elif not https(base.get("ipa_url")):
+        problems.append("base.ipa_url must be an https link to the base .ipa (or set base.private)")
     if not re.fullmatch(r"[0-9a-f]{64}", str(base.get("sha256", ""))):
         problems.append("base.sha256 must be the base .ipa's sha256 (64 lowercase hex characters)")
     if base.get("repo") and not https(base["repo"]):

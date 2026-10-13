@@ -3,7 +3,9 @@
 # unsigned: sign it with Sideloadly, AltStore/SideStore or Feather before installing.
 #
 # Usage: scripts/local_ipa.sh [--sign] <mod> [base.ipa or https URL] [output folder]
-#   needs THEOS (default ~/theos); installs cyan into ~/.cyan the first time.
+#   needs THEOS (default ~/theos) unless the mod is a ready-made .deb (mod.json "deb"); installs cyan
+#   into ~/.cyan the first time.
+#   A private base (mod.json base.private) or .deb is fetched with scripts/base.py (needs the upload key).
 #   --sign also signs the result with scripts/sign.sh (your own certificate).
 #   REQUIRE_BASE_SHA256=1 refuses a base .ipa unless mod.json's base.sha256 matches (the workflow sets it).
 #
@@ -36,12 +38,29 @@ if [ ! -x "$HOME/.cyan/bin/cyan" ]; then
     "$HOME/.cyan/bin/pip" install --quiet "git+https://github.com/asdfzxcvbn/pyzule-rw@$CYAN_COMMIT"
 fi
 
-echo "==> Building $mod"
-dylib="$("$root/scripts/build.sh" "$mod")"
-
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
+deb_sha="$(field deb.sha256)"
+if [ -n "$deb_sha" ]; then
+    # a ready-made tweak .deb (mod.json "deb"), kept privately; DEB=<file> uses a local copy instead
+    if [ -n "${DEB:-}" ]; then cp "$DEB" "$work/tweak.deb"
+    else
+        echo "==> Fetching the tweak .deb from Accretion's storage"
+        python3 "$root/scripts/base.py" get "$deb_sha" "$work/tweak.deb"
+    fi
+    got="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$work/tweak.deb")"
+    [ "$got" = "$deb_sha" ] || { echo "tweak .deb sha256 is $got, but mod.json expects $deb_sha" >&2; exit 1; }
+    dylib="$work/tweak.deb"
+else
+    echo "==> Building $mod"
+    dylib="$("$root/scripts/build.sh" "$mod")"
+fi
 base="${2:-$(field base.ipa_url)}"
+if [ -z "$base" ] && [ "$(field base.private)" = True ]; then
+    echo "==> Fetching the private base from Accretion's storage"
+    python3 "$root/scripts/base.py" get "$(field base.sha256)" "$work/private.ipa"
+    base="$work/private.ipa"
+fi
 case "$base" in
     https://*) echo "==> Downloading $base"; curl -fsSL --retry 3 -o "$work/base.ipa" "$base" ;;
     "") echo "no base .ipa: pass one, or set base.ipa_url in mod.json" >&2; exit 1 ;;
