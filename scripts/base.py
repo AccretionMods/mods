@@ -11,6 +11,7 @@ Usage:
 
 import hashlib
 import sys
+import urllib.error
 import urllib.request
 
 from publish import FUNCTIONS, call, upload_key
@@ -38,9 +39,12 @@ def put(path):
 
 def get(sha, out):
     signed = call(f"{FUNCTIONS}/upload?base=get", upload_key(), {"sha256": sha})["signedUrl"]
-    with urllib.request.urlopen(signed, timeout=900) as r, open(out, "wb") as f:
-        while chunk := r.read(1 << 20):
-            f.write(chunk)
+    try:
+        with urllib.request.urlopen(signed, timeout=900) as r, open(out, "wb") as f:
+            while chunk := r.read(1 << 20):
+                f.write(chunk)
+    except urllib.error.HTTPError as e:
+        sys.exit(f"no private file with sha256 {sha} ({e.code}); upload it with: scripts/base.py put <file>")
     got = sha256_of(out)
     if got != sha:
         sys.exit(f"downloaded base is {got}, expected {sha}")
