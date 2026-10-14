@@ -1,7 +1,11 @@
+import contextlib
 import importlib.util
+import io
+import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -134,6 +138,68 @@ class PublicationTests(unittest.TestCase):
         self.assertIn(
             "not completed", mod.summary("failure", "skipped", "skipped", False)
         )
+
+    def test_personal_plan_never_publishes_or_updates_catalogue(self):
+        mod = self.module_ready()
+        self.assertTrue(
+            hasattr(mod, "publication_plan"),
+            "Personal routing needs a publication gate",
+        )
+        for requested in (True, False):
+            plan = mod.publication_plan({"personal": True}, requested)
+            self.assertTrue(plan["personal"])
+            self.assertFalse(plan["catalogue"])
+        self.assertTrue(mod.publication_plan({}, True)["catalogue"])
+        self.assertFalse(mod.publication_plan({}, False)["catalogue"])
+
+    def test_personal_summary_tracks_copy_result_without_claiming_publication(self):
+        mod = self.module_ready()
+        self.assertTrue(
+            hasattr(mod, "publication_plan"), "Personal outcomes need their own summary"
+        )
+        complete = mod.summary(
+            "success",
+            "skipped",
+            "skipped",
+            True,
+            personal=True,
+            personal_result="success",
+        )
+        self.assertIn("Personal build stored privately", complete)
+        self.assertNotIn("Published privately", complete)
+        failed = mod.summary(
+            "success",
+            "skipped",
+            "skipped",
+            True,
+            personal=True,
+            personal_result="failure",
+        )
+        self.assertIn("not completed", failed)
+        self.assertNotIn("stored privately", failed)
+
+    def test_personal_plan_cli_supplies_cloud_skip_outputs(self):
+        mod = self.module_ready()
+        with tempfile.TemporaryDirectory() as temp:
+            metadata = Path(temp) / "metadata.json"
+            metadata.write_text(json.dumps({"personal": True}))
+            output = io.StringIO()
+            with (
+                patch.object(
+                    sys, "argv", ["publication_status.py", "plan", "--mod", "fixture"]
+                ),
+                patch.dict(os.environ, {"PUBLISH": "true"}),
+                patch.object(
+                    mod.Path,
+                    "open",
+                    side_effect=lambda **kwargs: open(metadata, **kwargs),
+                ),
+                contextlib.redirect_stdout(output),
+            ):
+                mod.main()
+            self.assertEqual(
+                output.getvalue().splitlines(), ["personal=true", "catalogue=false"]
+            )
 
 
 if __name__ == "__main__":

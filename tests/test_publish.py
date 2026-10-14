@@ -18,6 +18,59 @@ import update_source
 
 
 class PublishTests(unittest.TestCase):
+    def test_personal_mod_refuses_publication_before_credentials_or_network(self):
+        meta = {"personal": True, "bundle_id": "io.github.accretionmods.fixture"}
+        with (
+            patch.object(publish, "load", return_value=meta),
+            patch.object(publish, "ipa_version", return_value="1.0"),
+            patch.object(
+                publish,
+                "upload_key",
+                side_effect=AssertionError("Credentials must not be read"),
+            ) as key,
+            patch.object(publish, "call") as network,
+            patch.object(publish, "record") as record,
+            patch.object(
+                sys,
+                "argv",
+                ["publish.py", "--mod", "fixture", "--ipa", "fictional.ipa"],
+            ),
+            self.assertRaises(SystemExit) as caught,
+        ):
+            publish.main()
+        self.assertIn("personal", str(caught.exception))
+        key.assert_not_called()
+        network.assert_not_called()
+        record.assert_not_called()
+
+    def test_source_builder_omits_personal_mod_even_if_a_release_entry_exists(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "mods/fixture").mkdir(parents=True)
+            metadata = {
+                "personal": True,
+                "name": "Fixture",
+                "bundle_id": "io.github.accretionmods.fixture",
+                "description": "Fixture",
+                "icon_url": "https://example.test/icon.png",
+                "kind": "tweak",
+            }
+            (root / "mods/fixture/mod.json").write_text(json.dumps(metadata))
+            builds = {
+                "fixture": [
+                    {
+                        "version": "1.0",
+                        "date": "2026-10-14T00:00:00Z",
+                        "size": 1,
+                        "downloadURL": "https://example.test/download",
+                        "minOSVersion": "16.0",
+                        "modVersion": "1.0",
+                    }
+                ]
+            }
+            with patch.object(update_source, "ROOT", str(root)):
+                self.assertEqual(update_source.build_source(builds)["apps"], [])
+
     def test_retry_after_source_failure_does_not_upload_published_bytes_again(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

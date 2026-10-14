@@ -15,7 +15,7 @@ on:
         description: "Mod folder under mods/, like swiftradio-plus"
         required: true
       publish:
-        description: "Publish it (off: build and check only)"
+        description: "Publish to catalogue (personal builds only keep a private copy)"
         type: boolean
         default: true
 
@@ -44,6 +44,8 @@ jobs:
 
       - name: Check the mod
         id: check
+        env:
+          PUBLISH: ${{ inputs.publish }}
         run: |
           set -euo pipefail
           [[ "$MOD" =~ ^[a-z0-9-]+$ ]] && [ -f "mods/$MOD/mod.json" ] || { echo "::error::No mod named \"$MOD\""; exit 1; }
@@ -51,6 +53,7 @@ jobs:
           # a ready-made .deb (mod.json "deb") is injected as is: nothing to compile
           python3 -c 'import json,sys; print("deb=" + ("true" if "deb" in json.load(open(sys.argv[1])) else "false"))' \
             "mods/$MOD/mod.json" >> "$GITHUB_OUTPUT"
+          python3 scripts/publication_status.py plan --mod "$MOD" >> "$GITHUB_OUTPUT"
 
       - name: Install Theos
         if: steps.check.outputs.deb != 'true'
@@ -79,9 +82,24 @@ jobs:
         id: verified
         run: python3 scripts/check_mod_ipa.py "$MOD" "${{ steps.build.outputs.ipa }}"
 
+      - name: Keep a personal copy
+        id: personal
+        if: steps.check.outputs.personal == 'true'
+        env:
+          ACCRETION_UPLOAD_KEY: ${{ secrets.ACCRETION_UPLOAD_KEY }}
+        run: |
+          set -euo pipefail
+          sha=$(python3 scripts/base.py put "${{ steps.build.outputs.ipa }}")
+          {
+            echo '### Retrieve the private personal build'
+            echo '```'
+            echo "python scripts/base.py get $sha $MOD.ipa"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Publish privately
         id: uploaded
-        if: inputs.publish
+        if: steps.check.outputs.catalogue == 'true'
         env:
           ACCRETION_UPLOAD_KEY: ${{ secrets.ACCRETION_UPLOAD_KEY }}
         run: |
@@ -91,7 +109,7 @@ jobs:
 
       - name: Commit the source
         id: source
-        if: inputs.publish
+        if: steps.check.outputs.catalogue == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.build.outputs.version }}
@@ -112,6 +130,8 @@ jobs:
           CHECK_RESULT: ${{ steps.verified.outcome }}
           UPLOAD_RESULT: ${{ steps.uploaded.outcome }}
           SOURCE_RESULT: ${{ steps.source.outcome }}
+          PERSONAL: ${{ steps.check.outputs.personal }}
+          PERSONAL_RESULT: ${{ steps.personal.outcome }}
         run: |
           if [ -n "$VERSION" ]; then
             echo "### $MOD $VERSION" >> "$GITHUB_STEP_SUMMARY"
