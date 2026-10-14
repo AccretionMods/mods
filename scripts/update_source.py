@@ -111,7 +111,10 @@ def build_source(releases):
         if not builds:
             continue  # never built yet, so nothing to download
         with open(path, encoding="utf-8") as f:
-            apps.append(app_entry(mod, json.load(f), builds))
+            meta = json.load(f)
+        if meta.get("personal"):
+            continue
+        apps.append(app_entry(mod, meta, builds))
     apps.sort(key=lambda a: a["name"].lower())
     return {
         "name": "Accretion Mods",

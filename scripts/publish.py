@@ -76,6 +76,8 @@ def main():
     meta = load(f"mods/{a.mod}/mod.json", None)
     if meta is None:
         sys.exit(f"mods/{a.mod}/mod.json not found")
+    if meta.get("personal"):
+        sys.exit(f"{a.mod} is a personal mod: use Build mod to keep a private copy; it is never published")
     bundle = meta["bundle_id"]
     version = ipa_version(a.ipa)
     key = upload_key()

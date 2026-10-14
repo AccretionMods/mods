@@ -1,12 +1,23 @@
 """Report completed publication steps and retain failed staged uploads for retry."""
 
 import argparse
+import json
 import os
 import re
 import subprocess
+from pathlib import Path
 
 
-def summary(check, upload, source, requested):
+def publication_plan(meta, requested):
+    personal = bool(meta.get("personal"))
+    return {"personal": personal, "catalogue": bool(requested) and not personal}
+
+
+def summary(check, upload, source, requested, *, personal=False, personal_result=""):
+    if personal:
+        if check == "success" and personal_result == "success":
+            return "Personal build stored privately; not added to the catalogue."
+        return "Personal build copy not completed. Nothing was published; check the failed steps before retrying."
     if upload == "success" and source == "success":
         return "Published privately; it's in the store after its next build."
     if upload == "success":
@@ -32,10 +43,18 @@ def cleanup_draft(repo, release, upload, source):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["summary", "cleanup"])
+    parser.add_argument("action", choices=["summary", "cleanup", "plan"])
+    parser.add_argument("--mod")
     args = parser.parse_args()
     upload, source = os.getenv("UPLOAD_RESULT", ""), os.getenv("SOURCE_RESULT", "")
-    if args.action == "cleanup":
+    if args.action == "plan":
+        if not args.mod or not re.fullmatch(r"[a-z0-9-]+", args.mod):
+            parser.error("plan needs a valid --mod folder")
+        with (Path("mods") / args.mod / "mod.json").open(encoding="utf-8") as file:
+            plan = publication_plan(json.load(file), os.getenv("PUBLISH", "") == "true")
+        for key, value in plan.items():
+            print(f"{key}={str(value).lower()}")
+    elif args.action == "cleanup":
         release = os.getenv("DRAFT_RELEASE", "")
         if (
             not cleanup_draft(
@@ -53,6 +72,8 @@ def main():
                 upload,
                 source,
                 os.getenv("PUBLISH", "") == "true",
+                personal=os.getenv("PERSONAL", "") == "true",
+                personal_result=os.getenv("PERSONAL_RESULT", ""),
             )
         )
 
