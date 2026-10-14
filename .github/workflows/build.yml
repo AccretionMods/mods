@@ -75,9 +75,11 @@ jobs:
           scripts/local_ipa.sh "$MOD" "" "$RUNNER_TEMP/out"
 
       - name: Check the .ipa
+        id: verified
         run: python3 scripts/check_mod_ipa.py "$MOD" "${{ steps.build.outputs.ipa }}"
 
       - name: Publish privately
+        id: uploaded
         if: inputs.publish
         env:
           ACCRETION_UPLOAD_KEY: ${{ secrets.ACCRETION_UPLOAD_KEY }}
@@ -87,6 +89,7 @@ jobs:
           python3 scripts/publish.py --mod "$MOD" --ipa "${{ steps.build.outputs.ipa }}"
 
       - name: Commit the source
+        id: source
         if: inputs.publish
         env:
           VERSION: ${{ steps.build.outputs.version }}
@@ -105,10 +108,12 @@ jobs:
         env:
           VERSION: ${{ steps.build.outputs.version }}
           PUBLISH: ${{ inputs.publish }}
+          CHECK_RESULT: ${{ steps.verified.outcome }}
+          UPLOAD_RESULT: ${{ steps.uploaded.outcome }}
+          SOURCE_RESULT: ${{ steps.source.outcome }}
         run: |
           if [ -n "$VERSION" ]; then
             echo "### $MOD $VERSION" >> "$GITHUB_STEP_SUMMARY"
-            [ "$PUBLISH" = true ] && echo "Published privately; it's in the store after its next build." >> "$GITHUB_STEP_SUMMARY" \
-              || echo "Built and checked only (not published)." >> "$GITHUB_STEP_SUMMARY"
           fi
+          python3 scripts/publication_status.py summary >> "$GITHUB_STEP_SUMMARY"
           rm -rf "$RUNNER_TEMP/out"

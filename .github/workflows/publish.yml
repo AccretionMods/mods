@@ -56,8 +56,8 @@ jobs:
         id: fetch
         run: |
           set -euo pipefail
-          release=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
-            | jq -c --arg d "$DRAFT" '[.[] | select(.draft and .name == $d)] | first // empty')
+          release=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --slurp \
+            | jq -c --arg d "$DRAFT" '[.[][] | select(.draft and .name == $d)] | first // empty')
           [ -n "$release" ] || { echo "::error::No draft release named $DRAFT"; exit 1; }
           asset=$(jq -r '[.assets[] | select(.name | endswith(".ipa"))] | if length == 1 then .[0].id else empty end' <<< "$release")
           [ -n "$asset" ] || { echo "::error::$DRAFT needs exactly one .ipa"; exit 1; }
@@ -66,9 +66,11 @@ jobs:
 
       # The file must be an app whose bundle ID is the mod's own
       - name: Check the .ipa
+        id: verified
         run: python3 scripts/check_mod_ipa.py "$MOD" "$RUNNER_TEMP/mod.ipa"
 
       - name: Upload privately and update the source
+        id: uploaded
         env:
           ACCRETION_UPLOAD_KEY: ${{ secrets.ACCRETION_UPLOAD_KEY }}
         run: |
@@ -77,6 +79,7 @@ jobs:
           python3 scripts/publish.py --mod "$MOD" --ipa "$RUNNER_TEMP/mod.ipa" ${MIN_OS:+--min-os "$MIN_OS"}
 
       - name: Commit the source
+        id: source
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -89,4 +92,17 @@ jobs:
 
       - name: Delete the draft
         if: always() && steps.fetch.outputs.release
-        run: gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/${{ steps.fetch.outputs.release }}"
+        env:
+          DRAFT_RELEASE: ${{ steps.fetch.outputs.release }}
+          UPLOAD_RESULT: ${{ steps.uploaded.outcome }}
+          SOURCE_RESULT: ${{ steps.source.outcome }}
+        run: python3 scripts/publication_status.py cleanup
+
+      - name: Summary
+        if: always()
+        env:
+          CHECK_RESULT: ${{ steps.verified.outcome }}
+          UPLOAD_RESULT: ${{ steps.uploaded.outcome }}
+          SOURCE_RESULT: ${{ steps.source.outcome }}
+          PUBLISH: "true"
+        run: python3 scripts/publication_status.py summary >> "$GITHUB_STEP_SUMMARY"

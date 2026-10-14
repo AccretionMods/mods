@@ -14,6 +14,7 @@ Usage:
 """
 
 import argparse
+import hashlib
 import json
 import os
 import plistlib
@@ -78,24 +79,32 @@ def main():
     bundle = meta["bundle_id"]
     version = ipa_version(a.ipa)
     key = upload_key()
+    digest = hashlib.sha256()
+    with open(a.ipa, "rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
     body = {
         "bundle_id": bundle,
         "version": version,
         "size": os.path.getsize(a.ipa),
+        "sha256": digest.hexdigest(),
         # the What's new post: "Swift Radio+ 4.0.0-mod1.1.0" with what the mod does
         "name": meta.get("display_name") or meta["name"],
         "notes": f"Mod {meta['version']} for {meta['name']} {app_version_of(version)}.\n\n"
         f"{meta.get('description', '')}"[:4000],
     }
 
-    signed = call(f"{FUNCTIONS}/upload", key, body)["signedUrl"]
-    with open(a.ipa, "rb") as f:
-        req = urllib.request.Request(
-            signed, data=f.read(), method="PUT", headers={"Content-Type": "application/octet-stream"}
-        )
-    with urllib.request.urlopen(req, timeout=900):
-        pass
-    call(f"{FUNCTIONS}/upload?finish=1", key, body)
+    prepared = call(f"{FUNCTIONS}/upload", key, body)
+    if not prepared.get("published"):
+        with open(a.ipa, "rb") as stream:
+            req = urllib.request.Request(
+                prepared["signedUrl"], data=stream, method="PUT",
+                headers={"Content-Type": "application/octet-stream", "Content-Length": str(body["size"])},
+            )
+            with urllib.request.urlopen(req, timeout=900):
+                pass
+        body["upload_id"] = prepared["upload_id"]
+        call(f"{FUNCTIONS}/upload?finish=1", key, body)
     print(f"uploaded {bundle} {version} privately")
 
     query = urllib.parse.urlencode({"app": bundle, "version": version})
