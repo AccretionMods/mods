@@ -25,6 +25,7 @@ on:
         default: ""
 
 permissions:
+  actions: write
   contents: write
 
 concurrency:
@@ -34,6 +35,7 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 50
     env:
       MOD: ${{ inputs.mod }}
       DRAFT: ${{ inputs.draft }}
@@ -86,9 +88,8 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add releases.json mods.json
           git diff --cached --quiet && exit 0
-          git commit -m "Publish $MOD"
-          git pull --rebase --quiet origin main
-          git push origin main
+          git commit -m "Publish $MOD" -m "Co-Authored-By: Codex <noreply@openai.com>"
+          python3 scripts/checked_push.py mods
 
       - name: Delete the draft
         if: always() && steps.fetch.outputs.release
