@@ -1,0 +1,29 @@
+name: Inventory
+
+# Repo-local credential presence only; no values or private handbook data are printed.
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/inventory.yml"]
+  workflow_dispatch:
+  schedule:
+    - cron: "3 14 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Verify required repository credentials
+        env:
+          REQUIRED_UPLOAD_KEY_PRESENT: ${{ secrets.ACCRETION_UPLOAD_KEY != '' }}
+        run: |
+          set -euo pipefail
+          if [ "$REQUIRED_UPLOAD_KEY_PRESENT" != true ]; then
+            echo "::error::A required repository credential is missing."
+            exit 1
+          fi
+          echo "Required repository credential checks passed."
