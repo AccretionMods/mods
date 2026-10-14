@@ -20,6 +20,7 @@ on:
         default: true
 
 permissions:
+  actions: write
   contents: write
 
 concurrency:
@@ -32,7 +33,7 @@ env:
 jobs:
   build:
     runs-on: macos-26
-    timeout-minutes: 40
+    timeout-minutes: 75
     env:
       MOD: ${{ inputs.mod }}
     steps:
@@ -92,6 +93,7 @@ jobs:
         id: source
         if: inputs.publish
         env:
+          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.build.outputs.version }}
         run: |
           set -euo pipefail
@@ -99,9 +101,8 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add releases.json mods.json
           git diff --cached --quiet && exit 0
-          git commit -m "Publish $MOD $VERSION"
-          git pull --rebase --quiet origin main
-          git push origin main
+          git commit -m "Publish $MOD $VERSION" -m "Co-Authored-By: Codex <noreply@openai.com>"
+          python3 scripts/checked_push.py mods
 
       - name: Summary
         if: always()

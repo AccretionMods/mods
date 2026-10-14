@@ -3,6 +3,7 @@ name: CI
 # Every push and pull request: every mod.json and tweaks.json is valid, the scripts parse, and the
 # version rules hold. Nothing is built or published here.
 on:
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
