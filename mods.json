@@ -22,6 +22,14 @@
       "screenshots": [],
       "versions": [
         {
+          "version": "4.0.0-mod1.0.0",
+          "date": "2026-10-15T07:55:32Z",
+          "size": 6685264,
+          "downloadURL": "https://bbcjpinhvlxocjxlyplt.supabase.co/functions/v1/download?app=io.github.accretionmods.swiftradio&version=4.0.0-mod1.0.0",
+          "minOSVersion": "17.0",
+          "localizedDescription": "Mod 1.0.0 for Swift Radio+ 4.0.0."
+        },
+        {
           "version": "4.0.0",
           "date": "2026-10-10T19:56:50Z",
           "size": 6680385,
@@ -30,11 +38,11 @@
           "localizedDescription": "Mod 1.0.0 for Swift Radio+ 4.0.0."
         }
       ],
-      "version": "4.0.0",
-      "versionDate": "2026-10-10T19:56:50Z",
+      "version": "4.0.0-mod1.0.0",
+      "versionDate": "2026-10-15T07:55:32Z",
       "versionDescription": "Mod 1.0.0 for Swift Radio+ 4.0.0.",
-      "downloadURL": "https://bbcjpinhvlxocjxlyplt.supabase.co/functions/v1/download?app=io.github.accretionmods.swiftradio&version=4.0.0",
-      "size": 6680385,
+      "downloadURL": "https://bbcjpinhvlxocjxlyplt.supabase.co/functions/v1/download?app=io.github.accretionmods.swiftradio&version=4.0.0-mod1.0.0",
+      "size": 6685264,
       "accretionMod": {
         "id": "swiftradio-plus",
         "kind": "tweak",
