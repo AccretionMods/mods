@@ -4,7 +4,7 @@
   "subtitle": "Modded apps built by Accretion.",
   "description": "Free and open-source apps with mods and single-player cheats built in. No paid unlocks, no online cheats.\n\nSource and rules: https://github.com/AccretionMods/mods",
   "sourceURL": "https://raw.githubusercontent.com/AccretionMods/mods/main/mods.json",
-  "iconURL": "https://getaccretion.github.io/assets/icon.png",
+  "iconURL": "https://getaccretion.app/assets/icon.png",
   "website": "https://github.com/AccretionMods/mods",
   "nsfw": false,
   "featuredApps": [
@@ -17,7 +17,7 @@
       "developerName": "Accretion",
       "subtitle": "Open-source radio player with an Accretion mod menu.",
       "localizedDescription": "Swift Radio, the open-source radio app, with the Accretion mod menu built in.\n\nMod menu (tap the floating button):\n• Force dark mode\n• Keep screen awake\n\nBuilt from the official unsigned release. Installs next to the original app.",
-      "iconURL": "https://getaccretion.github.io/icons/af99183d63e586e7.jpg",
+      "iconURL": "https://getaccretion.app/icons/af99183d63e586e7.jpg",
       "category": "entertainment",
       "screenshots": [],
       "versions": [
