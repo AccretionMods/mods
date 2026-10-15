@@ -1,0 +1,4 @@
+title = "Accretion mods gitleaks config"
+
+[extend]
+useDefault = true
