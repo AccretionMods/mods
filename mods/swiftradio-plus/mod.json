@@ -11,7 +11,7 @@
   "tested_app_version": "4.0.0",
   "min_os": "17.0",
   "remove_extensions": "encrypted",
-  "icon_url": "https://getaccretion.github.io/icons/af99183d63e586e7.jpg",
+  "icon_url": "https://getaccretion.app/icons/af99183d63e586e7.jpg",
   "screenshots": [],
   "base": {
     "open_source": true,

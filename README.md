@@ -1,6 +1,6 @@
 # Accretion Mods
 
-Ready-to-install modified apps, built locally and listed in [Accretion](https://getaccretion.github.io).
+Ready-to-install modified apps, built locally and listed in [Accretion](https://getaccretion.app).
 Each app is a finished .ipa with the mod already inside. Install it from the store, or from the
 Accretion app, while signed in, like any other app.
 
@@ -99,6 +99,16 @@ python3 scripts/base.py put ~/intake/tweak.deb      # prints the sha256
 
 `scripts/local_ipa.sh` and **Build mod** fetch both and check their checksums. Locally,
 `DEB=<file>` uses a local copy of the .deb instead of fetching it.
+
+### Inbox auto-pipeline
+
+Drop a new base .ipa in the intake folder (`C:/AccretionMods/intake`, synced from the phone) and
+`scripts/intake_auto.py --apply` does the rest: finds the mod with that `target_bundle_id`, checks that
+every method in the mod's `hooks.json` is still named in the game's IL2CPP metadata, uploads the .ipa
+privately, updates `base.sha256` and `tested_app_version`, commits and pushes only `mod.json`, and starts
+**Build mod**. A new version whose hooks are gone is moved to `C:/AccretionMods/held` with a report
+instead. Without `--apply` it only reports. Log: `C:/AccretionMods/auto.log`. Schedule it (every 15
+minutes) by running `scripts/register_intake_auto.ps1` once.
 
 ## Build and publish
 

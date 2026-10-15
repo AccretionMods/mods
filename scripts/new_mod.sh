@@ -124,7 +124,7 @@ meta = {
     "tested_app_version": version,
     "min_os": "15.0",
     "remove_extensions": "encrypted",
-    "icon_url": "https://getaccretion.github.io/assets/icon.png",
+    "icon_url": "https://getaccretion.app/assets/icon.png",
     "screenshots": [],
     "base": {"open_source": True, "license": "", "repo": "", "ipa_url": url, "sha256": sha}
     if url

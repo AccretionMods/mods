@@ -123,7 +123,7 @@ def build_source(releases):
         "description": "Free and open-source apps with mods and single-player cheats built in. "
         "No paid unlocks, no online cheats.\n\nSource and rules: https://github.com/" + REPO,
         "sourceURL": SOURCE_URL,
-        "iconURL": "https://getaccretion.github.io/assets/icon.png",
+        "iconURL": "https://getaccretion.app/assets/icon.png",
         "website": "https://github.com/" + REPO,
         "nsfw": False,
         "featuredApps": [a["bundleIdentifier"] for a in apps[:5]],
