@@ -1,4 +1,4 @@
-name: CI
+name: "Mods: checks"
 
 # Every push and pull request: every mod.json and tweaks.json is valid, the scripts parse, and the
 # version rules hold. Nothing is built or published here.
@@ -16,18 +16,43 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Mods
+      - name: Check out the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check the mod files
+        id: check-mod-files
         run: python3 scripts/validate_mods.py
-      - name: Tweak library
+      - name: Check the tweak library
+        id: check-tweak-library
         run: python3 scripts/validate_tweaks.py
       - name: Scripts parse
+        id: scripts-parse
         run: |
           for f in scripts/*.sh; do bash -n "$f"; done
           python3 -m py_compile scripts/*.py
       - name: Source is up to date
+        id: source-up-to-date
         run: |
           python3 scripts/update_source.py > /dev/null
           git diff --exit-code mods.json || { echo "::error::mods.json is out of date: run scripts/update_source.py"; exit 1; }
       - name: Version rules
+        id: version-rules
         run: python3 -m unittest discover -s tests -v
+      - name: Summary
+        if: always()
+        env:
+          STEPS: ${{ toJSON(steps) }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          failed=$(jq -r 'to_entries | map(select(.value.conclusion == "failure") | .key | gsub("-"; " ")) | join(", ")' <<< "$STEPS")
+          {
+            if [ "$JOB_STATUS" = success ]; then
+              echo "### Mod checks passed"
+            else
+              echo "### Mod checks failed"
+              echo "Failed step: ${failed:-unknown}. Open that step above to read which file or rule failed, fix it, then run the checks again."
+            fi
+            echo
+            echo "| Step | Result |"
+            echo "| --- | --- |"
+            jq -r 'to_entries[] | "| " + (.key | gsub("-"; " ")) + " | " + (.value.conclusion // "not run") + " |"' <<< "$STEPS"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build a mod's .ipa on Linux, WSL or macOS (also what the "Build mod" workflow runs). The result is
+# Build a mod's .ipa on Linux, WSL or macOS (also what the "Mods: build a mod" workflow runs). The result is
 # unsigned: sign it with Sideloadly, AltStore/SideStore or Feather before installing.
 #
 # Usage: scripts/local_ipa.sh [--sign] <mod> [base.ipa or https URL] [output folder]
@@ -130,7 +130,7 @@ shutil.move(tmp.name, path)
 PY
 echo "==> Version: $published"
 echo "==> Built: $out (unsigned)"
-# for the Build mod workflow
+# for the Mods: build a mod workflow
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
     { echo "ipa=$out"; echo "version=$published"; } >> "$GITHUB_OUTPUT"
 fi

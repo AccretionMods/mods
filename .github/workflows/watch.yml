@@ -1,8 +1,8 @@
-name: Watch base apps
+name: "Mods: watch base apps"
 
 # Mondays: for each mod built on a GitHub-hosted open-source app, check whether the app has a
 # newer release than the mod was tested on, and open an issue with the update steps (one per
-# version, no duplicates). Builds nothing; updating stays a deliberate Build mod run.
+# version, no duplicates). Builds nothing; updating stays a deliberate "Mods: build a mod" run.
 on:
   schedule:
     - cron: "41 7 * * 1"
@@ -17,8 +17,58 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check out the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Check base apps
+        id: check-base-apps
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: python3 scripts/watch_bases.py
+        run: |
+          set -euo pipefail
+          python3 scripts/watch_bases.py | tee watch.txt
+      - name: Summary
+        if: always()
+        env:
+          STEPS: ${{ toJSON(steps) }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          failed=$(jq -r 'to_entries | map(select(.value.conclusion == "failure") | .key | gsub("-"; " ")) | join(", ")' <<< "$STEPS")
+          {
+            if [ "$JOB_STATUS" = success ]; then
+              echo "### Base apps checked"
+            else
+              echo "### Checking the base apps failed"
+              echo "Failed step: ${failed:-unknown}. Open that step above to read the log, then run this workflow again."
+            fi
+            echo
+            echo "| Step | Result |"
+            echo "| --- | --- |"
+            jq -r 'to_entries[] | "| " + (.key | gsub("-"; " ")) + " | " + (.value.conclusion // "not run") + " |"' <<< "$STEPS"
+            echo
+            echo "| Fact | Value |"
+            echo "| --- | --- |"
+            echo "| Result | $(tail -n 1 watch.txt 2> /dev/null || echo no output) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  alert:
+    # Scheduled runs only: opens one issue when the run fails, closes it when a later run passes.
+    needs: [watch]
+    if: always() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # an alert that cannot be sent must not turn a good run red
+    continue-on-error: true
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - name: Check out the alert action
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github/actions
+      - name: Open or close the failure issue
+        uses: ./.github/actions/alert
+        with:
+          status: ${{ contains(needs.*.result, 'failure') && 'failure' || contains(needs.*.result, 'cancelled') && 'cancelled' || 'success' }}
+          workflow: "Mods: watch base apps"

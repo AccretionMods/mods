@@ -1,4 +1,4 @@
-name: Inventory
+name: "Mods: credential snapshot"
 
 # Repo-local credential presence only; no values or private handbook data are printed.
 on:
@@ -18,6 +18,7 @@ jobs:
     timeout-minutes: 2
     steps:
       - name: Verify required repository credentials
+        id: verify-credential
         env:
           REQUIRED_UPLOAD_KEY_PRESENT: ${{ secrets.ACCRETION_UPLOAD_KEY != '' }}
         run: |
@@ -27,3 +28,50 @@ jobs:
             exit 1
           fi
           echo "Required repository credential checks passed."
+      - name: Summary
+        if: always()
+        env:
+          STEPS: ${{ toJSON(steps) }}
+          JOB_STATUS: ${{ job.status }}
+          PRESENT: ${{ secrets.ACCRETION_UPLOAD_KEY != '' }}
+        run: |
+          failed=$(jq -r 'to_entries | map(select(.value.conclusion == "failure") | .key | gsub("-"; " ")) | join(", ")' <<< "$STEPS")
+          {
+            if [ "$JOB_STATUS" = success ]; then
+              echo "### The required credential is present"
+            else
+              echo "### A required credential is missing"
+              echo "Failed step: ${failed:-unknown}. Add the ACCRETION_UPLOAD_KEY secret under Settings, Secrets and variables, Actions, then run this workflow again."
+            fi
+            echo
+            echo "| Step | Result |"
+            echo "| --- | --- |"
+            jq -r 'to_entries[] | "| " + (.key | gsub("-"; " ")) + " | " + (.value.conclusion // "not run") + " |"' <<< "$STEPS"
+            echo
+            echo "| Fact | Value |"
+            echo "| --- | --- |"
+            echo "| ACCRETION_UPLOAD_KEY set | $([ "$PRESENT" = true ] && echo yes || echo no) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  alert:
+    # Scheduled runs only: opens one issue when the run fails, closes it when a later run passes.
+    needs: [inventory]
+    if: always() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # an alert that cannot be sent must not turn a good run red
+    continue-on-error: true
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - name: Check out the alert action
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github/actions
+      - name: Open or close the failure issue
+        uses: ./.github/actions/alert
+        with:
+          status: ${{ contains(needs.*.result, 'failure') && 'failure' || contains(needs.*.result, 'cancelled') && 'cancelled' || 'success' }}
+          workflow: "Mods: credential snapshot"

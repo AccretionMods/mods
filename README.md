@@ -32,14 +32,14 @@ scripts/
   base.py             keep a base .ipa or tweak .deb in private storage, found by its sha256
   intake.py           upload everything in the intake folder privately; --unused lists stored files no mod uses
   build.sh            build one mod's .dylib
-  local_ipa.sh        build a mod's unsigned .ipa (Linux, WSL or macOS; the Build mod workflow runs it)
+  local_ipa.sh        build a mod's unsigned .ipa (Linux, WSL or macOS; the Mods: build a mod workflow runs it)
   check_mod_ipa.py    check a built .ipa before publishing (an app with the mod's bundle ID)
   check_ipa.sh        check an .ipa on macOS: Payload/*.app present, not FairPlay-encrypted
   publish.py          upload a build privately and record it
   stage.sh            publish a build from your machine without the upload key
   update_source.py    regenerate mods.json
   validate_mods.py    check every mod folder and mod.json
-  watch_bases.py      find base apps with a newer release (the Watch base apps workflow)
+  watch_bases.py      find base apps with a newer release (the Mods: watch base apps workflow)
   sign.sh             sign an .ipa with your own certificate, for your own devices
   install_zsign.sh    install zsign (the open-source signer sign.sh uses)
   validate_tweaks.py  check tweaks.json
@@ -97,7 +97,7 @@ python3 scripts/base.py put ~/intake/tweak.deb      # prints the sha256
 # mod.json: "deb": {"sha256": "<that sha256>"}
 ```
 
-`scripts/local_ipa.sh` and **Build mod** fetch both and check their checksums. Locally,
+`scripts/local_ipa.sh` and **Mods: build a mod** fetch both and check their checksums. Locally,
 `DEB=<file>` uses a local copy of the .deb instead of fetching it.
 
 ### Inbox auto-pipeline
@@ -106,14 +106,14 @@ Drop a new base .ipa in the intake folder (`C:/AccretionMods/intake`, synced fro
 `scripts/intake_auto.py --apply` does the rest: finds the mod with that `target_bundle_id`, checks that
 every method in the mod's `hooks.json` is still named in the game's IL2CPP metadata, uploads the .ipa
 privately, updates `base.sha256` and `tested_app_version`, commits and pushes only `mod.json`, and starts
-**Build mod**. A new version whose hooks are gone is moved to `C:/AccretionMods/held` with a report
+**Mods: build a mod**. A new version whose hooks are gone is moved to `C:/AccretionMods/held` with a report
 instead. Without `--apply` it only reports. Log: `C:/AccretionMods/auto.log`. Schedule it (every 15
 minutes) by running `scripts/register_intake_auto.ps1` once.
 
 ## Build and publish
 
-**In the cloud (recommended, works from a phone):** Actions → **Build mod** → Run workflow → the mod's
-folder name. It runs on GitHub's macOS runner with Theos and cyan pinned to exact commits, downloads
+**In the cloud (recommended, works from a phone):** Actions → **Mods: build a mod** → Run workflow → pick the mod from the list (a new public mod is added to the list in build.yml and publish.yml; CI fails until it is).
+It runs on GitHub's macOS runner with Theos and cyan pinned to exact commits, downloads
 the base .ipa from `base.ipa_url` (or private storage) and refuses it unless it matches `base.sha256`, builds and injects
 the tweak, sets the version, checks the result, uploads it straight to Accretion's private storage
 (the repo's `ACCRETION_UPLOAD_KEY` secret) and commits `releases.json` and `mods.json`. The .ipa is
@@ -141,7 +141,7 @@ scripts/stage.sh swiftradio-plus ~/out/swiftradio-plus_4.0.0-mod1.0.0_accretion.
 ```
 
 This puts the .ipa in a draft release (visible only to people with write access) and starts the
-**Publish mod** workflow, which checks it, uploads it privately, commits the source and deletes the
+**Mods: publish a mod** workflow, which checks it, uploads it privately, commits the source and deletes the
 draft. Or directly, with the upload key on your machine (`.upload-key` or `ACCRETION_UPLOAD_KEY`):
 
 ```sh
@@ -152,10 +152,10 @@ then commit and push the updated `releases.json` and `mods.json`.
 
 ## Keeping mods current
 
-The **Watch base apps** workflow runs every Monday (or on demand). For each mod whose `base.repo` is a
+The **Mods: watch base apps** workflow runs every Monday (or on demand). For each mod whose `base.repo` is a
 GitHub repository, it compares the app's latest release with `tested_app_version` and opens one issue
 per newer version with the update steps: new `base.ipa_url` and `base.sha256`, new
-`tested_app_version`, then **Build mod**. It never builds anything by itself.
+`tested_app_version`, then **Mods: build a mod**. It never builds anything by itself.
 
 ## Tweak library
 

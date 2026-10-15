@@ -1,7 +1,9 @@
 """Check every mod's folder and mod.json (or only the ones named) before anything is built.
 
 Usage: python3 scripts/validate_mods.py [mod ...]
-Exits 1 with one line per problem. CI runs it on every push; the Build mod workflow runs it first.
+Exits 1 with one line per problem. CI runs it on every push; the "Mods: build a mod" workflow runs it first.
+A full run (no names) also checks that the mod choices in build.yml and publish.yml list exactly the
+public mods (mod.json without "personal": true).
 """
 
 import glob
@@ -73,6 +75,34 @@ def check(mod, meta):
     return problems
 
 
+WORKFLOWS = ("build.yml", "publish.yml")
+# the "options: [a, b]" line of the "mod:" input in a workflow file
+MOD_OPTIONS = re.compile(r"^      mod:\n(?:        [^\n]*\n)*?        options: \[([^\]]*)\]", re.M)
+
+
+def workflow_mod_options(name):
+    """The mod choices of a workflow's manual run form, sorted; None if the input has no choices."""
+    with open(os.path.join(ROOT, ".github", "workflows", name), encoding="utf-8", newline="") as f:
+        text = f.read().replace("\r\n", "\n")
+    found = MOD_OPTIONS.search(text)
+    if not found:
+        return None
+    return sorted(o.strip() for o in found.group(1).split(",") if o.strip())
+
+
+def check_workflow_options(metas):
+    """Problems when a workflow's mod choices differ from the public mods."""
+    public = sorted(mod for mod, meta in metas.items() if meta.get("personal") is not True)
+    problems = []
+    for name in WORKFLOWS:
+        if workflow_mod_options(name) != public:
+            problems.append(
+                f"{name}: the mod choices {workflow_mod_options(name)} differ from the public mods {public}. "
+                "Add the mod to the options of the mod input in both build.yml and publish.yml."
+            )
+    return problems
+
+
 def main(names):
     paths = sorted(glob.glob(os.path.join(ROOT, "mods", "*", "mod.json")))
     metas = {}
@@ -100,6 +130,10 @@ def main(names):
             continue
         for problem in check(mod, meta):
             print(f"{mod}: {problem}")
+            failed = True
+    if not names:
+        for problem in check_workflow_options(metas):
+            print(problem)
             failed = True
     if failed:
         return 1

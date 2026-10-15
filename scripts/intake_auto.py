@@ -15,7 +15,7 @@ For each .ipa in the folder (default INTAKE, else C:/AccretionMods/intake):
      tweak itself skips a hook whose method isn't found at runtime and logs it.
   5. Otherwise: upload the .ipa to private storage (scripts/base.py), update base.sha256 and
      tested_app_version in mod.json, validate, commit only that file to main, push, and start the
-     Build mod workflow (gh). A personal mod's build stays in private storage; the run's summary
+     Mods: build a mod workflow (gh). A personal mod's build stays in private storage; the run's summary
      prints the command to fetch it.
 
 Held files move to INTAKE_HELD (default C:/AccretionMods/held) next to "<file>.txt" with the reason.

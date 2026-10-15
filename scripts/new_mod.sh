@@ -8,7 +8,7 @@
 #   name: lowercase letters, digits and dashes, like  my-app-plus
 #   category: games, entertainment, utilities, photo-video, social, lifestyle, developer, other
 # Then: edit mods/<name>/Tweak.x and mod.json (description, icon_url), and build it locally
-# (scripts/local_ipa.sh <name>) or with Actions -> Build mod.
+# (scripts/local_ipa.sh <name>) or with Actions -> Mods: build a mod.
 set -euo pipefail
 
 name="${1:?usage: scripts/new_mod.sh <name> <base .ipa https link> [category]}"
@@ -138,4 +138,6 @@ PY
 python3 "$root/scripts/validate_mods.py" "$name"
 echo "==> Made mods/$name for $app_name $app_version ($target)"
 echo "    Next: edit Tweak.x, and in mod.json the description, icon_url, base.repo and base.license."
-echo "    Build: scripts/local_ipa.sh $name   or   Actions -> Build mod -> $name"
+echo "    Build: scripts/local_ipa.sh $name   or   Actions -> Mods: build a mod -> $name"
+echo "    Public mod? Add \"$name\" to the options of the mod input in .github/workflows/build.yml and publish.yml"
+echo "    (CI fails until you do). A personal mod has \"personal\": true in mod.json and needs nothing there."

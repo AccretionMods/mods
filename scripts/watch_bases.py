@@ -80,9 +80,9 @@ def main():
             "1. Set `base.ipa_url` in `mods/" + mod + "/mod.json` to the new unsigned .ipa, and "
             "`base.sha256` to its checksum (`sha256sum` it, or start from `scripts/new_mod.sh` output).\n"
             "2. Set `tested_app_version` to " + latest + " and check the mod still works with it.\n"
-            "3. Run **Actions → Build mod** for `" + mod + "`. It publishes as "
+            "3. Run **Actions → Mods: build a mod** for `" + mod + "`. It publishes as "
             f"`{latest}-mod{meta['version']}`.\n\n"
-            "_Opened by the weekly Watch base apps workflow._"
+            "_Opened by the weekly Mods: watch base apps workflow._"
         )
         if dry:
             print(f"{mod}: would open “{title}”")

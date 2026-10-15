@@ -1,7 +1,7 @@
 # Registers a Windows scheduled task that runs scripts\intake_auto.py --apply every 15 minutes while
 # you are signed in. Run it once, yourself:  powershell -ExecutionPolicy Bypass -File scripts\register_intake_auto.ps1
 # Remove it with:  Unregister-ScheduledTask -TaskName "Accretion inbox auto-pipeline" -Confirm:$false
-# The task needs git and gh signed in (push to main, start Build mod) and the repo's .upload-key.
+# The task needs git and gh signed in (push to main, start Mods: build a mod) and the repo's .upload-key.
 param([int]$EveryMinutes = 15)
 
 $ErrorActionPreference = "Stop"

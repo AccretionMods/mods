@@ -1,4 +1,4 @@
-name: Publish mod
+name: "Mods: publish a mod"
 
 # Publishes a mod build without the person or machine that built it holding the upload key.
 #   1. scripts/stage.sh puts the .ipa in a DRAFT release here (drafts are visible only to people
@@ -10,17 +10,19 @@ on:
   workflow_dispatch:
     inputs:
       mod:
-        description: "Mod folder under mods/, like swiftradio-plus"
-        required: true
+        description: "Mod to publish (a new public mod must be added to this list; CI checks it)"
+        type: choice
+        options: [swiftradio-plus]
+        default: swiftradio-plus
       app_version:
         description: "Not used: the version comes from the .ipa (kept so older stage.sh runs still work)"
         required: false
         default: ""
       draft:
-        description: "Draft release holding the .ipa (scripts/stage.sh names it)"
+        description: "Draft release holding the .ipa, like stage-swiftradio-plus-20261014120000 (scripts/stage.sh prints it)"
         required: true
       min_os:
-        description: "Minimum iOS, like 17.0 (empty: the mod's default)"
+        description: "Minimum iOS version, like 17.0 (empty: the mod's default)"
         required: false
         default: ""
 

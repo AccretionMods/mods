@@ -1,7 +1,7 @@
-name: Build mod
+name: "Mods: build a mod"
 
-# Builds a mod and publishes it, from anywhere (the GitHub app on a phone: Actions -> Build mod ->
-# Run, type the mod's folder name). Same steps as scripts/local_ipa.sh on a PC:
+# Builds a mod and publishes it, from anywhere (the GitHub app on a phone: Actions -> Mods: build a
+# mod -> Run, pick the mod). Same steps as scripts/local_ipa.sh on a PC:
 #   Theos and cyan pinned to exact commits; the base .ipa only from mod.json's base.ipa_url (or, for a
 #   private base, from Accretion's storage via scripts/base.py) and only
 #   if it matches base.sha256; the tweak injected; the result checked.
@@ -12,8 +12,10 @@ on:
   workflow_dispatch:
     inputs:
       mod:
-        description: "Mod folder under mods/, like swiftradio-plus"
-        required: true
+        description: "Mod to build (a new public mod must be added to this list; CI checks it)"
+        type: choice
+        options: [swiftradio-plus]
+        default: swiftradio-plus
       publish:
         description: "Publish to catalogue (personal builds only keep a private copy)"
         type: boolean
