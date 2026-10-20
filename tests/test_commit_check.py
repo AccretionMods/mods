@@ -23,7 +23,12 @@ class CommitCheck(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         base = Path(self.tmp.name)
         config = base / "gitconfig"
-        config.write_text("[init]\n\tdefaultBranch = main\n[commit]\n\tgpgsign = false\n", encoding="utf-8")
+        # a neutral identity for commits the tests make without one (merges); Linux git refuses to guess
+        config.write_text(
+            "[init]\n\tdefaultBranch = main\n[commit]\n\tgpgsign = false\n"
+            "[user]\n\tname = Fixture\n\temail = fixture@example.test\n",
+            encoding="utf-8",
+        )
         environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
         environment.update(GIT_CONFIG_GLOBAL=str(config), GIT_CONFIG_NOSYSTEM="1")
         patcher = mock.patch.dict(os.environ, environment, clear=True)
