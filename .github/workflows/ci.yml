@@ -18,6 +18,12 @@ jobs:
     steps:
       - name: Check out the code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the commit check reads the commits this push or pull request adds
+      # no AI attribution and no private owner address in new commits or the PR description
+      - name: Check new commits
+        id: commit-check
+        run: python3 scripts/commit_check.py
       - name: Check the mod files
         id: check-mod-files
         run: python3 scripts/validate_mods.py
