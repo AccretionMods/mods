@@ -1,0 +1,70 @@
+name: "Mods: runtime probe"
+
+# Compiles the shared IL2CPP runtime (runtime/) for a real iPhone, inside the runtime probe
+# (runtime/probe/), on every change to it. The probe .dylib is kept as a run artifact: it is built only
+# from this repo's code, no game is in it. To test on a phone, download it from the run (Artifacts),
+# add it as a tweak when signing any Unity game in Accretion, and open the game (runtime/probe/Probe.m).
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["runtime/**", "scripts/build_probe.sh", "scripts/embed_hooks.py", ".github/workflows/runtime.yml"]
+  pull_request:
+    paths: ["runtime/**", "scripts/build_probe.sh", "scripts/embed_hooks.py", ".github/workflows/runtime.yml"]
+
+permissions:
+  contents: read
+
+env:
+  THEOS_COMMIT: 304e0799973e8145f32e4ca2de6c747a84b758ce
+
+jobs:
+  probe:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Theos
+        run: |
+          set -euo pipefail
+          sudo xcode-select -s /Applications/Xcode_26.3.0.app
+          brew install --quiet make ldid
+          echo "$(brew --prefix make)/libexec/gnubin" >> "$GITHUB_PATH"
+          git clone --quiet --recursive https://github.com/theos/theos.git "$HOME/theos"
+          git -C "$HOME/theos" checkout --quiet "$THEOS_COMMIT"
+          git -C "$HOME/theos" submodule update --quiet --init --recursive
+          echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
+
+      - name: Build the probe
+        id: build
+        run: |
+          set -euo pipefail
+          dylib="$(scripts/build_probe.sh)"
+          echo "dylib=$dylib" >> "$GITHUB_OUTPUT"
+
+      - name: Check the .dylib
+        env:
+          DYLIB: ${{ steps.build.outputs.dylib }}
+        run: |
+          set -euo pipefail
+          lipo -archs "$DYLIB" | grep -qx arm64 || { echo "::error::not an arm64 .dylib: $(lipo -archs "$DYLIB")"; exit 1; }
+          # Substrate and the game's il2cpp_* functions are looked up at run time, never linked
+          undefined="$(nm -u "$DYLIB")"
+          if grep -E '_MSHookFunction|_il2cpp_' <<< "$undefined"; then
+            echo "::error::the runtime links a symbol it must look up at run time"; exit 1
+          fi
+          otool -L "$DYLIB"
+          {
+            echo "### Runtime probe built"
+            echo "arm64 .dylib, $(stat -f %z "$DYLIB") bytes. Download **AMIl2cppProbe** below; runtime/probe/Probe.m says how to test it."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the .dylib
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: AMIl2cppProbe
+          path: ${{ steps.build.outputs.dylib }}
+          retention-days: 30
+          if-no-files-found: error
