@@ -94,6 +94,24 @@ public class NetworkPlayer // TypeDefIndex: 1004
 	// RVA: 0x100080 Offset: 0x100080 VA: 0x1100080
 	public void TakeDamage(float amount) { }
 }
+
+// Namespace: Game.Combat
+public class PlayerHealth.Shield<T> : Component // TypeDefIndex: 1005
+{
+	// Methods
+
+	// RVA: 0x100090 Offset: 0x100090 VA: 0x1100090
+	public float GetDamage() { }
+}
+
+// Namespace: UnityEngine.Purchasing
+public class PurchasingManager // TypeDefIndex: 1006
+{
+	// Methods
+
+	// RVA: 0x1000a0 Offset: 0x1000a0 VA: 0x11000a0
+	public void TakeDamage(float amount) { }
+}
 """
 
 
@@ -116,6 +134,7 @@ class Dump(unittest.TestCase):
             sorted(self.by_name),
             [
                 "Game.Combat.PlayerHealth..ctor",
+                "Game.Combat.PlayerHealth.Shield<T>.GetDamage",
                 "Game.Combat.PlayerHealth.TakeDamage",
                 "Game.Combat.PlayerHealth.get_Health",
                 "Game.Combat.Weapon.GetDamage",
@@ -125,8 +144,12 @@ class Dump(unittest.TestCase):
                 "Game.Shop.Store.get_Ammo",
                 "Speedy.MoveSpeed",
                 "System.String.IsNullOrEmpty",
+                "UnityEngine.Purchasing.PurchasingManager.TakeDamage",
             ],
         )
+
+    def test_nested_type_keeps_its_own_name(self):
+        self.assertEqual(self.by_name["Game.Combat.PlayerHealth.Shield<T>.GetDamage"].class_name, "PlayerHealth.Shield<T>")
 
     def test_names_addresses_and_signatures(self):
         m = self.by_name["Game.Combat.PlayerHealth.TakeDamage"]
@@ -197,7 +220,14 @@ class Scoring(unittest.TestCase):
     def test_readme_rules_leave_out_purchases_and_online_play(self):
         self.assertNotIn("Game.Shop.Store.get_Ammo", self.by_name)
         self.assertNotIn("Game.Network.NetworkPlayer.TakeDamage", self.by_name)
-        self.assertEqual([m.full_name for m in self.out["purchases"]], ["Game.Shop.Store.get_Ammo"])
+        self.assertEqual(
+            [m.full_name for m in self.out["purchases"]],
+            ["Game.Shop.Store.get_Ammo", "UnityEngine.Purchasing.PurchasingManager.TakeDamage"],
+        )
+
+    def test_generic_types_are_no_candidates(self):
+        # the runtime can't look them up by namespace and class name
+        self.assertNotIn("Game.Combat.PlayerHealth.Shield<T>.GetDamage", self.by_name)
         self.assertEqual([m.full_name for m in self.out["online play"]], ["Game.Network.NetworkPlayer.TakeDamage"])
 
     def test_best_per_category_and_display_order(self):

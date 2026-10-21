@@ -21,7 +21,7 @@
 typedef struct {
     const char *assembly;  // "" = search every assembly
     const char *ns;        // "" = global namespace
-    const char *cls;
+    const char *cls;       // "Outer.Inner" for a nested class
     const char *method;
     int args;              // -1 = any argument count
 } AMHookSpec;
@@ -34,6 +34,9 @@ typedef struct {
     const char *(*image_get_name)(void *image);
     void *(*class_from_name)(void *image, const char *ns, const char *name);
     void *(*class_get_method_from_name)(void *klass, const char *name, int args);
+    // Optional, for nested classes ("Outer.Inner" in hooks.json); without them those hooks are missing.
+    void *(*class_get_nested_types)(void *klass, void **iter);
+    const char *(*class_get_name)(void *klass);
     // Optional, for AM_HOOK_POINTER's vtable scan; when one is missing only the MethodInfo is swapped.
     size_t (*image_get_class_count)(void *image);
     void *(*image_get_class)(void *image, size_t index);

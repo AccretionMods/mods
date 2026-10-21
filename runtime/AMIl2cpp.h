@@ -30,6 +30,10 @@ void AMIl2cppRegister(const char *name, void *replacement, void **original);
 // Waits for Unity's runtime (up to 60 s), then installs the registered hooks once.
 void AMIl2cppStart(void);
 
+// True when JIT is on, so the hooks are code hooks that catch every call. A mod can label or hide the
+// switches whose hooks need JIT (hooks.json "needs_jit") when this is false.
+BOOL AMIl2cppHasJIT(void);
+
 // Called once on the main queue when AMIl2cppStart is done, with every log line (one per hook, then the
 // counts). Optional; set it before AMIl2cppStart.
 void AMIl2cppSetReportHandler(void (^handler)(NSString *report));

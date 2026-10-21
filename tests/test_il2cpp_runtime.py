@@ -128,21 +128,25 @@ class Runtime(unittest.TestCase):
             self.out.count("skipped Game.Player.TakeDamage: method not found in this version"), 2
         )
 
+    def test_nested_classes_are_found(self):
+        self.assertIn("hooked Game.Player.Fighting.GetHit (code)", self.out)
+        self.assertIn("skipped Game.Player.Gone.GetHit: method not found in this version", self.out)
+
     def test_unregistered_and_unused_are_logged(self):
         self.assertIn("skipped Game.Player.Unregistered: no replacement registered", self.out)
         self.assertIn("ignored replacement Player.Gone2: not in hooks.json", self.out)
 
     def test_report_counts_and_originals(self):
-        self.assertIn("hooked=2 missing=4 unregistered=1 unused=1 failed=0 slots=0", self.out)
-        self.assertIn("orig_a=1 orig_b=1", self.out)
+        self.assertIn("hooked=3 missing=5 unregistered=1 unused=1 failed=0 slots=0", self.out)
+        self.assertIn("orig_a=1 orig_b=1 orig_d=1", self.out)
 
     # pointer mode (no JIT): the same specs, with MethodInfo and vtable swaps instead of code hooks
 
     def test_pointer_mode_hooks_and_skips_the_same(self):
         self.assertIn("hooked Game.Player.TakeDamage (pointers, 2 vtable slots)", self.pointer)
         self.assertIn("hooked Game.Player.GetSpeed (pointers, 0 vtable slots)", self.pointer)
-        self.assertIn("hooked=2 missing=4 unregistered=1 unused=1 failed=0 slots=2", self.pointer)
-        self.assertIn("orig_a=1 orig_b=1", self.pointer)
+        self.assertIn("hooked=3 missing=5 unregistered=1 unused=1 failed=0 slots=2", self.pointer)
+        self.assertIn("orig_a=1 orig_b=1 orig_d=1", self.pointer)
 
     def test_pointer_mode_swaps_method_info(self):
         # virtualMethodPointer (2021.2+) is swapped too; an older version's invoker_method is left alone
