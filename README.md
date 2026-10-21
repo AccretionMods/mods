@@ -31,6 +31,9 @@ scripts/
   new_mod.sh          start a new mod from the template (reads the base .ipa, records its sha256)
   base.py             keep a base .ipa or tweak .deb in private storage, found by its sha256
   intake.py           upload everything in the intake folder privately; --unused lists stored files no mod uses
+  find_cheats.py      find single-player cheat candidates in a Unity game's dump.cs; writes the mod's hooks.json
+  check_hooks.py      check a mod's hooks.json against a new version's dump.cs (names, return types, arg counts)
+  il2cpp_dump.py      read Il2CppDumper's dump.cs (used by find_cheats.py and check_hooks.py)
   build.sh            build one mod's .dylib
   local_ipa.sh        build a mod's unsigned .ipa (Linux, WSL or macOS; the Mods: build a mod workflow runs it)
   check_mod_ipa.py    check a built .ipa before publishing (an app with the mod's bundle ID)
@@ -99,6 +102,29 @@ python3 scripts/base.py put ~/intake/tweak.deb      # prints the sha256
 
 `scripts/local_ipa.sh` and **Mods: build a mod** fetch both and check their checksums. Locally,
 `DEB=<file>` uses a local copy of the .deb instead of fetching it.
+
+### Cheats for Unity games
+
+A Unity game ships its code as IL2CPP, so a cheat hooks C# methods by name. Run
+[Il2CppDumper](https://github.com/Perfare/Il2CppDumper) on the game's `UnityFramework` binary and
+`Data/Managed/Metadata/global-metadata.dat` (both inside `Payload/*.app`) to get `dump.cs`, then:
+
+```sh
+python3 scripts/find_cheats.py dump.cs                      # candidates by category, with scores
+python3 scripts/find_cheats.py dump.cs --mod my-game --pick # choose; writes mods/my-game/hooks.json
+```
+
+It scores methods by name (god mode, damage, cooldown, speed, ammo) and suggests what the hook does:
+skip the call, or return a constant. Candidates are leads to read in the dump, not working cheats. The
+rules above decide what is never offered: anything named for purchases, subscriptions, premium currency
+or paid tiers, and anything named for networking, multiplayer, servers or leaderboards. If the game's
+combat lives in such classes, it is an online game and not one for this repo.
+
+`hooks.json` records each hook's namespace, class, method, argument count and return type, and is what
+the inbox auto-pipeline checks against every new version of the game. When a new version arrives, dump
+it and run `scripts/check_hooks.py my-game dump.cs`: each hook is ok, changed (the return type or
+argument count differs, so the `Tweak.x` hook needs a look) or missing, with same-named methods in other
+classes as leads. CI validates every `hooks.json` with `scripts/validate_mods.py`.
 
 ### Inbox auto-pipeline
 

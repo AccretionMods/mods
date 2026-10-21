@@ -1,6 +1,7 @@
 """Check every mod's folder and mod.json (or only the ones named) before anything is built.
 
 Usage: python3 scripts/validate_mods.py [mod ...]
+A mod's hooks.json, when it has one, is checked too.
 Exits 1 with one line per problem. CI runs it on every push; the "Mods: build a mod" workflow runs it first.
 A full run (no names) also checks that the mod choices in build.yml and publish.yml list exactly the
 public mods (mod.json without "personal": true).
@@ -72,6 +73,37 @@ def check(mod, meta):
     for shot in meta.get("screenshots", []):
         if not https(shot):
             problems.append(f"screenshot {shot!r} must be an https link")
+    if os.path.isfile(os.path.join(folder, "hooks.json")):
+        problems += hooks_problems(os.path.join(folder, "hooks.json"))
+    return problems
+
+
+def hooks_problems(path):
+    """Problems in a hooks.json, the methods a Unity mod hooks by name (scripts/find_cheats.py writes it,
+    scripts/intake_auto.py checks them in every new version of the game)."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except json.JSONDecodeError as e:
+        return [f"hooks.json isn't valid JSON ({e})"]
+    if not isinstance(data, dict) or data.get("engine") != "unity-il2cpp":
+        return ['hooks.json needs "engine": "unity-il2cpp"']
+    hooks = data.get("hooks")
+    if not isinstance(hooks, list):
+        return ['hooks.json needs a "hooks" list']
+    problems = []
+    for i, h in enumerate(hooks):
+        where = f"hooks.json hook {i}"
+        if not isinstance(h, dict):
+            problems.append(f"{where} must be an object")
+            continue
+        for key in ("class", "method"):
+            if not isinstance(h.get(key), str) or not h[key]:
+                problems.append(f"{where} needs {key}")
+        if not isinstance(h.get("namespace"), str):
+            problems.append(f'{where} needs namespace (use "" for the global namespace)')
+        if "args" in h and (not isinstance(h["args"], int) or h["args"] < 0):
+            problems.append(f"{where}: args must be a count")
     return problems
 
 
