@@ -127,6 +127,21 @@ static void *il2cpp(const char *name) { return dlsym(RTLD_DEFAULT, name); }
 // Fix: give the second menu its button table, built the way OnAwake builds it, and destroy it once the game has
 // removed the first. Running OnAwake again, or making the second menu the singleton, crashed the game (segfault).
 
+// Field offsets below come from the 2.7.0 dump. Hooks are found by name and simply stay off when a version lacks
+// them, but raw offsets on another version would read or write the wrong memory, so everything that uses them
+// (the main-menu fix, the no-JIT switches, the extras, the item picker) runs only on 2.7.0 ("2.7.0" or a
+// re-signed copy's "2.7.0-mod...").
+static NSString *const kTestedVersion = @"2.7.0";
+
+static NSString *gameVersion(void) {
+    return [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"";
+}
+
+static BOOL offsetsMatch(void) {
+    NSString *v = gameVersion();
+    return [v isEqualToString:kTestedVersion] || [v hasPrefix:[kTestedVersion stringByAppendingString:@"-"]];
+}
+
 // IL2CPP helpers: a class by assembly and name, and a call through il2cpp_runtime_invoke (NULL on an exception).
 static void *klass(const char *assembly, const char *ns, const char *name) {
     void *(*domain_get)(void) = il2cpp("il2cpp_domain_get");
@@ -397,6 +412,7 @@ static NSMutableArray<NSString *> *sItemIds;
 static NSMutableArray<NSNumber *> *sItemTypes;
 
 static NSArray *itemEntries(BOOL weapons) {
+    if (!offsetsMatch()) return @[];
     NSMutableArray *entries = [NSMutableArray array];
     sItemIds = [NSMutableArray array];
     sItemTypes = [NSMutableArray array];
@@ -437,6 +453,7 @@ static void addItem(NSInteger index) {
 static void (*orig_MainMenuAwake)(void *, const void *);
 static void hook_MainMenuAwake(void *self, const void *mi) {
     orig_MainMenuAwake(self, mi);
+    if (!offsetsMatch()) return;
     void *table = *(void **)((char *)self + 0x218);
     void *(*object_get_class)(void *) = il2cpp("il2cpp_object_get_class");
     if (table) sOriginalMenu = self;  // every time a menu finishes OnAwake (also on later returns to the menu)
@@ -493,6 +510,13 @@ static void registerHooks(void) {
 %ctor {
     // Every switch works without JIT: the plain-method ones through applyNoJitSwitches.
     AMMenu *menu = AMMenu.shared;
+    if (!offsetsMatch()) {
+        NSString *note = [NSString stringWithFormat:@"Game %@ not supported: only the basic switches work", gameVersion()];
+        [menu addList:note symbol:@"exclamationmark.triangle" entries:^NSArray *{
+            return @[@{@"title": [NSString stringWithFormat:@"Checked against Fallout Shelter %@", kTestedVersion],
+                       @"detail": @"Other switches stay off"}];
+        } onPick:^(NSInteger i) {}];
+    }
     menu.title = @"Fallout Shelter+";
     [menu addSwitch:@"noCombatDamage" title:@"Dwellers take no combat damage" defaultValue:NO onChange:^(BOOL on) { sNoCombatDamage = on; }];
     [menu addSwitch:@"noIncidentDamage" title:@"Incidents do no damage" defaultValue:NO onChange:^(BOOL on) { sNoIncidentDamage = on; }];
