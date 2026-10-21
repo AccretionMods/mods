@@ -6,6 +6,7 @@ Usage:
   python3 scripts/find_cheats.py <dump.cs> --mod NAME --pick   choose the ones for mods/NAME/hooks.json
   python3 scripts/find_cheats.py <dump.cs> --mod NAME --auto   take the best one of each category
   python3 scripts/find_cheats.py <dump.cs> --json FILE         save every candidate
+  python3 scripts/find_cheats.py <dump.cs> --mod NAME --auto --json FILE   both at once
   python3 scripts/find_cheats.py <dump.cs> --left-out          also list what the rules left out
 
 dump.cs is Il2CppDumper's listing of the game (scripts/il2cpp_dump.py says how to make it).
