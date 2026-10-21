@@ -31,9 +31,17 @@ git -C "$work/src" checkout -q "$COMMIT"
 dotnet publish "$work/src/Il2CppDumper/Il2CppDumper.csproj" -c Release -f "$FRAMEWORK" -o "$work/out" --nologo -v quiet
 [ -f "$work/out/Il2CppDumper.dll" ] || { echo "build produced no Il2CppDumper.dll" >&2; exit 1; }
 
+# Only replace a folder this script made (it carries a COMMIT file) or an empty one.
+if [ -d "$dest" ] && [ -n "$(ls -A "$dest")" ] && [ ! -f "$dest/COMMIT" ]; then
+    echo "$dest exists and is not an Il2CppDumper install from this script; choose another folder" >&2
+    exit 1
+fi
 mkdir -p "$dest"
-rm -rf "$dest"/*
+find "$dest" -mindepth 1 -delete
 cp -R "$work/out"/. "$dest"/
+# the fork ships RequireAnyKey: true, which waits for a key press after every run
+sed -i.bak 's/"RequireAnyKey": *true/"RequireAnyKey": false/' "$dest/config.json" && rm -f "$dest/config.json.bak"
+grep -q '"RequireAnyKey": false' "$dest/config.json" || { echo "could not set RequireAnyKey to false in $dest/config.json" >&2; exit 1; }
 echo "$COMMIT" > "$dest/COMMIT"
 echo "Installed Il2CppDumper ($COMMIT, $FRAMEWORK) to $dest"
 echo "Run: dotnet $dest/Il2CppDumper.dll <UnityFramework> <global-metadata.dat> <out-dir>"
