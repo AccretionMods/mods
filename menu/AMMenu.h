@@ -28,6 +28,14 @@ NS_ASSUME_NONNULL_BEGIN
      defaultValue:(float)value
          onChange:(nullable void (^)(float value))block;
 
+// A row that opens a list page. `entries` is asked for the rows each time the page opens (so a mod can build
+// them from the running game): dictionaries with "title" and optionally "symbol" (an SF Symbol name) and
+// "detail". Tapping a row calls `block` with its index; the page stays open so several picks are easy.
+- (void)addList:(NSString *)title
+         symbol:(nullable NSString *)symbol
+        entries:(NSArray<NSDictionary<NSString *, NSString *> *> *(^)(void))entries
+         onPick:(void (^)(NSInteger index))block;
+
 // Shows the floating button on every window that becomes key. Call once, after adding items.
 - (void)install;
 

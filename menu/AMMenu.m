@@ -11,9 +11,67 @@ static NSString *AMKey(NSString *key) {
 @property (nonatomic) float min, max;
 @property (nonatomic, copy) void (^onSwitch)(BOOL);
 @property (nonatomic, copy) void (^onSlider)(float);
+// list rows
+@property (nonatomic) BOOL isList;
+@property (nonatomic, copy) NSString *symbol;
+@property (nonatomic, copy) NSArray<NSDictionary<NSString *, NSString *> *> *(^entries)(void);
+@property (nonatomic, copy) void (^onPick)(NSInteger);
 @end
 
 @implementation AMItem
+@end
+
+#pragma mark - List page
+
+@interface AMListPanel : UITableViewController
+@property (nonatomic, strong) AMItem *item;
+@property (nonatomic, copy) NSArray<NSDictionary<NSString *, NSString *> *> *entries;
+@end
+
+@implementation AMListPanel
+
+- (instancetype)initWithItem:(AMItem *)item {
+    if ((self = [super initWithStyle:UITableViewStyleInsetGrouped])) {
+        _item = item;
+        self.title = item.title;
+    }
+    return self;
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    self.entries = self.item.entries ? self.item.entries() : @[];
+    [self.tableView reloadData];
+}
+
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
+    return self.entries.count;
+}
+
+- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
+    return self.entries.count ? [NSString stringWithFormat:@"%lu entries. Tap one to apply it.", (unsigned long)self.entries.count]
+                              : @"Nothing to list yet: open this again once the game has loaded.";
+}
+
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+    NSDictionary *e = self.entries[indexPath.row];
+    UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:nil];
+    cell.textLabel.text = e[@"title"];
+    cell.detailTextLabel.text = e[@"detail"];
+    if (e[@"symbol"]) cell.imageView.image = [UIImage systemImageNamed:e[@"symbol"]];
+    return cell;
+}
+
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
+    [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    if (self.item.onPick) self.item.onPick(indexPath.row);
+    UITableViewCell *cell = [tableView cellForRowAtIndexPath:indexPath];
+    cell.accessoryType = UITableViewCellAccessoryCheckmark;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        cell.accessoryType = UITableViewCellAccessoryNone;
+    });
+}
+
 @end
 
 #pragma mark - Panel
@@ -59,7 +117,11 @@ static NSString *AMKey(NSString *key) {
     cell.textLabel.text = item.title;
     NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
 
-    if (item.isSlider) {
+    if (item.isList) {
+        cell.selectionStyle = UITableViewCellSelectionStyleDefault;
+        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        if (item.symbol) cell.imageView.image = [UIImage systemImageNamed:item.symbol];
+    } else if (item.isSlider) {
         UISlider *s = [[UISlider alloc] initWithFrame:CGRectMake(0, 0, 150, 30)];
         s.minimumValue = item.min;
         s.maximumValue = item.max;
@@ -76,6 +138,12 @@ static NSString *AMKey(NSString *key) {
         cell.accessoryView = s;
     }
     return cell;
+}
+
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
+    AMItem *item = self.items[indexPath.row];
+    [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    if (item.isList) [self.navigationController pushViewController:[[AMListPanel alloc] initWithItem:item] animated:YES];
 }
 
 - (void)switchChanged:(UISwitch *)s {
@@ -177,6 +245,16 @@ static NSString *AMKey(NSString *key) {
     item.min = min;
     item.max = max;
     item.onSlider = block;
+    [_items addObject:item];
+}
+
+- (void)addList:(NSString *)title symbol:(NSString *)symbol entries:(NSArray<NSDictionary<NSString *, NSString *> *> *(^)(void))entries onPick:(void (^)(NSInteger))block {
+    AMItem *item = [AMItem new];
+    item.title = title;
+    item.isList = YES;
+    item.symbol = symbol;
+    item.entries = entries;
+    item.onPick = block;
     [_items addObject:item];
 }
 

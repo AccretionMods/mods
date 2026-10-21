@@ -1,0 +1,9 @@
+Package: io.github.accretionmods.falloutshelter-plus
+Name: Fallout Shelter+
+Version: 2.1.0
+Architecture: iphoneos-arm
+Description: Fallout Shelter switches, boosts and item picker (inject into your own copy).
+Maintainer: Accretion
+Author: Accretion
+Section: Tweaks
+Depends: mobilesubstrate
