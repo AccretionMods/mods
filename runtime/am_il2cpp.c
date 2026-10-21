@@ -14,6 +14,9 @@ bool am_il2cpp_api_load(AMIl2cppApi *api) {
     LOAD(image_get_name, "il2cpp_image_get_name");
     LOAD(class_from_name, "il2cpp_class_from_name");
     LOAD(class_get_method_from_name, "il2cpp_class_get_method_from_name");
+    // optional: without them nested classes are not found
+    api->class_get_nested_types = dlsym(RTLD_DEFAULT, "il2cpp_class_get_nested_types");
+    api->class_get_name = dlsym(RTLD_DEFAULT, "il2cpp_class_get_name");
     // optional: without them AM_HOOK_POINTER swaps only the MethodInfo
     api->image_get_class_count = dlsym(RTLD_DEFAULT, "il2cpp_image_get_class_count");
     api->image_get_class = dlsym(RTLD_DEFAULT, "il2cpp_image_get_class");
@@ -40,6 +43,31 @@ static bool same_image(const char *want, const char *have) {
     return w == h && strncmp(want, have, w) == 0;
 }
 
+// A class by namespace and name; "Outer.Inner" walks the nested types of Outer (Il2CppDumper's spelling).
+static void *find_class(const AMIl2cppApi *api, void *image, const char *ns, const char *name) {
+    const char *dot = strchr(name, '.');
+    if (!dot) return api->class_from_name(image, ns, name);
+    if (!api->class_get_nested_types || !api->class_get_name) return NULL;
+    char part[256];
+    size_t len = (size_t)(dot - name);
+    if (len >= sizeof part) return NULL;
+    memcpy(part, name, len);
+    part[len] = 0;
+    void *klass = api->class_from_name(image, ns, part);
+    while (klass && dot) {
+        name = dot + 1;
+        dot = strchr(name, '.');
+        len = dot ? (size_t)(dot - name) : strlen(name);
+        void *iter = NULL, *nested, *found = NULL;
+        while (!found && (nested = api->class_get_nested_types(klass, &iter))) {
+            const char *n = api->class_get_name(nested);
+            if (n && strlen(n) == len && strncmp(n, name, len) == 0) found = nested;
+        }
+        klass = found;
+    }
+    return klass;
+}
+
 // The method's MethodInfo, and its class in *klass_out.
 static void *find_method(const AMIl2cppApi *api, const AMHookSpec *spec, void **klass_out) {
     void *domain = api->domain_get();
@@ -49,7 +77,7 @@ static void *find_method(const AMIl2cppApi *api, const AMHookSpec *spec, void **
     for (size_t i = 0; assemblies && i < count; i++) {
         void *image = api->assembly_get_image(assemblies[i]);
         if (!image || !same_image(spec->assembly, api->image_get_name(image))) continue;
-        void *klass = api->class_from_name(image, spec->ns, spec->cls);
+        void *klass = find_class(api, image, spec->ns, spec->cls);
         if (!klass) continue;
         void *info = api->class_get_method_from_name(klass, spec->method, spec->args);
         // MethodInfo begins with its native function pointer.

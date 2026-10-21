@@ -19,7 +19,9 @@ MODIFIERS = (
     r"(?:(?:public|private|protected|internal|static|sealed|abstract|readonly|partial|virtual"
     r"|override|extern|new|unsafe|async)\s+)*"
 )
-TYPE = re.compile(r"^\s*" + MODIFIERS + r"(?:class|struct|interface|enum)\s+(\w+)")
+# the whole name: a nested type is "Outer.Inner", a generic one "Name<T, U>" (never cut at the dot,
+# or the nested type's methods would be read as the outer class's)
+TYPE = re.compile(r"^\s*" + MODIFIERS + r"(?:class|struct|interface|enum)\s+(\S+(?:<[^>]*>)?\S*)")
 TYPE_INDEX = re.compile(r"// TypeDefIndex: (\d+)")
 # only a method's own address line; attribute lines ("[Attr] // RVA: ...") carry addresses too
 # "Slot: N" marks a method with a vtable slot (virtual, override or an interface method)

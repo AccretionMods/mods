@@ -158,7 +158,7 @@ The runtime waits for Unity to start and finds each method through the game's ow
 by namespace and name, method by name and argument count). A method that is gone in this version, or has
 no replacement, is skipped and logged to the device log (`[AccretionMods] skipped Class.method: ...`);
 the other hooks and the app carry on. This is what `scripts/intake_auto.py` relies on when it only checks
-names. `AMIl2cppSetReportHandler` hands the mod the same lines, for example to show them in its menu.
+names. A nested class is named `Outer.Inner`, as in dump.cs (generic classes can't be hooked). `AMIl2cppSetReportHandler` hands the mod the same lines, for example to show them in its menu.
 
 How it hooks depends on the phone:
 
@@ -168,7 +168,7 @@ How it hooks depends on the phone:
   subclasses). That catches virtual and override methods, interface methods, Unity callbacks (`Update`,
   `OnTriggerEnter`, ...), delegates and reflection, but not a direct call from other game code.
 
-`find_cheats.py` marks a candidate "needs JIT" when dump.cs gives it no vtable `Slot:` and it isn't a
+`AMIl2cppHasJIT()` says which mode is active, so a mod can label its JIT-only switches. `find_cheats.py` marks a candidate "needs JIT" when dump.cs gives it no vtable `Slot:` and it isn't a
 Unity callback; hooks.json records it as `needs_jit`. Prefer hooks that don't need JIT.
 
 The runtime probe (`runtime/probe/`) checks all of this on a real phone without writing a mod. The

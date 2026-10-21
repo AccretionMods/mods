@@ -86,6 +86,10 @@ static void attempt(int triesLeft) {
                    dispatch_get_main_queue(), ^{ attempt(triesLeft - 1); });
 }
 
+BOOL AMIl2cppHasJIT(void) {
+    return hookMode() == AM_HOOK_CODE;
+}
+
 void AMIl2cppSetReportHandler(void (^handler)(NSString *report)) {
     reportHandler = [handler copy];
 }

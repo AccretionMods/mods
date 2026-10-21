@@ -73,7 +73,7 @@ CATEGORIES = {
 
 # README rules: never what the developer sells, never online play. Matched in the namespace, class and method.
 LEFT_OUT = {
-    "purchases": ["Purchase", "IAP", "InApp", "Buy", "Shop", "Store", "Price", "Premium", "Subscri", "Vip", "Paywall", "Billing", "Receipt", "Gem", "Diamond"],
+    "purchases": ["Purchas", "IAP", "InApp", "Buy", "Shop", "Store", "Price", "Premium", "Subscri", "Vip", "Paywall", "Billing", "Receipt", "Gem", "Diamond"],
     "online play": ["Network", "Multiplayer", "Server", "Online", "Matchmak", "Lobby", "Leaderboard", "Photon", "Netcode", "Rpc", "PvP", "Clan", "Guild", "Ranked", "Socket", "Packet", "Sync"],
 }
 
@@ -107,6 +107,9 @@ def left_out(method):
 
 def candidate(method):
     """The best-scoring category whose action fits the method's return type, or None."""
+    # the runtime finds a class by namespace and name (a nested one as Outer.Inner); a generic one it can't
+    if "<" in method.class_name:
+        return None
     method_name, class_name = method.name.lower(), method.class_name.lower()
     best = None
     for name, cat in CATEGORIES.items():

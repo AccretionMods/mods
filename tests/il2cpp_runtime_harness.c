@@ -20,6 +20,9 @@ static FakeClass enemy = {{0}, {(void *)fn_take_damage, &take_damage, 0, 0, 0, 0
 static FakeClass unrelated = {{0}, {(void *)fn_take_damage, &take_damage, 0, 0, 0, 0}};
 static FakeClass *classes[] = {&player, &enemy, &unrelated};
 static int dummy_domain, dummy_assembly, dummy_image;
+static FakeClass fighting;  // nested: Player.Fighting
+static void fn_get_hit(void) {}
+static FakeMethod get_hit = {(void *)fn_get_hit, (void *)fn_get_hit};
 static const char *image_name = "Assembly-CSharp.dll";
 
 static void *domain_get(void) { return &dummy_domain; }
@@ -33,7 +36,14 @@ static const char *image_get_name(void *i) { return image_name; }
 static void *class_from_name(void *i, const char *ns, const char *name) {
     return strcmp(ns, "Game") == 0 && strcmp(name, "Player") == 0 ? (void *)&player : NULL;
 }
+static void *class_get_nested_types(void *k, void **iter) {
+    if (k != (void *)&player || *iter) return NULL;
+    *iter = &fighting;
+    return &fighting;
+}
+static const char *class_get_name(void *k) { return k == (void *)&fighting ? "Fighting" : "Player"; }
 static void *class_get_method_from_name(void *k, const char *name, int args) {
+    if (k == (void *)&fighting) return strcmp(name, "GetHit") == 0 ? &get_hit : NULL;
     if (strcmp(name, "TakeDamage") == 0 && (args == 2 || args == -1)) return &take_damage;
     if (strcmp(name, "GetSpeed") == 0 && (args == 0 || args == -1)) return &get_speed;
     return NULL;
@@ -61,12 +71,13 @@ static void log_line(const char *m) { printf("%s\n", m); }
 static void rep_a(void) {}
 static void rep_b(void) {}
 static void rep_c(void) {}
-static void *orig_a, *orig_b, *orig_c;
+static void rep_d(void) {}
+static void *orig_a, *orig_b, *orig_c, *orig_d;
 
 int main(int argc, char **argv) {
     bool pointer = argc > 1 && strcmp(argv[1], "pointer") == 0;
     AMIl2cppApi api = {domain_get, domain_get_assemblies, assembly_get_image, image_get_name,
-                       class_from_name, class_get_method_from_name,
+                       class_from_name, class_get_method_from_name, class_get_nested_types, class_get_name,
                        image_get_class_count, image_get_class, class_is_subclass_of, method_get_flags, read_memory};
     printf("ready=%d\n", am_il2cpp_ready(&api));
     const AMHookSpec specs[] = {
@@ -77,6 +88,8 @@ int main(int argc, char **argv) {
         {"Other", "Game", "Player", "TakeDamage", 2},            // wrong assembly
         {"", "Game", "Player", "TakeDamage", 5},                 // wrong arg count
         {"", "Game", "Player", "Unregistered", -1},
+        {"", "Game", "Player.Fighting", "GetHit", 2},            // nested class
+        {"", "Game", "Player.Gone", "GetHit", 2},                // nested class missing
     };
     const AMHookReplacement reps[] = {
         {"Player.TakeDamage", (void *)rep_a, &orig_a},
@@ -84,12 +97,15 @@ int main(int argc, char **argv) {
         {"Player.Gone", (void *)rep_c, &orig_c},
         {"Player.Gone2", (void *)rep_c, &orig_c},
         {"Gone.TakeDamage", (void *)rep_c, &orig_c},
+        {"Player.Fighting.GetHit", (void *)rep_d, &orig_d},
+        {"Player.Gone.GetHit", (void *)rep_c, &orig_c},
     };
-    AMHookReport r = am_il2cpp_install(&api, specs, 7, reps, 5, pointer ? AM_HOOK_POINTER : AM_HOOK_CODE,
+    AMHookReport r = am_il2cpp_install(&api, specs, 9, reps, 7, pointer ? AM_HOOK_POINTER : AM_HOOK_CODE,
                                        fake_hook, log_line);
     printf("hooked=%d missing=%d unregistered=%d unused=%d failed=%d slots=%d\n",
            r.hooked, r.missing, r.unregistered, r.unused, r.failed, r.vtable_slots);
-    printf("orig_a=%d orig_b=%d\n", orig_a == (void *)fn_take_damage, orig_b == (void *)fn_get_speed);
+    printf("orig_a=%d orig_b=%d orig_d=%d\n", orig_a == (void *)fn_take_damage, orig_b == (void *)fn_get_speed,
+           orig_d == (void *)fn_get_hit);
     if (pointer) {
         printf("info_a=%d invoker_kept=%d info_b=%d virtual_b=%d\n", take_damage.fn == (void *)rep_a,
                take_damage.second == (void *)fn_invoker, get_speed.fn == (void *)rep_b, get_speed.second == (void *)rep_b);
