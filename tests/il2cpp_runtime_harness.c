@@ -1,6 +1,8 @@
 // Test harness for runtime/am_il2cpp.c: a fake IL2CPP VM with one assembly, three classes, two methods.
-// "harness" hooks with code hooks; "harness pointer" swaps pointers and prints what changed.
+// "harness" hooks with code hooks; "harness pointer" swaps pointers and prints what changed;
+// "harness uninitialized" is a VM before il2cpp_init: corlib is NULL and every other call aborts.
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "am_il2cpp.h"
@@ -25,7 +27,15 @@ static void fn_get_hit(void) {}
 static FakeMethod get_hit = {(void *)fn_get_hit, (void *)fn_get_hit};
 static const char *image_name = "Assembly-CSharp.dll";
 
-static void *domain_get(void) { return &dummy_domain; }
+static bool initialized = true;
+static void *get_corlib(void) { return initialized ? &dummy_image : NULL; }
+static void *domain_get(void) {
+    if (!initialized) {
+        puts("domain_get called before il2cpp_init");
+        abort();
+    }
+    return &dummy_domain;
+}
 static void **domain_get_assemblies(void *d, size_t *n) {
     static void *list[1] = {&dummy_assembly};
     *n = 1;
@@ -76,10 +86,13 @@ static void *orig_a, *orig_b, *orig_c, *orig_d;
 
 int main(int argc, char **argv) {
     bool pointer = argc > 1 && strcmp(argv[1], "pointer") == 0;
+    initialized = !(argc > 1 && strcmp(argv[1], "uninitialized") == 0);
     AMIl2cppApi api = {domain_get, domain_get_assemblies, assembly_get_image, image_get_name,
                        class_from_name, class_get_method_from_name, class_get_nested_types, class_get_name,
-                       image_get_class_count, image_get_class, class_is_subclass_of, method_get_flags, read_memory};
+                       image_get_class_count, image_get_class, class_is_subclass_of, method_get_flags, read_memory,
+                       get_corlib};
     printf("ready=%d\n", am_il2cpp_ready(&api));
+    if (!initialized) return 0;
     const AMHookSpec specs[] = {
         {"Assembly-CSharp", "Game", "Player", "TakeDamage", 2},  // found
         {"", "Game", "Player", "GetSpeed", 0},                   // found, no assembly given

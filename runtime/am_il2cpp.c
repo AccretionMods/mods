@@ -14,6 +14,7 @@ bool am_il2cpp_api_load(AMIl2cppApi *api) {
     LOAD(image_get_name, "il2cpp_image_get_name");
     LOAD(class_from_name, "il2cpp_class_from_name");
     LOAD(class_get_method_from_name, "il2cpp_class_get_method_from_name");
+    LOAD(get_corlib, "il2cpp_get_corlib");
     // optional: without them nested classes are not found
     api->class_get_nested_types = dlsym(RTLD_DEFAULT, "il2cpp_class_get_nested_types");
     api->class_get_name = dlsym(RTLD_DEFAULT, "il2cpp_class_get_name");
@@ -26,6 +27,9 @@ bool am_il2cpp_api_load(AMIl2cppApi *api) {
 }
 
 bool am_il2cpp_ready(const AMIl2cppApi *api) {
+    // Before il2cpp_init every other entry point may crash (il2cpp_domain_get allocates the domain from a
+    // class that does not exist yet). The corlib pointer is a plain global, NULL until the VM is up.
+    if (!api->get_corlib || !api->get_corlib()) return false;
     void *domain = api->domain_get();
     if (!domain) return false;
     size_t count = 0;

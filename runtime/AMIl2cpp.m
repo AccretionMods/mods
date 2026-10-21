@@ -1,7 +1,9 @@
 #import "AMIl2cpp.h"
 
 #import <dlfcn.h>
+#import <execinfo.h>
 #import <mach/mach.h>
+#import <os/log.h>
 #import <unistd.h>
 
 #include "am_il2cpp.h"
@@ -17,7 +19,8 @@ static NSMutableArray<NSString *> *lines;
 static void (^reportHandler)(NSString *);
 
 static void logLine(const char *message) {
-    NSLog(@"[AccretionMods] %s", message);
+    // %{public}s: NSLog shows dynamic strings as <private> on a phone without a debugger
+    os_log(OS_LOG_DEFAULT, "[AccretionMods] %{public}s", message);
     if (!lines) lines = [NSMutableArray array];
     [lines addObject:@(message)];
 }
@@ -63,9 +66,35 @@ void AMIl2cppRegister(const char *name, void *replacement, void **original) {
     replacements[replacement_count++] = (AMHookReplacement){name, replacement, original};
 }
 
+// A game that quits on its own (exit(), Application.Quit) leaves no crash report. The device log then
+// shows who called it: each frame as image+offset, which the game's dump maps to a method.
+static void logExit(void) {
+    void *frames[32];
+    int n = backtrace(frames, 32);
+    NSMutableString *line = [NSMutableString stringWithString:@"exit() called; frames:"];
+    for (int i = 1; i < n; i++) {
+        Dl_info info;
+        if (dladdr(frames[i], &info) && info.dli_fname) {
+            const char *slash = strrchr(info.dli_fname, '/');
+            [line appendFormat:@" %s+0x%lx", slash ? slash + 1 : info.dli_fname,
+                               (unsigned long)((char *)frames[i] - (char *)info.dli_fbase)];
+        } else {
+            [line appendFormat:@" %p", frames[i]];
+        }
+    }
+    logLine(line.UTF8String);
+}
+
 static void attempt(int triesLeft) {
     AMIl2cppApi api;
-    if (am_il2cpp_api_load(&api) && am_il2cpp_ready(&api)) {
+    bool loaded = am_il2cpp_api_load(&api);
+    if (triesLeft % 20 == 0) {
+        char line[128];
+        snprintf(line, sizeof line, "waiting for the Unity VM (%s, corlib %p, %d tries left)",
+                 loaded ? "API found" : "no IL2CPP exports", loaded && api.get_corlib ? api.get_corlib() : NULL, triesLeft);
+        logLine(line);
+    }
+    if (loaded && am_il2cpp_ready(&api)) {
         api.read_memory = readMemory;
         AMHookMode mode = hookMode();
         logLine(mode == AM_HOOK_CODE ? "JIT is on: code hooks" : "no JIT: pointer hooks (virtual methods and Unity callbacks)");
@@ -97,5 +126,6 @@ void AMIl2cppSetReportHandler(void (^handler)(NSString *report)) {
 void AMIl2cppStart(void) {
     if (started) return;
     started = YES;
+    atexit(logExit);
     dispatch_async(dispatch_get_main_queue(), ^{ attempt(120); });
 }

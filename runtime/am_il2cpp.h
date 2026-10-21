@@ -44,6 +44,9 @@ typedef struct {
     unsigned int (*method_get_flags)(const void *method, unsigned int *iflags);  // skips the scan for non-virtual
     // Copies size bytes at address into out; false (nothing copied) when that memory is not readable.
     bool (*read_memory)(const void *address, void *out, size_t size);
+    // mscorlib's image, NULL until the VM has initialized. Reading it is safe at any time, unlike
+    // il2cpp_domain_get, which creates the domain object and crashes before il2cpp_init.
+    void *(*get_corlib)(void);
 } AMIl2cppApi;
 
 typedef enum { AM_HOOK_CODE, AM_HOOK_POINTER } AMHookMode;
@@ -72,7 +75,8 @@ typedef struct {
 // read_memory is left for the caller to set.
 bool am_il2cpp_api_load(AMIl2cppApi *api);
 
-// True once the VM has loaded its assemblies (hooks can resolve).
+// True once the VM has initialized and loaded its assemblies (hooks can resolve). Safe to call before
+// il2cpp_init: it touches nothing in the VM until get_corlib says it is up.
 bool am_il2cpp_ready(const AMIl2cppApi *api);
 
 // The native function behind a method, or NULL.
