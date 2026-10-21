@@ -23,9 +23,11 @@ Edit profile → "Your download links" → Accretion Mods.
 
 ```
 menu/                 shared floating mod menu (AMMenu), compiled into every mod
+runtime/              shared IL2CPP runtime (AMIl2cpp), compiled into mods that have a hooks.json
 mods/<name>/
   Makefile, control   Theos tweak
   Tweak.x             the mod itself
+  hooks.json          Unity games only: the C# methods the mod hooks (see Cheats for Unity games)
   mod.json            listing details, target app, base .ipa (link or private + sha256), published bundle ID
 scripts/
   new_mod.sh          start a new mod from the template (reads the base .ipa, records its sha256)
@@ -33,6 +35,7 @@ scripts/
   intake.py           upload everything in the intake folder privately; --unused lists stored files no mod uses
   find_cheats.py      find single-player cheat candidates in a Unity game's dump.cs; writes the mod's hooks.json
   check_hooks.py      check a mod's hooks.json against a new version's dump.cs (names, return types, arg counts)
+  embed_hooks.py      turn a mod's hooks.json into the C table the IL2CPP runtime reads (build.sh runs it)
   il2cpp_dump.py      read Il2CppDumper's dump.cs (used by find_cheats.py and check_hooks.py)
   build.sh            build one mod's .dylib
   local_ipa.sh        build a mod's unsigned .ipa (Linux, WSL or macOS; the Mods: build a mod workflow runs it)
@@ -125,6 +128,29 @@ the inbox auto-pipeline checks against every new version of the game. When a new
 it and run `scripts/check_hooks.py my-game dump.cs`: each hook is ok, changed (the return type or
 argument count differs, so the `Tweak.x` hook needs a look) or missing, with same-named methods in other
 classes as leads. CI validates every `hooks.json` with `scripts/validate_mods.py`.
+
+#### Hooking at runtime
+
+`runtime/` loads `hooks.json` in the running game. `scripts/build.sh` converts it to a C table
+(`scripts/embed_hooks.py`) and compiles it into the tweak, so nothing extra ships with the .ipa. In
+`Tweak.x`, register a replacement per hook, then start the runtime (usage is in `runtime/AMIl2cpp.h`):
+
+```objc
+#import "runtime/AMIl2cpp.h"
+%ctor {
+    AMIl2cppRegister("PlayerHealth.TakeDamage", (void *)rep_TakeDamage, (void **)&orig_TakeDamage);
+    AMIl2cppStart();
+}
+```
+
+and list the runtime in the mod's Makefile:
+`<Tweak>_FILES = Tweak.x menu/AMMenu.m runtime/am_il2cpp.c runtime/AMIl2cpp.m runtime/am_hooks_data.c`.
+
+The runtime waits for Unity to start, finds each method through the game's own `il2cpp_*` exports (class
+by namespace and name, method by name and argument count) and hooks it with Substrate. A method that
+is gone in this version, or has no replacement, is skipped and logged to the device log
+(`[AccretionMods] skipped Class.method: ...`); the other hooks and the app carry on. This is what
+`scripts/intake_auto.py` relies on when it only checks names. Not yet tested on a device.
 
 ### Inbox auto-pipeline
 

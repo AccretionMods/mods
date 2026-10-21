@@ -12,6 +12,13 @@ dir="$root/mods/$mod"
 rm -rf "$dir/menu"
 cp -R "$root/menu" "$dir/menu"
 
+# A Unity game's mod also compiles the shared IL2CPP runtime, with its hooks.json as a C table.
+rm -rf "$dir/runtime"
+if [ -f "$dir/hooks.json" ]; then
+    cp -R "$root/runtime" "$dir/runtime"
+    python3 "$root/scripts/embed_hooks.py" "$dir/hooks.json" "$dir/runtime/am_hooks_data.c" >&2
+fi
+
 rm -rf "$dir/.theos" "$dir/packages"
 make -C "$dir" FINALPACKAGE=1 >&2
 
