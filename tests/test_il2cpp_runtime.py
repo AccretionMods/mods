@@ -115,6 +115,12 @@ class Runtime(unittest.TestCase):
     def test_ready(self):
         self.assertIn("ready=1", self.out)
 
+    def test_not_ready_before_il2cpp_init(self):
+        # corlib is NULL before il2cpp_init; the check must return false without touching the VM
+        out = subprocess.run([self.exe, "uninitialized"], check=True, capture_output=True, text=True).stdout
+        self.assertIn("ready=0", out)
+        self.assertNotIn("before il2cpp_init", out)
+
     def test_found_methods_are_hooked(self):
         self.assertIn("hooked Game.Player.TakeDamage (code)", self.out)
         self.assertIn("hooked Game.Player.GetSpeed (code)", self.out)
