@@ -8,7 +8,8 @@
   "website": "https://github.com/AccretionMods/mods",
   "nsfw": false,
   "featuredApps": [
-    "io.github.accretionmods.swiftradio"
+    "io.github.accretionmods.swiftradio",
+    "io.github.accretionmods.thewandererplus"
   ],
   "apps": [
     {
@@ -47,6 +48,36 @@
         "id": "swiftradio-plus",
         "kind": "tweak",
         "modVersion": "1.0.0"
+      }
+    },
+    {
+      "name": "The Wanderer+",
+      "bundleIdentifier": "io.github.accretionmods.thewandererplus",
+      "developerName": "Accretion",
+      "subtitle": "Single-player cheats with a mod menu: stats, combat, crafting, item spawner.",
+      "localizedDescription": "The Wanderer: Post-Nuclear RPG with the Accretion mod menu built in (tap the floating button).\n\nWork on any phone, no JIT needed:\n• Health, hunger, thirst, morale never drop\n• Lockpicks never break\n• Spawn an item: a list of the game's 145 items with an amount slider\n• Give a random item / weapon every 10 s\n• Player, pet and companion take no damage\n• Enemies deal no damage, player always crits, enemies never heal\n• Weapon damage ×1-20\n• No radiation damage\n• Items never wear out\n• Unlimited skill points\n• Pet never hungry, thirsty or hurt\n• Keep screen awake\n\nNeeds JIT, marked (JIT) otherwise:\n• Crafting uses no materials\n\nNothing the game sells is touched: caps, tokens, bag upgrades, fuel, fast travel, revives, supply drops and experience boosts stay as they are. Single-player only.\n\nHooks are checked against The Wanderer 10.1; on other versions missing ones stay off. Installs next to the original app.",
+      "iconURL": "https://raw.githubusercontent.com/AccretionMods/mods/main/icons/thewanderer-plus.png",
+      "category": "games",
+      "screenshots": [],
+      "versions": [
+        {
+          "version": "10.1-mod1.0.7",
+          "date": "2026-10-21T16:55:31Z",
+          "size": 81605508,
+          "downloadURL": "https://bbcjpinhvlxocjxlyplt.supabase.co/functions/v1/download?app=io.github.accretionmods.thewandererplus&version=10.1-mod1.0.7",
+          "minOSVersion": "15.0",
+          "localizedDescription": "Mod 1.0.7 for The Wanderer+ 10.1."
+        }
+      ],
+      "version": "10.1-mod1.0.7",
+      "versionDate": "2026-10-21T16:55:31Z",
+      "versionDescription": "Mod 1.0.7 for The Wanderer+ 10.1.",
+      "downloadURL": "https://bbcjpinhvlxocjxlyplt.supabase.co/functions/v1/download?app=io.github.accretionmods.thewandererplus&version=10.1-mod1.0.7",
+      "size": 81605508,
+      "accretionMod": {
+        "id": "thewanderer-plus",
+        "kind": "tweak",
+        "modVersion": "1.0.7"
       }
     }
   ],
