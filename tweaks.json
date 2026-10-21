@@ -23,6 +23,7 @@
         "com.bethsoft.falloutshelter"
       ],
       "version": "2.1.1",
+      "date": "2026-10-21",
       "debURL": "https://github.com/AccretionMods/mods/releases/download/falloutshelter-plus-v2.1.1/FalloutShelterPlus-2.1.1.dylib",
       "requires": [],
       "license": "MIT",
