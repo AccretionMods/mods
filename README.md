@@ -24,6 +24,7 @@ Edit profile → "Your download links" → Accretion Mods.
 ```
 menu/                 shared floating mod menu (AMMenu), compiled into every mod
 runtime/              shared IL2CPP runtime (AMIl2cpp), compiled into mods that have a hooks.json
+  probe/              runtime probe .dylib: checks the runtime in any Unity game on a phone
 mods/<name>/
   Makefile, control   Theos tweak
   Tweak.x             the mod itself
@@ -38,6 +39,7 @@ scripts/
   embed_hooks.py      turn a mod's hooks.json into the C table the IL2CPP runtime reads (build.sh runs it)
   il2cpp_dump.py      read Il2CppDumper's dump.cs (used by find_cheats.py and check_hooks.py)
   build.sh            build one mod's .dylib
+  build_probe.sh      build the runtime probe .dylib (the Mods: runtime probe workflow runs it)
   local_ipa.sh        build a mod's unsigned .ipa (Linux, WSL or macOS; the Mods: build a mod workflow runs it)
   check_mod_ipa.py    check a built .ipa before publishing (an app with the mod's bundle ID)
   check_ipa.sh        check an .ipa on macOS: Payload/*.app present, not FairPlay-encrypted
@@ -146,11 +148,27 @@ classes as leads. CI validates every `hooks.json` with `scripts/validate_mods.py
 and list the runtime in the mod's Makefile:
 `<Tweak>_FILES = Tweak.x menu/AMMenu.m runtime/am_il2cpp.c runtime/AMIl2cpp.m runtime/am_hooks_data.c`.
 
-The runtime waits for Unity to start, finds each method through the game's own `il2cpp_*` exports (class
-by namespace and name, method by name and argument count) and hooks it with Substrate. A method that
-is gone in this version, or has no replacement, is skipped and logged to the device log
-(`[AccretionMods] skipped Class.method: ...`); the other hooks and the app carry on. This is what
-`scripts/intake_auto.py` relies on when it only checks names. Not yet tested on a device.
+The runtime waits for Unity to start and finds each method through the game's own `il2cpp_*` exports (class
+by namespace and name, method by name and argument count). A method that is gone in this version, or has
+no replacement, is skipped and logged to the device log (`[AccretionMods] skipped Class.method: ...`);
+the other hooks and the app carry on. This is what `scripts/intake_auto.py` relies on when it only checks
+names. `AMIl2cppSetReportHandler` hands the mod the same lines, for example to show them in its menu.
+
+How it hooks depends on the phone:
+
+- **JIT on** (SideStore or AltStore with StikDebug): code hooks with Substrate. Every call is caught.
+- **No JIT** (most signing services): iOS kills an app that changes its own code, so the runtime swaps
+  the pointers IL2CPP keeps in memory instead (the method's MethodInfo and the vtables of its class and
+  subclasses). That catches virtual and override methods, interface methods, Unity callbacks (`Update`,
+  `OnTriggerEnter`, ...), delegates and reflection, but not a direct call from other game code.
+
+`find_cheats.py` marks a candidate "needs JIT" when dump.cs gives it no vtable `Slot:` and it isn't a
+Unity callback; hooks.json records it as `needs_jit`. Prefer hooks that don't need JIT.
+
+The runtime probe (`runtime/probe/`) checks all of this on a real phone without writing a mod. The
+**Mods: runtime probe** workflow builds `AMIl2cppProbe.dylib` for arm64 on every runtime change: download
+it from the run's artifacts, add it as a tweak when signing any Unity game in Accretion, install and open
+the game. After about 20 s an alert shows the mode, each probe hook and how often it was called.
 
 ### Inbox auto-pipeline
 

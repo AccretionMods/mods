@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 import check_hooks
 import find_cheats
 import validate_mods
-from il2cpp_dump import methods, split_params
+from il2cpp_dump import Method, methods, split_params
 
 # dump.cs as Il2CppDumper writes it: image header, "// Namespace:" before each type, an address
 # comment before each method, attribute lines with their own addresses, "-1" for methods with no code
@@ -157,8 +157,17 @@ class Dump(unittest.TestCase):
                 "args": 0,
                 "return_type": "int",
                 "signature": "public int get_Ammo()",
+                "needs_jit": True,
             },
         )
+
+    def test_vtable_slot_and_unity_messages_need_no_jit(self):
+        by_name = {m.name: m for m in self.found}
+        self.assertEqual(by_name["get_Health"].slot, 4)
+        self.assertFalse(by_name["get_Health"].needs_jit)
+        self.assertIsNone(by_name["TakeDamage"].slot)
+        self.assertTrue(by_name["TakeDamage"].needs_jit)
+        self.assertFalse(Method("A", "", "C", "Update", "void", [], "0x1", "void Update()").needs_jit)
 
     def test_split_params(self):
         self.assertEqual(split_params(""), [])
