@@ -19,6 +19,11 @@ if [ -f "$dir/hooks.json" ]; then
     python3 "$root/scripts/embed_hooks.py" "$dir/hooks.json" "$dir/runtime/am_hooks_data.c" >&2
 fi
 
+# A mod whose menu is declared in tweaks.json gets its AMTweaks.gen.h/.m regenerated (scripts/gen_tweaks.py).
+if [ -f "$dir/tweaks.json" ]; then
+    python3 "$root/scripts/gen_tweaks.py" "$dir" >&2
+fi
+
 rm -rf "$dir/.theos" "$dir/packages"
 make -C "$dir" FINALPACKAGE=1 >&2
 

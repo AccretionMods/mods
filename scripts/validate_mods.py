@@ -76,6 +76,26 @@ def check(mod, meta):
     if os.path.isfile(os.path.join(folder, "hooks.json")):
         problems += hooks_problems(os.path.join(folder, "hooks.json"))
         problems += runtime_problems(folder)
+    if os.path.isfile(os.path.join(folder, "tweaks.json")):
+        problems += tweaks_problems(folder)
+    return problems
+
+
+def tweaks_problems(folder):
+    """Problems in a tweaks.json (the menu items scripts/gen_tweaks.py turns into AMTweaks.gen.m) and the
+    Makefile that must compile the generated file."""
+    import gen_tweaks
+
+    try:
+        tweaks, hooks = gen_tweaks.load(folder)
+    except json.JSONDecodeError as e:
+        return [f"tweaks.json isn't valid JSON ({e})"]
+    problems = [f"tweaks.json: {p}" for p in gen_tweaks.problems(tweaks, hooks)]
+    makefile = os.path.join(folder, "Makefile")
+    if os.path.isfile(makefile):
+        with open(makefile, encoding="utf-8") as f:
+            if "AMTweaks.gen.m" not in f.read():
+                problems.append("Makefile must list AMTweaks.gen.m (the mod has a tweaks.json)")
     return problems
 
 

@@ -176,6 +176,65 @@ The runtime probe (`runtime/probe/`) checks all of this on a real phone without 
 it from the run's artifacts, add it as a tweak when signing any Unity game in Accretion, install and open
 the game. After about 20 s an alert shows the mode, each probe hook and how often it was called.
 
+#### Dev loop for personal mods (`scripts/dev.py`)
+
+`scripts/dev.py` runs the whole loop for a personal mod of a Unity game from one place: dump, search, add a
+switch, build, sign, read the device log. It needs a decrypted copy of the game (your own), WSL with Theos
+for the build, and on Windows the .NET runtime for the dumper and the phone on USB for signing and logs.
+Run it as `uv run --no-project --python 3.12 scripts/dev.py ...` (Windows) or `python3 scripts/dev.py ...`
+(WSL). Base `.ipa` files are found by bundle ID in `C:\AccretionMods\intake` and `~/Downloads`; dumps go
+to `C:\AccretionMods\work`, builds to `C:\AccretionMods\builds` (`AM_ROOT` moves the folder).
+
+```sh
+dev.py new my-game-plus ~/Downloads/MyGame-1.2-Decrypted.ipa      # personal mod folder, then the dump
+dev.py find my-game-plus "Damage|Health"                             # methods, with signature and whether they need JIT
+dev.py fields my-game-plus Enemy                                      # a class's fields and offsets
+dev.py add my-game-plus Enemy.DamagePlayer --as noDamage --title "Player takes no damage"
+dev.py add my-game-plus Enemy.UseHealthPotion --to noDamage           # a second hook on the same switch
+dev.py add my-game-plus Enemy.get_AttackSuccessRate --title "Enemies miss" --value 0
+dev.py add my-game-plus ItemStack.GetScaledDamage --title "Weapon damage ×" --action multiply --slider 1 20 1
+dev.py add my-game-plus StatHandler.set_Hunger --title "Hunger never drops" --action custom
+dev.py build my-game-plus --ipa [--bump]                             # .dylib and unsigned .ipa in builds/
+dev.py sign builds/my-game-plus_1.2-mod1.0.0_accretion.ipa --install  # Apple ID signing (plumesign), onto the phone
+dev.py log my-game-plus --seconds 90                                  # the mod's and the runtime's log lines
+```
+
+`add` looks the method up in the dump (overloads need `--args N`), records it in `hooks.json` with its
+signature and whether it needs JIT, and adds a menu item to `tweaks.json`. `scripts/gen_tweaks.py` turns
+`tweaks.json` into `AMTweaks.gen.m` (`build.sh` runs it): the value of each item (`am_<key>`), a hook
+function per method, and `AMTweaksRegister()`, which `Tweak.x` calls in `%ctor`. Actions: `skip` (a void
+method is not called), `return` (a bool or number instead), `multiply` (the result times the slider), `arg`
+(an argument replaced), and `custom` (the hook is registered; `Tweak.x` defines `hook_<Class_method>()`
+and may call `orig_<Class_method>()`). Items whose hooks all need JIT get the " (JIT)" label without it
+(`"jit_label": false` turns that off once a no-JIT path exists). `dev.py tweak` adds a switch or slider
+with no hook, for hand-written code; `dev.py remove` drops an item; `dev.py check` compares `hooks.json`
+with the current dump; `dev.py status` shows base, dump, items and the last build.
+
+Shorter from PowerShell: `scripts\am.ps1 <command> ...` (the header of that file shows the one-line profile
+function that makes it plain `am`). With no command it prints the help. Three more commands keep the loop short:
+
+- `am pick my-game-plus Damage` lists the matching methods numbered; type a number and answer two or three
+  questions (title, action, value or slider) and the switch is added. Methods you hooked before are marked
+  with what was done then.
+- `am update my-game-plus [new.ipa]` is for a newer version of the game: it takes the newest copy of the
+  app in intake/ or Downloads (or the file you name), dumps it, reports every hook as ok, changed or missing,
+  refreshes the signatures in `hooks.json` and the base checksum and tested version in `mod.json`, and
+  regenerates the code. `build` and `status` say when such a copy is waiting. Missing hooks stay listed and
+  are skipped at run time; replace them with `find` and `add`.
+- `am suggest my-game-plus` ranks this game's methods against what you hooked in earlier games
+  (`C:\AccretionMods\dev\patterns.json`, filled by every `add` and by `am learn <mod>` for an existing
+  mod's `hooks.json`). `am mark my-game-plus noDamage --works` (or `--fails`) records the phone result on
+  the switch and on the pattern, so what worked ranks higher next time and what failed drops out. Methods
+  named for purchases or online play are never suggested (README rules), nor are Unity callbacks.
+
+Without JIT, a plain method the game calls directly can't be hooked, so the switch is written as a data
+path instead: `runtime/AMIl2cppData.h` finds the live objects (`AMIl2cppStaticObject`, `AMIl2cppFindObject`,
+`AMIl2cppFindObjects`), reads field addresses by name from the running game (`AMIl2cppField`, so no offsets
+are copied from the dump), calls setters by name (`AMIl2cppCall`) and runs a main-queue ticker
+(`AMIl2cppEvery`). The `Tweak.x` that `dev.py new` writes has the ticker ready. `runtime/SideloadCompat.m`
+(keychain, iCloud, Game Center and age-range answers for re-signed copies) is in the generated Makefile too.
+Nothing in this loop uploads or publishes: personal mods have `"personal": true` and stay out of the catalogue.
+
 ### Inbox auto-pipeline
 
 Drop a new base .ipa in the intake folder (`C:/AccretionMods/intake`, synced from the phone) and

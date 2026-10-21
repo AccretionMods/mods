@@ -1,0 +1,153 @@
+import os
+import sys
+import tempfile
+import unittest
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+
+import dev_learn
+from il2cpp_dump import Method
+
+
+def method(cls, name, ret="void", params=(), assembly="Assembly-CSharp", ns=""):
+    sig = f"public {ret} {name}({', '.join(params)})"
+    return Method(assembly, ns, cls, name, ret, list(params), "0x1000", sig)
+
+
+ENTRY = {
+    "assembly": "Assembly-CSharp",
+    "namespace": "",
+    "class": "Enemy",
+    "method": "DamagePlayer",
+    "args": 2,
+    "return_type": "void",
+}
+TWEAK = {
+    "key": "noDamage",
+    "title": "Player takes no damage",
+    "kind": "switch",
+    "hooks": [{"method": "Enemy.DamagePlayer", "action": "skip"}],
+}
+
+
+class Store(unittest.TestCase):
+    def test_record_accumulates_uses_and_marks(self):
+        store = dev_learn.load("/nonexistent/patterns.json")
+        p = dev_learn.record(store, ENTRY, "skip", None, TWEAK, "com.a.game")
+        self.assertEqual(p["method"], "DamagePlayer")
+        self.assertEqual(len(p["uses"]), 1)
+        dev_learn.record(
+            store, ENTRY, "skip", None, TWEAK, "com.a.game"
+        )  # same game and class: one use
+        self.assertEqual(len(p["uses"]), 1)
+        dev_learn.record(
+            store, dict(ENTRY, **{"class": "Boss"}), "skip", None, TWEAK, "com.b.game"
+        )
+        self.assertEqual(len(p["uses"]), 2)
+        self.assertEqual(dev_learn.score(p), 2 * dev_learn.SCORE_USE)
+        touched = dev_learn.mark(store, TWEAK, [ENTRY], "com.a.game", works=True)
+        self.assertEqual(touched, ["DamagePlayer"])
+        self.assertEqual(dev_learn.outcomes(p), (1, 0))
+        dev_learn.mark(store, TWEAK, [ENTRY], "com.a.game", works=False)
+        self.assertEqual(dev_learn.outcomes(p), (0, 1))
+
+    def test_save_and_load(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "dev", "patterns.json")
+            store = dev_learn.load(path)
+            dev_learn.record(store, ENTRY, "skip", None, TWEAK, "com.a.game")
+            dev_learn.save(path, store)
+            again = dev_learn.load(path)
+            self.assertIn(
+                dev_learn.pattern_key("DamagePlayer", "void"), again["patterns"]
+            )
+
+    def test_learn_imports_hooks_with_actions_from_tweaks(self):
+        store = dev_learn.load("/nonexistent")
+        hooks = [ENTRY, dict(ENTRY, method="get_Health", return_type="float", args=0)]
+        tweaks = {"tweaks": [TWEAK]}
+        self.assertEqual(dev_learn.learn(store, hooks, "com.a.game", tweaks), 2)
+        self.assertEqual(
+            store["patterns"][dev_learn.pattern_key("DamagePlayer", "void")]["action"],
+            "skip",
+        )
+        self.assertEqual(
+            store["patterns"][dev_learn.pattern_key("get_Health", "float")]["action"],
+            "custom",
+        )
+
+
+class Suggest(unittest.TestCase):
+    def setUp(self):
+        self.store = dev_learn.load("/nonexistent")
+        dev_learn.record(self.store, ENTRY, "skip", None, TWEAK, "com.a.game", "works")
+        dev_learn.record(
+            self.store,
+            dict(ENTRY, method="Update", args=0),
+            "custom",
+            None,
+            {"key": "tick", "title": "Tick", "kind": "switch"},
+            "com.a.game",
+        )
+        shop = dict(ENTRY, **{"class": "Shop", "method": "BuyGems"})
+        dev_learn.record(
+            self.store,
+            shop,
+            "skip",
+            None,
+            {"key": "x", "title": "X", "kind": "switch"},
+            "com.a.game",
+            "works",
+        )
+
+    def test_exact_match_first_then_similar_and_rules(self):
+        found = [
+            method("Boss", "DamagePlayer", params=("long dmg", "bool crit")),
+            method("Boss", "DamagePlayerSlowly"),
+            method("Hud", "Update"),  # a Unity callback: never suggested
+            method("Store", "BuyGems"),  # purchases: never suggested
+            method(
+                "Boss", "DamagePlayer", ret="int"
+            ),  # another result kind: no exact pattern
+            method("Boss", "Attack"),
+        ]
+        rows = dev_learn.suggest(self.store, found)
+        names = [(m.full_name, exact) for _, m, _, exact in rows]
+        self.assertEqual(names[0], ("Boss.DamagePlayer", True))
+        self.assertIn(("Boss.DamagePlayerSlowly", False), names)
+        self.assertNotIn("Hud.Update", [n for n, _ in names])
+        self.assertNotIn("Store.BuyGems", [n for n, _ in names])
+        self.assertNotIn("Boss.Attack", [n for n, _ in names])
+
+    def test_used_methods_and_failed_patterns_are_skipped(self):
+        found = [method("Boss", "DamagePlayer", params=("long dmg", "bool crit"))]
+        self.assertEqual(
+            dev_learn.suggest(self.store, found, used={"Boss.DamagePlayer"}), []
+        )
+        p = self.store["patterns"][dev_learn.pattern_key("DamagePlayer", "void")]
+        p["uses"][0]["result"] = "fails"
+        self.assertEqual(dev_learn.suggest(self.store, found), [])
+
+    def test_plugin_assemblies_rank_below_game_code(self):
+        found = [
+            method(
+                "Ad", "DamagePlayer", params=("long a", "bool b"), assembly="AdPlugin"
+            ),
+            method("Boss", "DamagePlayer", params=("long a", "bool b")),
+        ]
+        rows = dev_learn.suggest(self.store, found)
+        self.assertEqual(rows[0][1].class_name, "Boss")
+
+    def test_title_for(self):
+        m = method("Boss", "get_AttackSuccessRate", ret="float")
+        self.assertEqual(dev_learn.title_for(m, {}), "Attack Success Rate")
+        self.assertEqual(
+            dev_learn.title_for(m, {"title": "Enemies miss"}), "Enemies miss"
+        )
+        self.assertEqual(
+            dev_learn.title_for(m, {"title": "Enemy.Thing"}), "Attack Success Rate"
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
