@@ -3,6 +3,7 @@
 #import <dlfcn.h>
 #import <execinfo.h>
 #import <mach/mach.h>
+#import <os/log.h>
 #import <unistd.h>
 
 #include "am_il2cpp.h"
@@ -18,7 +19,8 @@ static NSMutableArray<NSString *> *lines;
 static void (^reportHandler)(NSString *);
 
 static void logLine(const char *message) {
-    NSLog(@"[AccretionMods] %s", message);
+    // %{public}s: NSLog shows dynamic strings as <private> on a phone without a debugger
+    os_log(OS_LOG_DEFAULT, "[AccretionMods] %{public}s", message);
     if (!lines) lines = [NSMutableArray array];
     [lines addObject:@(message)];
 }
