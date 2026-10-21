@@ -50,6 +50,7 @@ scripts/
   watch_bases.py      find base apps with a newer release (the Mods: watch base apps workflow)
   sign.sh             sign an .ipa with your own certificate, for your own devices
   install_zsign.sh    install zsign (the open-source signer sign.sh uses)
+  install_il2cppdumper.sh  build the pinned Il2CppDumper that reads Unity 6 metadata (v39)
   validate_tweaks.py  check tweaks.json
 tests/                version rules
 mods.json             generated AltStore source (do not edit)
@@ -112,11 +113,16 @@ python3 scripts/base.py put ~/intake/tweak.deb      # prints the sha256
 
 A Unity game ships its code as IL2CPP, so a cheat hooks C# methods by name. Run
 [Il2CppDumper](https://github.com/Perfare/Il2CppDumper) on the game's `UnityFramework` binary and
-`Data/Managed/Metadata/global-metadata.dat` (both inside `Payload/*.app`) to get `dump.cs`, then:
+`Data/Managed/Metadata/global-metadata.dat` (both inside `Payload/*.app`) to get `dump.cs`. Perfare's
+6.7.46 reads metadata up to v31 (Unity 2022); Unity 6 games (metadata v35, v38, v39; the version is
+the little-endian int at byte 4 of global-metadata.dat) need the pinned fork that
+`scripts/install_il2cppdumper.sh` builds (git and the .NET SDK required):
 
 ```sh
-python3 scripts/find_cheats.py dump.cs                      # candidates by category, with scores
-python3 scripts/find_cheats.py dump.cs --mod my-game --pick # choose; writes mods/my-game/hooks.json
+scripts/install_il2cppdumper.sh                             # ~/.local/il2cppdumper
+dotnet ~/.local/il2cppdumper/Il2CppDumper.dll UnityFramework global-metadata.dat dump/
+python3 scripts/find_cheats.py dump/dump.cs                 # candidates by category, with scores
+python3 scripts/find_cheats.py dump/dump.cs --mod my-game --pick # choose; writes mods/my-game/hooks.json
 ```
 
 It scores methods by name (god mode, damage, cooldown, speed, ammo) and suggests what the hook does:
