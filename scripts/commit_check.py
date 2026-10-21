@@ -32,6 +32,9 @@ AI_LINE = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 UPSTREAM_REFS = "refs/commit-check/upstream"
+# Temporary (owner's call): author/committer addresses that pass the identity check for now.
+# AI attribution lines in messages are still flagged.
+ALLOWED_FOR_NOW = {"noreply@anthropic.com"}
 
 
 def git(*args, cwd=None):
@@ -71,6 +74,8 @@ def identity_problems(what, name, email):
     lowered = email.lower()
     if name.lower() in OWNER_NAMES and not lowered.endswith(NOREPLY):
         return [f"the {what} is the owner without the GitHub noreply address"]
+    if lowered in ALLOWED_FOR_NOW:
+        return []
     if AI_EMAIL.search(lowered) or AI_NAME.search(name.strip()):
         return [f"the {what} is an AI tool ({name})"]
     return []
