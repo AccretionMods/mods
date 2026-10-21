@@ -25,6 +25,7 @@ it); signing and device logs need the phone on USB and run on Windows (plumesign
   dev.py install <signed.ipa>                                    pymobiledevice3 apps install (USB)
   dev.py log <mod> [--seconds 60]                                device log lines of the mod and the runtime
   dev.py status <mod>                                            base, dump, tweaks, hooks, last build
+  dev.py run <mod> [--bump] [--seconds 60]                       build .ipa + sign + install + open + log, in one go
   dev.py update <mod> [new.ipa]                                  newer game version: re-dump, hooks ok/changed/missing,
                                                                  mod.json base + tested version refreshed
   dev.py pick <mod> <regex>                                      numbered find; type a number, answer 2-3 questions
@@ -812,7 +813,13 @@ def cmd_gen(args):
 def cmd_check(args):
     import check_hooks
 
-    return check_hooks.main([args.mod, str(dump_path(args.mod))])
+    hooks = load_hooks(mod_dir(args.mod))["hooks"]
+    results = check_hooks.check(hooks, dump_methods(args.mod))
+    for status, h, detail in results:
+        print(f"  {status:8} {gen_tweaks.hook_name(h)}  {detail}")
+    counts = {s: sum(1 for r in results if r[0] == s) for s in ("ok", "changed", "missing")}
+    print(f"{counts['ok']} ok, {counts['changed']} changed, {counts['missing']} missing of {len(results)} hooks")
+    return 1 if counts["changed"] or counts["missing"] else 0
 
 
 # ---------------------------------------------------------------- new
@@ -1182,8 +1189,69 @@ def cmd_sign(args):
     )  # interactive: Apple ID prompts (2FA) go to this console
     if r.returncode != 0:
         raise DevError(f"plumesign failed ({r.returncode})")
-    print(f"==> {out}" + (" installed" if args.install else ""))
+    print(f"==> {out}")
+    if args.install:
+        # plumesign's install has left the app missing minutes later (2026-10-21, FBSApplicationLibrary NotFound);
+        # check the phone's list and install the signed copy over USB if it is not there
+        info, _ = ipa_info(out)
+        bundle = info["CFBundleIdentifier"]
+        if bundle in installed_bundles(bundle.rsplit(".", 2)[0]):
+            print(f"==> installed as {bundle}")
+        else:
+            print(f"==> {bundle} is not on the phone after plumesign's install; installing the signed copy over USB")
+            if subprocess.run(["pymobiledevice3", "apps", "install", str(out)], stdin=subprocess.DEVNULL, check=False).returncode != 0:
+                raise DevError("pymobiledevice3 apps install failed")
+        if getattr(args, "launch", False):
+            launch_app(bundle)
     return 0
+
+
+def installed_bundles(prefix):
+    """Bundle IDs on the USB phone that start with prefix (an Apple ID-signed copy carries a team suffix)."""
+    python = pymobiledevice3_python()
+    if not python:
+        raise DevError("pymobiledevice3 not found (uv tool install pymobiledevice3)")
+    code = (
+        "import sys; from pymobiledevice3.lockdown import create_using_usbmux; "
+        "from pymobiledevice3.services.installation_proxy import InstallationProxyService; "
+        "apps = InstallationProxyService(create_using_usbmux()).get_apps(); "
+        "print(' '.join(b for b in apps if b.startswith(sys.argv[1])))"
+    )
+    r = subprocess.run([python, "-c", code, prefix], capture_output=True, text=True, stdin=subprocess.DEVNULL, check=False)
+    if r.returncode != 0:
+        detail = r.stderr.strip().splitlines()[-1] if r.stderr.strip() else ""
+        raise DevError(f"could not list the phone's apps: {detail}")
+    return r.stdout.split()
+
+
+def launch_app(bundle):
+    """Opens an app on the USB phone through the developer tunnel (Developer Mode on, phone unlocked)."""
+    print(f"==> launching {bundle}")
+    r = subprocess.run(["pymobiledevice3", "developer", "dvt", "launch", bundle], stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False)
+    if r.returncode != 0:
+        detail = r.stderr.strip().splitlines()[-1] if r.stderr.strip() else ""
+        raise DevError(f"launch failed ({detail}); open the app by hand, then dev.py log")
+    return True
+
+
+def cmd_run(args):
+    """The whole loop: build the .ipa, sign and install it, open it, read the log."""
+    folder = mod_dir(args.mod)
+    meta = read_json(folder / "mod.json")
+    code = cmd_build(argparse.Namespace(mod=args.mod, ipa=True, bump=args.bump, base=args.base))
+    if code:
+        return code
+    ipa = load_state(args.mod).get("last_ipa")
+    if not ipa:
+        raise DevError("no .ipa from the build")
+    cmd_sign(argparse.Namespace(ipa=ipa, install=True, out=None, launch=False))
+    signed = Path(ipa).with_name(Path(ipa).stem.replace("_accretion", "") + "_signed.ipa")
+    bundle = ipa_info(signed)[0]["CFBundleIdentifier"]
+    state = load_state(args.mod)
+    state["installed_bundle"] = bundle
+    save_state(args.mod, state)
+    launch_app(bundle)
+    return cmd_log(argparse.Namespace(mod=args.mod, seconds=args.seconds, launch=False))
 
 
 def cmd_install(args):
@@ -1201,6 +1269,11 @@ def cmd_install(args):
 def cmd_log(args):
     folder = mod_dir(args.mod)
     meta = read_json(folder / "mod.json")
+    if getattr(args, "launch", False):
+        found = installed_bundles(meta["bundle_id"])
+        if not found:
+            raise DevError(f"{meta['bundle_id']} is not on the phone (dev.py sign <ipa> --install)")
+        launch_app(found[0])
     tag = meta.get("display_name") or meta["name"]
     if (folder / "tweaks.json").is_file():
         tag = (
@@ -1395,6 +1468,8 @@ def cmd_update(args):
             fresh = m.hook()
             for k in ("args", "return_type", "signature", "needs_jit", "assembly"):
                 h[k] = fresh[k]
+    if (meta.get("base") or {}).get("ipa_url"):
+        print(f"    note: base.ipa_url still points at the old file; set it to the {version} link (the build checks the sha256)")
     meta.setdefault("base", {})["sha256"] = sha
     meta["tested_app_version"] = version
     write_json(folder / "mod.json", meta)
@@ -1741,6 +1816,7 @@ def main(argv=None):
     s = sub.add_parser("sign")
     s.add_argument("ipa")
     s.add_argument("--install", action="store_true")
+    s.add_argument("--launch", action="store_true", help="with --install: open the app afterwards")
     s.add_argument("-o", "--out")
     s.set_defaults(fn=cmd_sign)
 
@@ -1751,7 +1827,15 @@ def main(argv=None):
     s = sub.add_parser("log")
     s.add_argument("mod")
     s.add_argument("--seconds", type=int, default=60)
+    s.add_argument("--launch", action="store_true", help="(re)open the installed app first, so the hook report is in the capture")
     s.set_defaults(fn=cmd_log)
+
+    s = sub.add_parser("run", help="build .ipa, sign + install with the Apple ID, open it, read the log")
+    s.add_argument("mod")
+    s.add_argument("--bump", action="store_true")
+    s.add_argument("--base")
+    s.add_argument("--seconds", type=int, default=60)
+    s.set_defaults(fn=cmd_run)
 
     s = sub.add_parser("status")
     s.add_argument("mod")

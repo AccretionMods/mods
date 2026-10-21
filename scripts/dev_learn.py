@@ -18,6 +18,7 @@ online play are never suggested (find_cheats.LEFT_OUT).
 import json
 import os
 import re
+import sys
 from datetime import date
 
 from find_cheats import left_out
@@ -36,8 +37,14 @@ UNITY_MESSAGES_HINT = (
 
 def load(path):
     if os.path.isfile(path):
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except ValueError:
+            bad = str(path) + ".bad"
+            os.replace(path, bad)
+            print(f"patterns file was not valid JSON; moved to {bad} and starting empty", file=sys.stderr)
+            data = None
         if isinstance(data, dict) and isinstance(data.get("patterns"), dict):
             return data
     return {"version": 1, "patterns": {}}
@@ -45,9 +52,12 @@ def load(path):
 
 def save(path, store):
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "w", encoding="utf-8", newline="\n") as f:
+    path = str(path)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
         json.dump(store, f, indent=2, ensure_ascii=False, sort_keys=True)
         f.write("\n")
+    os.replace(tmp, path)
 
 
 def kind_of(return_type):
@@ -226,8 +236,6 @@ def suggest(store, methods, used=(), limit=30):
         if related:
             p = max(related, key=score)
             sc = score(p) + assembly_bonus
-            if p.get("action") == "custom":
-                sc //= 2
             if sc > 0:
                 rows.append((sc, m, p, False))
     rows.sort(key=lambda r: (-r[0], r[1].full_name))

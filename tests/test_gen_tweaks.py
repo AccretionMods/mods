@@ -286,7 +286,7 @@ class Render(unittest.TestCase):
 
     def test_multiply_by_slider_when_not_default(self):
         self.assertIn(
-            "(am_damage != 1.0f) ? (int64_t)(value * am_damage) : value", self.m
+            "(am_damage != 1.0f) ? (int64_t)(am_result * am_damage) : am_result", self.m
         )
 
     def test_arg_on_static_method_has_no_self(self):

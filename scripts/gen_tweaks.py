@@ -123,14 +123,19 @@ def parse_signature(entry):
     enums = set(entry.get("enums", []))
     args = []
     for i, p in enumerate(split_params(params)):
-        words = p.replace("ref ", "").replace("out ", "").replace("in ", "").split()
+        p = p.split("=", 1)[0].strip()  # "int level = -1": the default is the caller's business
+        by_ref = bool(re.match(r"^(ref|out)\s", p))
+        words = re.sub(r"^(?:(?:ref|out|in|params|this)\s+)+", "", p).split()
         if len(words) < 2:
             raise TweaksError(f"can't read parameter {i} of {hook_name(entry)}: {p!r}")
-        cs_type, pname = words[-2], words[-1].split("=")[0]
+        cs_type, pname = words[-2], words[-1]
         pname = re.sub(r"\W", "_", pname) or f"a{i}"
-        if pname in ("self", "mi", "method", "default", "class", "new", "this"):
+        if pname in ("self", "mi", "method", "default", "class", "new", "this", "value", "v", "p", "obj"):
             pname = f"a{i}"
-        args.append((ctype(cs_type, enums), pname, cs_type))
+        c = ctype(cs_type, enums)
+        if cs_type.endswith("?"):
+            raise TweaksError(f"{hook_name(entry)}: parameter {pname} is a Nullable ({cs_type}), passed by value; hook it as custom")
+        args.append((c + " *" if by_ref else c, pname, cs_type))
     overrides = entry.get("ctypes")
     if overrides:
         if len(overrides) != len(args):
@@ -222,11 +227,12 @@ def problems(tweaks, hooks):
                     f"{hwhere}: {hk['method']} is not in hooks.json (scripts/dev.py add <mod> {hk['method']})"
                 )
                 continue
-            if hk["method"] in used and action != "custom":
+            full = hook_name(entry)
+            if full in used and action != "custom":
                 out.append(
-                    f"{hwhere}: {hk['method']} is already hooked by tweak {used[hk['method']]}; one method, one tweak"
+                    f"{hwhere}: {hk['method']} is already hooked by tweak {used[full]}; one method, one tweak"
                 )
-            used.setdefault(hk["method"], key)
+            used.setdefault(full, key)
             if action == "custom":
                 continue
             try:
@@ -371,6 +377,8 @@ def pin_problems(pin, kind):
         out.append('"op" must be set or multiply')
     if op == "multiply" and (target != "field" or ctype_ not in NUMERIC):
         out.append('"op": "multiply" works on a numeric field')
+    if op == "multiply" and isinstance(obj, str) and obj.endswith("[]"):
+        out.append('"op": "multiply" tracks one base value, so it needs a single object (not Class[])')
     return out
 
 
@@ -379,9 +387,12 @@ def pin_objects(pin):
     obj = pin["object"]
     every = obj.endswith("[]")
     obj = obj[:-2] if every else obj
-    cls, _, static = obj.rpartition(".") if ("." in obj and not every) else ("", "", "")
-    if not cls:
-        cls, static = obj, ""
+    if pin.get("static_field"):
+        cls, static = obj, pin["static_field"]
+    else:
+        cls, _, static = obj.rpartition(".") if ("." in obj and not every) else ("", "", "")
+        if not cls:
+            cls, static = obj, ""
     lines = []
     if every:
         lines.append(
@@ -437,16 +448,14 @@ def render_pin(pin, var, kind, key, index):
     what = pin.get("field") or pin.get("setter") or pin.get("call")
     lines = [f"    {{  // pin {index}: {pin['object']} {what}"]
     objects, closers, cls = pin_objects(pin)
-    lines += objects
     if pin.get("call"):
         every = pin.get("every", 0)
         if every:
             lines.append(
-                f"            static CFAbsoluteTime {state}_at; CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();"
+                f"        static CFAbsoluteTime {state}_at; CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();"
             )
-            lines.append(
-                f"            if (now - {state}_at >= {float(every)!r}) {{ {state}_at = now;"
-            )
+            lines.append(f"        if (now - {state}_at >= {float(every)!r}) {{ {state}_at = now;")
+        lines += objects
         pairs = list(zip(pin.get("args", []), pin.get("arg_ctypes", [])))
         decl = "; ".join(
             f"{c} a{i} = {c_value(a, c)}" for i, (a, c) in enumerate(pairs)
@@ -458,11 +467,12 @@ def render_pin(pin, var, kind, key, index):
         lines.append(
             f"            if (AMIl2cppCall(obj, {c_string(cls)}, {c_string(pin['call'])}, {len(pairs)}, argv, NULL)) applied = true;"
         )
-        if every:
-            lines.append("            }")
         lines += closers
+        if every:
+            lines.append("        }")
         lines.append("    }")
         return lines
+    lines += objects
     ctype_ = pin["ctype"]
     when = pin.get("when", "always")
     cmp_ = {"always": None, "lower": "<", "higher": ">"}[when]
@@ -513,7 +523,8 @@ def render_pin(pin, var, kind, key, index):
             lines.append(
                 f"            if ({cond}) {{ {ctype_} v = {value}; void *argv[1] = {{&v}}; if (AMIl2cppCall(obj, {c_string(cls)}, {c_string(setter)}, 1, argv, NULL)) applied = true; }}"
             )
-    lines.append(f"            {state}_next:;")
+    if any(f"goto {state}_next" in line for line in lines):
+        lines.append(f"            {state}_next:;")
     lines += closers
     lines.append("    }")
     return lines
@@ -548,7 +559,7 @@ def render_watch(watch, every):
         objects, closers, cls = pin_objects(
             {"object": w["object"], "via": w.get("via"), "class": w.get("class")}
         )
-        name = w.get("name") or (w.get("getter") or w.get("field")).replace("get_", "")
+        name = (w.get("name") or (w.get("getter") or w.get("field")).replace("get_", "")).replace("%", "%%")
         ctype_ = w["ctype"]
         if ctype_ in ("int32_t", "int16_t", "int8_t", "uint8_t", "uint16_t", "bool"):
             spec, cast = "%d", "(int)"
@@ -683,8 +694,8 @@ def render(tweaks, hooks, mod_name):
                     body.append(f"    return {orig_call};")
                 elif action == "multiply":
                     factor = var if kind == "slider" else c_value(hk["value"], "float")
-                    body.append(f"    {ret} value = {orig_call};")
-                    body.append(f"    return {on} ? ({ret})(value * {factor}) : value;")
+                    body.append(f"    {ret} am_result = {orig_call};")
+                    body.append(f"    return {on} ? ({ret})(am_result * {factor}) : am_result;")
                 elif action == "arg":
                     c, n, _ = args[hk["index"]]
                     body.append(f"    if ({on}) {n} = {c_value(hk['value'], c)};")
@@ -744,6 +755,7 @@ def render(tweaks, hooks, mod_name):
         "    AMMenu *menu = AMMenu.shared;",
         "    menu.title = AMTweaksTitle;",
         '    NSString *jit = AMIl2cppHasJIT() ? @"" : @" (JIT)";',
+        "    (void)jit;",
     ]
     for t in tweaks["tweaks"]:
         kind = t.get("kind", "switch")
