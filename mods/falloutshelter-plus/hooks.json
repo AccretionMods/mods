@@ -1,0 +1,320 @@
+{
+  "engine": "unity-il2cpp",
+  "hooks": [
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "Dweller.DwellerFighting",
+      "method": "GetHit",
+      "args": 2,
+      "return_type": "void",
+      "needs_jit": false
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "Dweller.DwellerFightingQuest",
+      "method": "GetHit",
+      "args": 2,
+      "return_type": "void",
+      "needs_jit": false
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "Dweller.DwellerFighting",
+      "method": "GetWeaponDamage",
+      "args": 0,
+      "return_type": "float",
+      "needs_jit": false
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "Dweller.DwellerFightingQuest",
+      "method": "GetWeaponDamage",
+      "args": 0,
+      "return_type": "float",
+      "needs_jit": false
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "ProductionRoom.ProductionRoomWorking",
+      "method": "GetTaskCycle",
+      "args": 0,
+      "return_type": "float",
+      "needs_jit": false
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "CraftingRoom.CraftingRoomWorking",
+      "method": "GetTaskCycle",
+      "args": 0,
+      "return_type": "float",
+      "needs_jit": false
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "TrainingRoom",
+      "method": "GetExperiencePerCycle",
+      "args": 0,
+      "return_type": "float",
+      "needs_jit": false
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "WastelandCycle",
+      "method": "GetCycleDurationInSeconds",
+      "args": 0,
+      "return_type": "float",
+      "needs_jit": false
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "Room.RoomDeathclawEmergencyController",
+      "method": "get_DwellerMaxDamagePerCycle",
+      "args": 0,
+      "return_type": "float",
+      "needs_jit": false
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "Room.RoomDeathclawEmergencyController",
+      "method": "get_DamagePerCycle",
+      "args": 0,
+      "return_type": "float",
+      "needs_jit": false
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "Room.RoomGhoulEmergencyController",
+      "method": "get_DwellerMaxDamagePerCycle",
+      "args": 0,
+      "return_type": "float",
+      "needs_jit": false
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "Room.RoomGhoulEmergencyController",
+      "method": "get_DamagePerCycle",
+      "args": 0,
+      "return_type": "float",
+      "needs_jit": false
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "Room.RoomMoleratEmergencyController",
+      "method": "get_DwellerMaxDamagePerCycle",
+      "args": 0,
+      "return_type": "float",
+      "needs_jit": false
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "Room.RoomMoleratEmergencyController",
+      "method": "get_DamagePerCycle",
+      "args": 0,
+      "return_type": "float",
+      "needs_jit": false
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "Room.RoomRadroachEmergencyController",
+      "method": "get_DwellerMaxDamagePerCycle",
+      "args": 0,
+      "return_type": "float",
+      "needs_jit": false
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "Room.RoomRadroachEmergencyController",
+      "method": "get_DamagePerCycle",
+      "args": 0,
+      "return_type": "float",
+      "needs_jit": false
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "Room.RoomRadscorpionEmergencyController",
+      "method": "get_DwellerMaxDamagePerCycle",
+      "args": 0,
+      "return_type": "float",
+      "needs_jit": false
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "Room.RoomRadscorpionEmergencyController",
+      "method": "get_DamagePerCycle",
+      "args": 0,
+      "return_type": "float",
+      "needs_jit": false
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "Room.RoomSecuritronEmergencyController",
+      "method": "get_DwellerMaxDamagePerCycle",
+      "args": 0,
+      "return_type": "float",
+      "needs_jit": false
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "Room.RoomSecuritronEmergencyController",
+      "method": "get_DamagePerCycle",
+      "args": 0,
+      "return_type": "float",
+      "needs_jit": false
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "Room.RoomAliensEmergencyController",
+      "method": "get_RoomDamagePerCycle",
+      "args": 0,
+      "return_type": "float",
+      "needs_jit": false
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "Room.RoomEnclavePowerArmorEmergencyController",
+      "method": "get_RoomDamagePerCycle",
+      "args": 0,
+      "return_type": "float",
+      "needs_jit": false
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "Room.RoomEnclaveSecurityEmergencyController",
+      "method": "get_RoomDamagePerCycle",
+      "args": 0,
+      "return_type": "float",
+      "needs_jit": false
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "Room.RoomGen1SynthEmergencyController",
+      "method": "get_RoomDamagePerCycle",
+      "args": 0,
+      "return_type": "float",
+      "needs_jit": false
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "Room.RoomGen2SynthEmergencyController",
+      "method": "get_RoomDamagePerCycle",
+      "args": 0,
+      "return_type": "float",
+      "needs_jit": false
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "Room.RoomRaidersEmergencyController",
+      "method": "get_RoomDamagePerCycle",
+      "args": 0,
+      "return_type": "float",
+      "needs_jit": false
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "ProductionRoom",
+      "method": "get_CheatRushAlwaysSucceeds",
+      "args": 0,
+      "return_type": "bool",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "ProductionRoom",
+      "method": "GetResourceWithBonuses",
+      "args": 1,
+      "return_type": "float",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "DwellerHealth",
+      "method": "DoStatReductedDamage",
+      "args": 4,
+      "return_type": "void",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "DwellerHealth",
+      "method": "set_RadiationValue",
+      "args": 1,
+      "return_type": "void",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "VaultEmergencyState",
+      "method": "StartEmergency",
+      "args": 0,
+      "return_type": "void",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "VaultEmergencyState",
+      "method": "StartRandomEmergencyTask",
+      "args": 0,
+      "return_type": "void",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "VaultEmergencyState",
+      "method": "ForceStartEmergencyInRoom",
+      "args": 1,
+      "return_type": "void",
+      "needs_jit": true
+    },
+    {
+      "assembly": "UnityEngine.CoreModule",
+      "namespace": "UnityEngine",
+      "class": "Time",
+      "method": "set_timeScale",
+      "args": 1,
+      "return_type": "void",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "MainMenuScene",
+      "method": "OnAwake",
+      "args": 0,
+      "return_type": "void",
+      "needs_jit": false
+    }
+  ]
+}

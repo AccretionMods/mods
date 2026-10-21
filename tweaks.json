@@ -5,13 +5,29 @@
       "id": "me.foxster.donteatmycontent",
       "name": "DontEatMyContent",
       "description": "Stops YouTube videos being cut off by the notch or Dynamic Island when zoomed to fill the screen.",
-      "targets": ["com.google.ios.youtube"],
+      "targets": [
+        "com.google.ios.youtube"
+      ],
       "version": "1.1.12",
       "debURL": "https://github.com/therealFoxster/DontEatMyContent/releases/download/v1.1.12/me.foxster.donteatmycontent_1.1.12_iphoneos-arm64.deb",
       "requires": [],
       "license": "MIT",
       "projectURL": "https://github.com/therealFoxster/DontEatMyContent",
       "author": "therealFoxster"
+    },
+    {
+      "id": "io.github.accretionmods.falloutshelter-plus",
+      "name": "Fallout Shelter+",
+      "description": "Mod menu for Fallout Shelter: no combat or incident damage, production, training, wasteland and game speed, rushes always succeed, no radiation or fires, caps multiplier, full resources, happy dwellers, max SPECIAL, fast level-ups, instant explorer returns, and a rare/legendary weapon and outfit picker. Works without JIT; also fixes a re-signed copy's main menu so vaults open.",
+      "targets": [
+        "com.bethsoft.falloutshelter"
+      ],
+      "version": "2.1.0",
+      "debURL": "https://github.com/AccretionMods/mods/releases/download/falloutshelter-plus-v2.1.0/FalloutShelterPlus-2.1.0.dylib",
+      "requires": [],
+      "license": "MIT",
+      "projectURL": "https://github.com/AccretionMods/mods/tree/main/mods/falloutshelter-plus",
+      "author": "Accretion"
     }
   ]
 }
