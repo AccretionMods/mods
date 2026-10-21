@@ -12,6 +12,10 @@ it); signing and device logs need the phone on USB and run on Windows (plumesign
   dev.py add <mod> <Class.method> [--as key] [--title T]         hook a method: hooks.json + tweaks.json + code
          [--action skip|return|multiply|arg|custom] [--value V] [--index I] [--args N]
          [--slider MIN MAX DEFAULT] [--to key]
+  dev.py pin <mod> <Class.field | Class.set_X> --value V        no-JIT switch: write a field or call a setter on the
+         [--object Class.instance|Class|Class[]] [--when lower]    live object(s) every half second (the validated path)
+         [--threshold N] [--via get_X --class Y] [--multiply] [--slider MIN MAX DEFAULT] [--as key | --to key]
+  dev.py call <mod> <Class.Method> --args ... --every 10        no-JIT switch: call a method every N s while on
   dev.py tweak <mod> <key> --title T [--slider MIN MAX DEFAULT]  a switch or slider with no hook (for Tweak.x code)
   dev.py remove <mod> <key or Class.method>                      drop a tweak (and hooks nothing else uses)
   dev.py gen <mod>                                               regenerate AMTweaks.gen.m from tweaks.json
@@ -542,6 +546,11 @@ def cmd_add(args):
         + (f" {value}" if value is not None else "")
         + ("  (needs JIT)" if m.needs_jit else "")
     )
+    if m.needs_jit and action != "custom":
+        print(
+            f"    without JIT this hook catches nothing (the game calls {m.name} directly). The no-JIT way is a pin:\n"
+            f"    dev.py pin {args.mod} {m.class_name}.<field or set_Property> --value V --to {key}   (dev.py fields {args.mod} {m.class_name})"
+        )
     if action == "custom":
         _static, ret, cargs, _ = gen_tweaks.parse_signature(entry)
         params = (
@@ -552,6 +561,188 @@ def cmd_add(args):
         print(
             f"    define in Tweak.x:  {ret} hook_{gen_tweaks.ident(full)}({', '.join(params)}) {{ ... orig_{gen_tweaks.ident(full)}(...) }}"
         )
+    return cmd_gen(args)
+
+
+def cmd_pin(args):
+    """The no-JIT path: every tick, write a field or call a setter on the live object(s) of a class."""
+    folder = mod_dir(args.mod)
+    meta = read_json(folder / "mod.json")
+    if "." not in args.target:
+        raise DevError("target is Class.field or Class.set_Property")
+    cls, _, member = args.target.rpartition(".")
+    pin = {"object": args.object or "", "when": args.when}
+    if member.startswith("set_") and not args.field:
+        m = resolve_method(args.mod, args.target, 1)
+        cs_type = m.params[0].replace("ref ", "").replace("out ", "").split()[0]
+        ctype_ = gen_tweaks.ctype(
+            cs_type,
+            set(hook_entry(args.mod, m, type_kinds(args.mod))[0].get("enums", [])),
+        )
+        pin["setter"] = member
+        what = f"{m.full_name}({', '.join(m.params)})"
+    else:
+        rows = [f for f in fields_of(args.mod, cls) if f[3] == member]
+        if not rows:
+            leads = ", ".join(f[3] for f in fields_of(args.mod, cls)[:12])
+            raise DevError(
+                f"{cls} has no field {member}"
+                + (f" (fields: {leads}...)" if leads else " (class not in the dump?)")
+            )
+        offset, static, cs_type, _ = rows[0]
+        if static:
+            raise DevError(
+                f"{args.target} is a static field; pin an instance field, or a setter"
+            )
+        ctype_ = gen_tweaks.ctype(
+            cs_type, {k for k, v in type_kinds(args.mod).items() if v == "enum"}
+        )
+        pin["field"] = member
+        what = f"{cls}.{member} ({cs_type} at 0x{offset:X} in 10.x; read by name at run time)"
+    if ctype_ not in gen_tweaks.NUMERIC and ctype_ != "bool":
+        raise DevError(f"{args.target} is {cs_type}: a pin needs a number or bool")
+    pin["ctype"] = ctype_
+    if not pin["object"]:
+        statics = [
+            f
+            for f in fields_of(args.mod, cls)
+            if f[1]
+            and f[3] in ("instance", "Instance", "p", "I", "_instance", "singleton")
+        ]
+        pin["object"] = f"{cls}.{statics[0][3]}" if statics else cls
+    raw = args.value
+    if args.slider and raw in (None, "slider"):
+        value = "slider"
+    elif raw == "peak":
+        value = "peak"
+    elif raw and raw.startswith("getter:"):
+        value = {"getter": raw[7:]}
+    elif raw and raw.startswith("field:"):
+        value = {"field": raw[6:]}
+    else:
+        value = parse_value(raw)
+    if value is None:
+        raise DevError(
+            "give --value: a number, true/false, peak, getter:get_X, field:Y, or slider (with --slider)"
+        )
+    pin["value"] = value
+    if args.threshold is not None:
+        pin["threshold"] = args.threshold
+    if args.via:
+        pin["via"] = args.via
+    if args.cls:
+        pin["class"] = args.cls
+    if args.multiply:
+        pin["op"] = "multiply"
+
+    tweaks = load_tweaks(folder, meta)
+    if args.to:
+        tweak = next((t for t in tweaks["tweaks"] if t["key"] == args.to), None)
+        if tweak is None:
+            raise DevError(f"no tweak {args.to}")
+        key = args.to
+    else:
+        key = args.key or key_for(f"{cls}.{member}")
+        if any(t["key"] == key for t in tweaks["tweaks"]):
+            raise DevError(
+                f"a tweak {key} exists: --to {key} adds this pin to it, --as gives another key"
+            )
+        tweak = {
+            "key": key,
+            "title": args.title or f"{cls} {member}",
+            "kind": "switch",
+            "hooks": [],
+        }
+        if args.slider:
+            lo, hi, default = args.slider
+            tweak.update(kind="slider", min=lo, max=hi, default=default)
+        tweaks["tweaks"].append(tweak)
+    tweak.setdefault("pins", []).append(pin)
+    problems = gen_tweaks.problems(tweaks, load_hooks(folder))
+    if problems:
+        raise DevError("not written:\n  " + "\n  ".join(problems))
+    write_json(folder / "tweaks.json", tweaks)
+    store = dev_learn.load(patterns_path())
+    entry = {
+        "class": cls,
+        "method": member,
+        "namespace": "",
+        "return_type": "void",
+        "args": 1,
+    }
+    dev_learn.record(store, entry, "pin", value, tweak, meta["target_bundle_id"])
+    dev_learn.save(patterns_path(), store)
+    print(f"==> pin: {what}")
+    print(
+        f"==> tweak {key}: every tick on {pin['object']}: {member} {args.when} {value}  (no JIT needed)"
+    )
+    return cmd_gen(args)
+
+
+def cmd_call(args):
+    """A pin that calls a method on the live object(s) every N seconds (the game's own debug givers, for example)."""
+    folder = mod_dir(args.mod)
+    meta = read_json(folder / "mod.json")
+    values = [parse_value(a) for a in args.args]
+    m = resolve_method(args.mod, args.target, len(values))
+    cls = m.class_name
+    enums = {k for k, v in type_kinds(args.mod).items() if v == "enum"}
+    ctypes_ = []
+    for p in m.params:
+        cs_type = (
+            p.replace("ref ", "").replace("out ", "").split()[0]
+        )  # "int level = -1" -> int
+        c = gen_tweaks.ctype(cs_type, enums)
+        if c not in gen_tweaks.NUMERIC and c != "bool":
+            raise DevError(
+                f"{m.full_name}: argument {p!r} is not a number or bool; write the call in Tweak.x (AMIl2cppCall)"
+            )
+        ctypes_.append(c)
+    pin = {
+        "object": args.object or "",
+        "call": m.name,
+        "args": values,
+        "arg_ctypes": ctypes_,
+        "every": args.every,
+    }
+    if not pin["object"]:
+        statics = [
+            f
+            for f in fields_of(args.mod, cls)
+            if f[1]
+            and f[3] in ("instance", "Instance", "p", "I", "_instance", "singleton")
+        ]
+        pin["object"] = f"{cls}.{statics[0][3]}" if statics else cls
+    tweaks = load_tweaks(folder, meta)
+    if args.to:
+        tweak = next((t for t in tweaks["tweaks"] if t["key"] == args.to), None)
+        if tweak is None:
+            raise DevError(f"no tweak {args.to}")
+        key = args.to
+    else:
+        key = args.key or key_for(f"{cls}.{m.name}")
+        if any(t["key"] == key for t in tweaks["tweaks"]):
+            raise DevError(
+                f"a tweak {key} exists: --to {key} adds this call to it, --as gives another key"
+            )
+        tweak = {
+            "key": key,
+            "title": args.title or f"{cls} {m.name}",
+            "kind": "switch",
+            "hooks": [],
+        }
+        tweaks["tweaks"].append(tweak)
+    tweak.setdefault("pins", []).append(pin)
+    problems = gen_tweaks.problems(tweaks, load_hooks(folder))
+    if problems:
+        raise DevError("not written:\n  " + "\n  ".join(problems))
+    write_json(folder / "tweaks.json", tweaks)
+    store = dev_learn.load(patterns_path())
+    dev_learn.record(store, m.hook(), "call", values, tweak, meta["target_bundle_id"])
+    dev_learn.save(patterns_path(), store)
+    print(
+        f"==> tweak {key}: {pin['object']}.{m.name}({', '.join(map(str, values))}) every {args.every} s while on  (no JIT needed)"
+    )
     return cmd_gen(args)
 
 
@@ -648,7 +839,8 @@ TWEAK_X = """// {title}: a personal Accretion mod for {app} ({target}).
 // Runs twice a second once the runtime is up (main thread).
 static void tick(void) {{
     UIApplication.sharedApplication.idleTimerDisabled = am_keepAwake;
-    // Example of a no-JIT switch:
+    AMTweaksTick();  // the pins from tweaks.json (dev.py pin ...): field writes and setter calls, no JIT needed
+    // Hand-written no-JIT logic goes here, for example:
     // void *player = AMIl2cppStaticObject("Player", "instance");
     // if (am_godMode && player) *(float *)AMIl2cppField(player, "Player", "health") = 100;
 }}
@@ -911,29 +1103,59 @@ def plumesign():
     )
 
 
+def pymobiledevice3_python():
+    """The Python of the installed pymobiledevice3 (uv tool, or the one next to the pymobiledevice3 on PATH)."""
+    candidates = []
+    r = (
+        subprocess.run(
+            ["uv", "tool", "dir"], capture_output=True, text=True, check=False
+        )
+        if shutil.which("uv")
+        else None
+    )
+    if r and r.returncode == 0 and r.stdout.strip():
+        candidates.append(
+            Path(r.stdout.strip())
+            / "pymobiledevice3"
+            / ("Scripts" if WINDOWS else "bin")
+            / ("python.exe" if WINDOWS else "python")
+        )
+    exe = shutil.which("pymobiledevice3")
+    if exe:
+        candidates.append(
+            Path(exe).resolve().parent / ("python.exe" if WINDOWS else "python")
+        )
+    for c in candidates:
+        if c.is_file():
+            return str(c)
+    return None
+
+
 def usbmux_device_id():
     """usbmux's numeric DeviceID of the phone on USB (what plumesign --udid wants), via pymobiledevice3."""
+    python = pymobiledevice3_python()
+    if not python:
+        raise DevError("pymobiledevice3 not found (uv tool install pymobiledevice3)")
+    # one line on purpose: multi-line string literals have been mangled on the owner's PC (handbook rule 8)
     code = (
-        "import asyncio, inspect\n"
-        "from pymobiledevice3 import usbmux\n"
-        "r = usbmux.list_devices()\n"
-        "r = asyncio.run(r) if inspect.isawaitable(r) else r\n"
-        "usb = [d for d in r if getattr(d, 'connection_type', 'USB') == 'USB']\n"
-        "print(usb[0].devid if usb else '')\n"
-    )
-    runner = (
-        ["uv", "run", "--no-project", "--with", "pymobiledevice3", "python", "-c", code]
-        if shutil.which("uv")
-        else [sys.executable, "-c", code]
+        "import asyncio, inspect; from pymobiledevice3 import usbmux; r = usbmux.list_devices(); "
+        "r = asyncio.run(r) if inspect.isawaitable(r) else r; "
+        "usb = [d for d in r if str(getattr(d, 'connection_type', 'USB')).upper() == 'USB']; "
+        "print(usb[0].devid if usb else '')"
     )
     r = subprocess.run(
-        runner, capture_output=True, text=True, stdin=subprocess.DEVNULL, check=False
+        [python, "-c", code],
+        capture_output=True,
+        text=True,
+        stdin=subprocess.DEVNULL,
+        check=False,
     )
     devid = r.stdout.strip()
     if r.returncode != 0 or not devid:
+        detail = (" " + r.stderr.strip().splitlines()[-1]) if r.stderr.strip() else ""
         raise DevError(
-            "no iPhone on USB (pymobiledevice3 usbmux list is empty)"
-            + (f"\n{r.stderr.strip()}" if r.stderr.strip() else "")
+            "no iPhone on USB (pymobiledevice3 sees no device: unlock the phone, trust this PC, check the cable)"
+            + detail
         )
     return devid
 
@@ -987,7 +1209,13 @@ def cmd_log(args):
             or tag
         )
     pattern = f"\\[{re.escape(tag)}\\]|AccretionMods"
-    cmd = ["pymobiledevice3", "syslog", "live", "-ei", pattern]
+    cmd = [
+        "pymobiledevice3",
+        "syslog",
+        "live",
+        "-e",
+        pattern,
+    ]  # case-sensitive: the bundle ID has "accretionmods" too
     print(f"==> {' '.join(cmd)}  (for {args.seconds} s; Ctrl+C stops)")
     try:
         p = subprocess.Popen(
@@ -1003,15 +1231,28 @@ def cmd_log(args):
         raise DevError(
             "pymobiledevice3 not on PATH (uv tool install pymobiledevice3)"
         ) from None
+    # a reader thread: readline() would block past the deadline while the phone is quiet
+    import queue
+    import threading
+
+    q = queue.Queue()
+
+    def reader():
+        for line in p.stdout:
+            q.put(line)
+        q.put(None)
+
+    threading.Thread(target=reader, daemon=True).start()
     end = time.time() + args.seconds
     lines = 0
     try:
         while time.time() < end:
-            line = p.stdout.readline()
-            if not line:
-                if p.poll() is not None:
-                    break
+            try:
+                line = q.get(timeout=min(1.0, max(0.1, end - time.time())))
+            except queue.Empty:
                 continue
+            if line is None:
+                break
             print(line.rstrip())
             lines += 1
     except KeyboardInterrupt:
@@ -1019,7 +1260,14 @@ def cmd_log(args):
     finally:
         if p.poll() is None:
             p.kill()
-    print(f"==> {lines} lines")
+    print(
+        f"==> {lines} lines"
+        + (
+            ""
+            if lines
+            else " (no line from the mod: is the game open? the hook report repeats 20 s after launch)"
+        )
+    )
     return 0
 
 
@@ -1392,6 +1640,76 @@ def main(argv=None):
     s.add_argument("--slider", nargs=3, type=float, metavar=("MIN", "MAX", "DEFAULT"))
     s.add_argument("--to")
     s.set_defaults(fn=cmd_add)
+
+    s = sub.add_parser(
+        "pin",
+        help="no-JIT switch: write a field or call a setter on live objects every tick",
+    )
+    s.add_argument("mod")
+    s.add_argument("target", help="Class.field or Class.set_Property")
+    s.add_argument(
+        "--object",
+        help="Class.staticField (default: the class's instance field), Class, or Class[] for every live object",
+    )
+    s.add_argument(
+        "--value",
+        help="number, true/false, peak (highest seen), getter:get_HealthMax, field:HealthMax, or slider (with --slider)",
+    )
+    s.add_argument(
+        "--when",
+        choices=gen_tweaks.PIN_WHEN,
+        default="always",
+        help="write always, or only when the current value is lower/higher",
+    )
+    s.add_argument(
+        "--threshold",
+        type=float,
+        help="with --when: compare against this instead of the value (set 99 when below 50)",
+    )
+    s.add_argument(
+        "--via",
+        help="0-arg getter on the object that returns the real target (StatHandler.instance via get_playerStats)",
+    )
+    s.add_argument(
+        "--class",
+        dest="cls",
+        help="the target's class when it differs (FightCompanion for PlayerCompanion.Damage)",
+    )
+    s.add_argument(
+        "--multiply",
+        action="store_true",
+        help="field = base * value (base tracked), for a damage multiplier slider",
+    )
+    s.add_argument(
+        "--field",
+        action="store_true",
+        help="treat a set_ name as a field, not a setter",
+    )
+    s.add_argument("--as", dest="key")
+    s.add_argument("--title")
+    s.add_argument("--slider", nargs=3, type=float, metavar=("MIN", "MAX", "DEFAULT"))
+    s.add_argument("--to")
+    s.set_defaults(fn=cmd_pin)
+
+    s = sub.add_parser(
+        "call", help="no-JIT switch: call a method on live objects every N seconds"
+    )
+    s.add_argument("mod")
+    s.add_argument("target", help="Class.Method")
+    s.add_argument(
+        "--args", nargs="*", default=[], help="argument values (numbers, true/false)"
+    )
+    s.add_argument(
+        "--every", type=float, default=10, help="seconds between calls (0: every tick)"
+    )
+    s.add_argument(
+        "--object",
+        help="Class.staticField (default: the class's instance field), Class, or Class[]",
+    )
+    s.add_argument("--as", dest="key")
+    s.add_argument("--title")
+    s.add_argument("--to")
+    s.set_defaults(fn=cmd_call)
 
     s = sub.add_parser("tweak")
     s.add_argument("mod")

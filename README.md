@@ -227,13 +227,38 @@ function that makes it plain `am`). With no command it prints the help. Three mo
   the switch and on the pattern, so what worked ranks higher next time and what failed drops out. Methods
   named for purchases or online play are never suggested (README rules), nor are Unity callbacks.
 
-Without JIT, a plain method the game calls directly can't be hooked, so the switch is written as a data
-path instead: `runtime/AMIl2cppData.h` finds the live objects (`AMIl2cppStaticObject`, `AMIl2cppFindObject`,
-`AMIl2cppFindObjects`), reads field addresses by name from the running game (`AMIl2cppField`, so no offsets
-are copied from the dump), calls setters by name (`AMIl2cppCall`) and runs a main-queue ticker
-(`AMIl2cppEvery`). The `Tweak.x` that `dev.py new` writes has the ticker ready. `runtime/SideloadCompat.m`
-(keychain, iCloud, Game Center and age-range answers for re-signed copies) is in the generated Makefile too.
+**Without JIT, hooks on plain methods catch nothing** (the game calls them directly; only virtual methods and
+Unity callbacks go through the swapped pointers), so a switch for any phone is a *pin*: every half second the
+ticker writes a field or calls a setter on the live objects, the way The Wanderer+ 1.0.7 does it by hand.
+`am pin` and `am call` write one into `tweaks.json` and the generator turns it into code on the shared data
+helpers (`runtime/AMIl2cppData.h`: objects by static field or `FindObjectsByType`, field addresses by name
+from the running game, `il2cpp_runtime_invoke` calls, a main-queue ticker):
+
+```sh
+am pin my-game-plus StatHandler.set_Hunger --value 100 --when lower --as keepStats --title "Hunger never drops"
+am pin my-game-plus StatHandler.set_Health --value getter:get_HealthMax --when lower --to keepStats
+am pin my-game-plus Lock.set_LockPickHealth --object Lock --value peak --when lower --title "Lockpicks never break"
+am pin my-game-plus Enemy.EnemyDamage --object "Enemy[]" --value 0 --title "Enemies deal no damage"
+am pin my-game-plus PlayerCompanion.Damage --class FightCompanion --multiply --slider 1 20 1 --title "Weapon damage ×"
+am pin my-game-plus PlayerStats.Rads --object StatHandler.instance --via get_playerStats --value 0 --title "No rads"
+am call my-game-plus InventoryData.GiveRandomItem --args -1 --every 10 --title "Give a random item every 10 s"
+```
+
+The object is `Class.staticField` (a singleton; the default when the class has an `instance` field), `Class`
+(the first live object) or `Class[]` (every live object). Values: a number, `true`/`false`, `peak` (the highest
+value seen), `getter:get_X` or `field:Y` read from the same object, or the slider. `--when lower` writes only
+when the current value is below the value (or `--threshold`). A top-level `"watch"` list in `tweaks.json`
+logs chosen getters or fields every 10 s (`"watch_every"`), which is how a pin is checked on the phone:
+`am log` shows `watch: health 100.0 hunger 100 thirst 55 ...`, then `pin keepStats applied`, then the values
+holding. A switch with pins loses the " (JIT)" label; its JIT hooks still install on phones that have JIT.
+The `Tweak.x` that `am new` writes calls `AMTweaksTick()` from the ticker; `runtime/SideloadCompat.m`
+(keychain, iCloud, Game Center and age-range answers for re-signed copies) is in its Makefile too.
 Nothing in this loop uploads or publishes: personal mods have `"personal": true` and stay out of the catalogue.
+
+The reference is The Wanderer+ 1.0.7 rebuilt this way, kept outside the repo at
+`C:\AccretionMods\dev\wanderer-dev-example\` (18 menu items, 17 JIT hooks, 19 pins, a watch line; the item
+spawner list stays hand-written in its `Tweak.x`): phone-checked 2026-10-21, hunger and thirst held at 100
+through rests with "Health, hunger, thirst, morale never drop" on.
 
 ### Inbox auto-pipeline
 
