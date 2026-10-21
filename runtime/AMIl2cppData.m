@@ -1,0 +1,226 @@
+// Accretion Mods IL2CPP data helpers (see AMIl2cppData.h). Data calls only: nothing here changes code.
+
+#import "AMIl2cppData.h"
+#import <dlfcn.h>
+#import <os/log.h>
+#import <string.h>
+
+static const char *sTag = "AccretionMods";
+
+void AMIl2cppDataSetLogTag(const char *tag) {
+    if (tag && *tag) sTag = strdup(tag);
+}
+
+void AMIl2cppLog(NSString *format, ...) {
+    va_list args;
+    va_start(args, format);
+    NSString *text = [[NSString alloc] initWithFormat:format arguments:args];
+    va_end(args);
+    os_log(OS_LOG_DEFAULT, "[%{public}s] %{public}@", sTag, text);
+}
+
+// One message per distinct failure, so a ticker that runs twice a second doesn't flood the log.
+static void logOnce(NSString *what) {
+    static NSMutableSet<NSString *> *seen;
+    if (!seen) seen = [NSMutableSet new];
+    if ([seen containsObject:what] || seen.count > 64) return;
+    [seen addObject:what];
+    AMIl2cppLog(@"%@", what);
+}
+
+#define IL2CPP(name) ((__typeof__(name##_t) *)dlsym(RTLD_DEFAULT, "il2cpp_" #name))
+typedef void *domain_get_t(void);
+typedef void *domain_assembly_open_t(void *domain, const char *name);
+typedef void *assembly_get_image_t(void *assembly);
+typedef void *class_from_name_t(void *image, const char *ns, const char *name);
+typedef void *class_get_nested_types_t(void *klass, void **iter);
+typedef const char *class_get_name_t(void *klass);
+typedef void *class_get_method_from_name_t(void *klass, const char *name, int argc);
+typedef void *class_get_field_from_name_t(void *klass, const char *name);
+typedef void field_static_get_value_t(void *field, void *out);
+typedef size_t field_get_offset_t(void *field);
+typedef void *class_get_type_t(void *klass);
+typedef void *type_get_object_t(void *type);
+typedef void *runtime_invoke_t(void *method, void *obj, void **params, void **exception);
+typedef void *object_unbox_t(void *obj);
+typedef const uint16_t *string_chars_t(void *str);
+typedef int32_t string_length_t(void *str);
+typedef void *string_new_t(const char *utf8);
+
+void *AMIl2cppClass(const char *name) {
+    if (!name || !*name) return NULL;
+    domain_get_t *domain_get = IL2CPP(domain_get);
+    domain_assembly_open_t *assembly_open = IL2CPP(domain_assembly_open);
+    assembly_get_image_t *get_image = IL2CPP(assembly_get_image);
+    class_from_name_t *from_name = IL2CPP(class_from_name);
+    if (!domain_get || !assembly_open || !get_image || !from_name) { logOnce(@"il2cpp exports missing"); return NULL; }
+
+    char buffer[256];
+    strlcpy(buffer, name, sizeof buffer);
+    char *rest = buffer, *assembly = "Assembly-CSharp";
+    char *colon = strchr(buffer, ':');
+    if (colon) { *colon = 0; assembly = buffer; rest = colon + 1; }
+    void *asm_ = assembly_open(domain_get(), assembly);
+    if (!asm_) { logOnce([NSString stringWithFormat:@"assembly %s not open (for %s)", assembly, name]); return NULL; }
+    void *image = get_image(asm_);
+
+    // Try every split of "A.B.C" into namespace and class, longest namespace first; then nested classes.
+    char *parts[16];
+    int count = 0;
+    for (char *p = strtok(rest, "."); p && count < 16; p = strtok(NULL, ".")) parts[count++] = p;
+    if (!count) return NULL;
+    for (int split = count - 1; split >= 0; split--) {
+        char ns[256] = "";
+        for (int i = 0; i < split; i++) { if (i) strlcat(ns, ".", sizeof ns); strlcat(ns, parts[i], sizeof ns); }
+        void *klass = from_name(image, ns, parts[split]);
+        if (!klass) continue;
+        // the remaining parts name nested classes
+        class_get_nested_types_t *nested = IL2CPP(class_get_nested_types);
+        class_get_name_t *get_name = IL2CPP(class_get_name);
+        for (int i = split + 1; i < count && klass; i++) {
+            void *found = NULL, *iter = NULL, *inner;
+            if (!nested || !get_name) { klass = NULL; break; }
+            while ((inner = nested(klass, &iter))) {
+                if (strcmp(get_name(inner), parts[i]) == 0) { found = inner; break; }
+            }
+            klass = found;
+        }
+        if (klass) return klass;
+    }
+    logOnce([NSString stringWithFormat:@"class %s not found", name]);
+    return NULL;
+}
+
+static void *field(const char *cls, const char *name) {
+    void *klass = AMIl2cppClass(cls);
+    class_get_field_from_name_t *from_name = IL2CPP(class_get_field_from_name);
+    if (!klass || !from_name) return NULL;
+    void *f = from_name(klass, name);
+    if (!f) logOnce([NSString stringWithFormat:@"field %s.%s not found", cls, name]);
+    return f;
+}
+
+void *AMIl2cppStaticObject(const char *cls, const char *name) {
+    void *f = field(cls, name);
+    field_static_get_value_t *get = IL2CPP(field_static_get_value);
+    if (!f || !get) return NULL;
+    void *value = NULL;
+    get(f, &value);
+    return value;
+}
+
+void *AMIl2cppField(void *obj, const char *cls, const char *name) {
+    void *f = field(cls, name);
+    field_get_offset_t *offset = IL2CPP(field_get_offset);
+    if (!f || !offset) return NULL;
+    size_t at = offset(f);
+    if (obj) return (char *)obj + at;
+    // a static field: its offset is inside the class's static data; il2cpp_class_get_static_field_data is
+    // not exported everywhere, so read through the value instead
+    static char scratch[16];
+    field_static_get_value_t *get = IL2CPP(field_static_get_value);
+    if (!get) return NULL;
+    memset(scratch, 0, sizeof scratch);
+    get(f, scratch);
+    return scratch;
+}
+
+static void *unityObjectMethod(const char *name, int argc) {
+    void *object = AMIl2cppClass("UnityEngine.CoreModule:UnityEngine.Object");
+    class_get_method_from_name_t *from_name = IL2CPP(class_get_method_from_name);
+    if (!object || !from_name) return NULL;
+    void *m = from_name(object, name, argc);
+    if (!m) logOnce([NSString stringWithFormat:@"UnityEngine.Object.%s/%d not found", name, argc]);
+    return m;
+}
+
+static void *typeObject(const char *cls) {
+    void *klass = AMIl2cppClass(cls);
+    class_get_type_t *get_type = IL2CPP(class_get_type);
+    type_get_object_t *get_object = IL2CPP(type_get_object);
+    if (!klass || !get_type || !get_object) return NULL;
+    return get_object(get_type(klass));
+}
+
+static void *invoke(void *method, void *obj, void **argv, const char *what) {
+    runtime_invoke_t *run = IL2CPP(runtime_invoke);
+    if (!run) return NULL;
+    void *exception = NULL;
+    void *result = run(method, obj, argv, &exception);
+    if (exception) {
+        logOnce([NSString stringWithFormat:@"%s threw", what]);
+        return NULL;
+    }
+    return result;
+}
+
+void *AMIl2cppFindObject(const char *cls) {
+    void *find = unityObjectMethod("FindFirstObjectByType", 1), *type = typeObject(cls);
+    if (!find || !type) return NULL;
+    void *args[1] = {type};
+    return invoke(find, NULL, args, "FindFirstObjectByType");
+}
+
+void *AMIl2cppFindObjects(const char *cls, int32_t *count) {
+    if (count) *count = 0;
+    void *find = unityObjectMethod("FindObjectsByType", 3), *type = typeObject(cls);
+    if (!find || !type) return NULL;
+    int32_t include = 0, sortNone = 0;  // FindObjectsInactive.Exclude, FindObjectsSortMode.None
+    void *args[3] = {type, &include, &sortNone};
+    void *array = invoke(find, NULL, args, "FindObjectsByType");
+    if (array && count) *count = AMIl2cppArrayCount(array);
+    return array;
+}
+
+int32_t AMIl2cppArrayCount(void *array) {
+    return array ? *(int32_t *)((char *)array + 0x18) : 0;
+}
+
+void *AMIl2cppArrayAt(void *array, int32_t index) {
+    if (!array || index < 0 || index >= AMIl2cppArrayCount(array)) return NULL;
+    return ((void **)((char *)array + 0x20))[index];
+}
+
+bool AMIl2cppCall(void *obj, const char *cls, const char *method, int argc, void **argv, void **out) {
+    void *klass = AMIl2cppClass(cls);
+    class_get_method_from_name_t *from_name = IL2CPP(class_get_method_from_name);
+    runtime_invoke_t *run = IL2CPP(runtime_invoke);
+    if (!klass || !from_name || !run) return false;
+    void *m = from_name(klass, method, argc);
+    if (!m) { logOnce([NSString stringWithFormat:@"method %s.%s/%d not found", cls, method, argc]); return false; }
+    void *exception = NULL;
+    void *result = run(m, obj, argv, &exception);
+    if (exception) {
+        logOnce([NSString stringWithFormat:@"%s.%s threw", cls, method]);
+        return false;
+    }
+    if (out) *out = result;
+    return true;
+}
+
+void *AMIl2cppUnbox(void *boxed) {
+    object_unbox_t *unbox = IL2CPP(object_unbox);
+    return boxed && unbox ? unbox(boxed) : NULL;
+}
+
+NSString *AMIl2cppString(void *str) {
+    string_chars_t *chars = IL2CPP(string_chars);
+    string_length_t *length = IL2CPP(string_length);
+    if (!str || !chars || !length) return nil;
+    return [[NSString alloc] initWithCharacters:chars(str) length:(NSUInteger)length(str)];
+}
+
+void *AMIl2cppNewString(const char *utf8) {
+    string_new_t *make = IL2CPP(string_new);
+    return utf8 && make ? make(utf8) : NULL;
+}
+
+void AMIl2cppEvery(double seconds, void (^block)(void)) {
+    static NSMutableArray *timers;
+    if (!timers) timers = [NSMutableArray new];
+    dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+    dispatch_source_set_timer(timer, DISPATCH_TIME_NOW, (uint64_t)(seconds * NSEC_PER_SEC), (uint64_t)(0.1 * NSEC_PER_SEC));
+    dispatch_source_set_event_handler(timer, block);
+    dispatch_resume(timer);
+    [timers addObject:timer];
+}
