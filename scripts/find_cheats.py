@@ -92,7 +92,8 @@ class Candidate:
     def describe(self):
         m = self.method
         what = "skip" if self.action == "skip" else f"return {self.value}"
-        return f"{m.full_name}({', '.join(m.params)})  {m.return_type}  score {self.score}  {what}"
+        jit = "  needs JIT" if m.needs_jit else ""
+        return f"{m.full_name}({', '.join(m.params)})  {m.return_type}  score {self.score}  {what}{jit}"
 
 
 def left_out(method):
@@ -133,7 +134,8 @@ def scan(path):
         c = candidate(m)
         if c:
             found.append(c)
-    found.sort(key=lambda c: (-c.score, c.method.full_name))
+    # at equal scores, a hook that also works without JIT first
+    found.sort(key=lambda c: (-c.score, c.method.needs_jit, c.method.full_name))
     return found, out
 
 

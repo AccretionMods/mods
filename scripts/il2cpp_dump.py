@@ -22,10 +22,19 @@ MODIFIERS = (
 TYPE = re.compile(r"^\s*" + MODIFIERS + r"(?:class|struct|interface|enum)\s+(\w+)")
 TYPE_INDEX = re.compile(r"// TypeDefIndex: (\d+)")
 # only a method's own address line; attribute lines ("[Attr] // RVA: ...") carry addresses too
-ADDRESS = re.compile(r"^\s*// RVA: (0x[0-9A-Fa-f]+) Offset: 0x[0-9A-Fa-f]+ VA: 0x[0-9A-Fa-f]+")
+# "Slot: N" marks a method with a vtable slot (virtual, override or an interface method)
+ADDRESS = re.compile(r"^\s*// RVA: (0x[0-9A-Fa-f]+) Offset: 0x[0-9A-Fa-f]+ VA: 0x[0-9A-Fa-f]+(?: Slot: (\d+))?")
 SIGNATURE = re.compile(
     r"^" + MODIFIERS + r"([\w.]+(?:<[^>]*>)?(?:\[\])*)\s+([.\w]+(?:<[^>]*>)?)\s*\(([^)]*)\)"
 )
+
+# Methods Unity itself calls on scripts: through the method's pointer, so pointer hooks catch them.
+UNITY_MESSAGES = {
+    "Awake", "Start", "Update", "FixedUpdate", "LateUpdate", "OnEnable", "OnDisable", "OnDestroy", "OnGUI",
+    "OnTriggerEnter", "OnTriggerStay", "OnTriggerExit", "OnTriggerEnter2D", "OnTriggerStay2D", "OnTriggerExit2D",
+    "OnCollisionEnter", "OnCollisionStay", "OnCollisionExit", "OnCollisionEnter2D", "OnCollisionStay2D",
+    "OnCollisionExit2D", "OnApplicationPause", "OnApplicationFocus",
+}
 
 INTEGERS = {"int", "long", "short", "byte", "sbyte", "uint", "ulong", "ushort"}
 FLOATS = {"float", "double"}
@@ -41,6 +50,13 @@ class Method:
     params: list  # parameter declarations, like "float amount"
     rva: str
     signature: str  # the declaration as dumped, without the "{ }"
+    slot: int | None = None  # vtable slot, when the method has one
+
+    @property
+    def needs_jit(self):
+        """True when only a code hook (JIT on) catches calls to it: no vtable slot and not a Unity message.
+        Without JIT the runtime swaps pointers, which a direct call from other game code bypasses."""
+        return self.slot is None and self.name not in UNITY_MESSAGES
 
     @property
     def args(self):
@@ -78,6 +94,7 @@ class Method:
             "args": self.args,
             "return_type": self.return_type,
             "signature": self.signature,
+            "needs_jit": self.needs_jit,
         }
 
 
@@ -144,6 +161,7 @@ def methods(path):
                 params=split_params(params),
                 rva=address.group(1),
                 signature=declaration.split("{")[0].rstrip().rstrip(";"),
+                slot=int(address.group(2)) if address.group(2) else None,
             )
         )
     return found

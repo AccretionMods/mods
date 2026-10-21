@@ -55,6 +55,19 @@ class EmbedHooks(unittest.TestCase):
                 self.assertIn("am_hook_specs", f.read())
 
 
+class Probe(unittest.TestCase):
+    def test_probe_hooks_are_valid(self):
+        self.assertEqual(validate_mods.hooks_problems(os.path.join(ROOT, "runtime", "probe", "hooks.json")), [])
+
+    def test_probe_registers_every_hook(self):
+        with open(os.path.join(ROOT, "runtime", "probe", "hooks.json")) as f:
+            hooks = json.load(f)["hooks"]
+        with open(os.path.join(ROOT, "runtime", "probe", "Probe.m")) as f:
+            source = f.read()
+        for h in hooks:
+            self.assertIn(f'AMIl2cppRegister("{h["namespace"]}.{h["class"]}.{h["method"]}"', source)
+
+
 class MakefileCheck(unittest.TestCase):
     def check(self, makefile):
         with tempfile.TemporaryDirectory() as d:
@@ -91,6 +104,9 @@ class Runtime(unittest.TestCase):
             check=True,
         )
         cls.out = subprocess.run([cls.exe], check=True, capture_output=True, text=True).stdout.splitlines()
+        cls.pointer = subprocess.run(
+            [cls.exe, "pointer"], check=True, capture_output=True, text=True
+        ).stdout.splitlines()
 
     @classmethod
     def tearDownClass(cls):
@@ -100,8 +116,8 @@ class Runtime(unittest.TestCase):
         self.assertIn("ready=1", self.out)
 
     def test_found_methods_are_hooked(self):
-        self.assertIn("hooked Game.Player.TakeDamage", self.out)
-        self.assertIn("hooked Game.Player.GetSpeed", self.out)
+        self.assertIn("hooked Game.Player.TakeDamage (code)", self.out)
+        self.assertIn("hooked Game.Player.GetSpeed (code)", self.out)
 
     def test_missing_methods_are_skipped_and_logged(self):
         for name in ("Game.Player.Gone", "Game.Gone.TakeDamage"):
@@ -117,8 +133,24 @@ class Runtime(unittest.TestCase):
         self.assertIn("ignored replacement Player.Gone2: not in hooks.json", self.out)
 
     def test_report_counts_and_originals(self):
-        self.assertIn("hooked=2 missing=4 unregistered=1 unused=1 failed=0", self.out)
+        self.assertIn("hooked=2 missing=4 unregistered=1 unused=1 failed=0 slots=0", self.out)
         self.assertIn("orig_a=1 orig_b=1", self.out)
+
+    # pointer mode (no JIT): the same specs, with MethodInfo and vtable swaps instead of code hooks
+
+    def test_pointer_mode_hooks_and_skips_the_same(self):
+        self.assertIn("hooked Game.Player.TakeDamage (pointers, 2 vtable slots)", self.pointer)
+        self.assertIn("hooked Game.Player.GetSpeed (pointers, 0 vtable slots)", self.pointer)
+        self.assertIn("hooked=2 missing=4 unregistered=1 unused=1 failed=0 slots=2", self.pointer)
+        self.assertIn("orig_a=1 orig_b=1", self.pointer)
+
+    def test_pointer_mode_swaps_method_info(self):
+        # virtualMethodPointer (2021.2+) is swapped too; an older version's invoker_method is left alone
+        self.assertIn("info_a=1 invoker_kept=1 info_b=1 virtual_b=1", self.pointer)
+
+    def test_pointer_mode_swaps_class_and_subclass_vtables_only(self):
+        # GetSpeed is not virtual, so no vtable is scanned for it; memory past the class is never read
+        self.assertIn("player_a=1 enemy_a=1 unrelated_a=0 player_b=0", self.pointer)
 
 
 if __name__ == "__main__":

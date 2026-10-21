@@ -4,6 +4,7 @@ packages/
 mods/*/menu/
 # Copied in from runtime/ (with am_hooks_data.c) for mods that have a hooks.json
 mods/*/runtime/
+runtime/probe/runtime/
 *.ipa
 *.deb
 # Signing files never belong in this repo; keep them in ~/.accretion-signing
