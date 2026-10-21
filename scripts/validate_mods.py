@@ -75,7 +75,24 @@ def check(mod, meta):
             problems.append(f"screenshot {shot!r} must be an https link")
     if os.path.isfile(os.path.join(folder, "hooks.json")):
         problems += hooks_problems(os.path.join(folder, "hooks.json"))
+        problems += runtime_problems(folder)
     return problems
+
+
+RUNTIME_FILES = ("runtime/am_il2cpp.c", "runtime/AMIl2cpp.m", "runtime/am_hooks_data.c")
+
+
+def runtime_problems(folder):
+    """A mod with a hooks.json must compile the IL2CPP runtime (runtime/), or its hooks are never installed."""
+    path = os.path.join(folder, "Makefile")
+    if not os.path.isfile(path):
+        return []  # a mod built from a ready-made .deb has no Makefile
+    with open(path, encoding="utf-8") as f:
+        makefile = f.read()
+    missing = [name for name in RUNTIME_FILES if name not in makefile]
+    if missing:
+        return [f"Makefile must list {', '.join(missing)} (the mod has a hooks.json; README.md: Hooking at runtime)"]
+    return []
 
 
 def hooks_problems(path):

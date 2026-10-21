@@ -9,6 +9,7 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
 import embed_hooks
+import validate_mods
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CC = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
@@ -52,6 +53,27 @@ class EmbedHooks(unittest.TestCase):
             embed_hooks.main([src, dest])
             with open(dest) as f:
                 self.assertIn("am_hook_specs", f.read())
+
+
+class MakefileCheck(unittest.TestCase):
+    def check(self, makefile):
+        with tempfile.TemporaryDirectory() as d:
+            if makefile is not None:
+                with open(os.path.join(d, "Makefile"), "w") as f:
+                    f.write(makefile)
+            return validate_mods.runtime_problems(d)
+
+    def test_full_file_list_passes(self):
+        files = " ".join(validate_mods.RUNTIME_FILES)
+        self.assertEqual(self.check(f"Game_FILES = Tweak.x menu/AMMenu.m {files}\n"), [])
+
+    def test_missing_runtime_is_reported(self):
+        problems = self.check("Game_FILES = Tweak.x menu/AMMenu.m\n")
+        self.assertEqual(len(problems), 1)
+        self.assertIn("runtime/am_hooks_data.c", problems[0])
+
+    def test_mod_without_makefile_is_not_checked(self):
+        self.assertEqual(self.check(None), [])
 
 
 @unittest.skipUnless(CC, "needs a C compiler")
