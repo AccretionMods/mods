@@ -14,7 +14,7 @@ on:
       mod:
         description: "Mod to build (a new public mod must be added to this list; CI checks it)"
         type: choice
-        options: [swiftradio-plus]
+        options: [swiftradio-plus, thewanderer-plus]
         default: swiftradio-plus
       publish:
         description: "Publish to catalogue (personal builds only keep a private copy)"

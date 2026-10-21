@@ -1,0 +1,365 @@
+{
+  "engine": "unity-il2cpp",
+  "hooks": [
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "ExperienceLevel",
+      "method": "Update",
+      "args": 0,
+      "return_type": "void",
+      "needs_jit": false
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "Lock",
+      "method": "Update",
+      "args": 0,
+      "return_type": "void",
+      "needs_jit": false
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "PlayerCompanion",
+      "method": "TakeDamage",
+      "args": 2,
+      "return_type": "void",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "Enemy",
+      "method": "DamagePlayer",
+      "args": 2,
+      "return_type": "void",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "Enemy",
+      "method": "DealDamageToPlayer",
+      "args": 2,
+      "return_type": "void",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "PlayerCompanion",
+      "method": "BleedDamage",
+      "args": 0,
+      "return_type": "void",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "PetCompanion",
+      "method": "TakeDamage",
+      "args": 2,
+      "return_type": "void",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "Enemy",
+      "method": "DamagePet",
+      "args": 2,
+      "return_type": "void",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "RandomCompanion",
+      "method": "TakeDamage",
+      "args": 2,
+      "return_type": "void",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "Enemy",
+      "method": "UseHealthPotion",
+      "args": 0,
+      "return_type": "void",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "GameManager",
+      "method": "TakeRadiationDamage",
+      "args": 0,
+      "return_type": "void",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "Enemy",
+      "method": "get_AttackSuccessRate",
+      "args": 0,
+      "return_type": "float",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "Enemy",
+      "method": "Enemy_CriticalHitChance",
+      "args": 0,
+      "return_type": "bool",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "Enemy",
+      "method": "Player_CriticalHitChance",
+      "args": 0,
+      "return_type": "bool",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "ItemStack",
+      "method": "GetScaledDamage",
+      "args": 0,
+      "return_type": "long",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "ItemStack",
+      "method": "GetScaledDamageWithStrength",
+      "args": 1,
+      "return_type": "long",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "InventoryData",
+      "method": "ConsumeHandCraftAccessibleItems",
+      "args": 2,
+      "return_type": "bool",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "InventoryData",
+      "method": "HasHandCraftAccessibleItemCount",
+      "args": 2,
+      "return_type": "bool",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "InventoryData",
+      "method": "SetDurability",
+      "args": 2,
+      "return_type": "void",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "SkillsManager",
+      "method": "get_SkillPoints",
+      "args": 0,
+      "return_type": "int",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "StatHandler",
+      "method": "get_HealthMax",
+      "args": 0,
+      "return_type": "float",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "StatHandler",
+      "method": "get_Health",
+      "args": 0,
+      "return_type": "float",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "StatHandler",
+      "method": "set_Health",
+      "args": 1,
+      "return_type": "void",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "StatHandler",
+      "method": "get_Hunger",
+      "args": 0,
+      "return_type": "int",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "StatHandler",
+      "method": "set_Hunger",
+      "args": 1,
+      "return_type": "void",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "StatHandler",
+      "method": "get_Thirst",
+      "args": 0,
+      "return_type": "int",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "StatHandler",
+      "method": "set_Thirst",
+      "args": 1,
+      "return_type": "void",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "StatHandler",
+      "method": "get_Morale",
+      "args": 0,
+      "return_type": "int",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "StatHandler",
+      "method": "set_Morale",
+      "args": 1,
+      "return_type": "void",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "Pet",
+      "method": "get_PetHunger",
+      "args": 0,
+      "return_type": "int",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "Pet",
+      "method": "set_PetHunger",
+      "args": 1,
+      "return_type": "void",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "Pet",
+      "method": "get_PetThirst",
+      "args": 0,
+      "return_type": "int",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "Pet",
+      "method": "set_PetThirst",
+      "args": 1,
+      "return_type": "void",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "Pet",
+      "method": "get_PetHealth",
+      "args": 0,
+      "return_type": "int",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "Pet",
+      "method": "set_PetHealth",
+      "args": 1,
+      "return_type": "void",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "Lock",
+      "method": "get_LockPickHealth",
+      "args": 0,
+      "return_type": "float",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "Lock",
+      "method": "set_LockPickHealth",
+      "args": 1,
+      "return_type": "void",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "FoodThirstStats",
+      "method": "Update",
+      "args": 0,
+      "return_type": "void",
+      "needs_jit": false
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "PerkManager",
+      "method": "get_HungerAmount",
+      "args": 0,
+      "return_type": "int",
+      "needs_jit": true
+    },
+    {
+      "assembly": "Assembly-CSharp",
+      "namespace": "",
+      "class": "PerkManager",
+      "method": "get_ThirstAmount",
+      "args": 0,
+      "return_type": "int",
+      "needs_jit": true
+    }
+  ]
+}

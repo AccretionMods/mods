@@ -1,0 +1,21 @@
+{
+  "name": "The Wanderer+",
+  "version": "1.0.7",
+  "kind": "tweak",
+  "category": "games",
+  "subtitle": "Single-player cheats with a mod menu: stats, combat, crafting, item spawner.",
+  "description": "The Wanderer: Post-Nuclear RPG with the Accretion mod menu built in (tap the floating button).\n\nWork on any phone, no JIT needed:\n• Health, hunger, thirst, morale never drop\n• Lockpicks never break\n• Spawn an item: a list of the game's 145 items with an amount slider\n• Give a random item / weapon every 10 s\n• Player, pet and companion take no damage\n• Enemies deal no damage, player always crits, enemies never heal\n• Weapon damage ×1-20\n• No radiation damage\n• Items never wear out\n• Unlimited skill points\n• Pet never hungry, thirsty or hurt\n• Keep screen awake\n\nNeeds JIT, marked (JIT) otherwise:\n• Crafting uses no materials\n\nNothing the game sells is touched: caps, tokens, bag upgrades, fuel, fast travel, revives, supply drops and experience boosts stay as they are. Single-player only.\n\nHooks are checked against The Wanderer 10.1; on other versions missing ones stay off. Installs next to the original app.",
+  "target_bundle_id": "com.JamieParish.TheWanderer",
+  "bundle_id": "io.github.accretionmods.thewandererplus",
+  "display_name": "The Wanderer+",
+  "tested_app_version": "10.1",
+  "min_os": "15.0",
+  "remove_extensions": "encrypted",
+  "icon_url": "https://raw.githubusercontent.com/AccretionMods/mods/main/icons/thewanderer-plus.png",
+  "screenshots": [],
+  "base": {
+    "private": true,
+    "open_source": false,
+    "sha256": "2298663833189481145b286de1993ede0cf9afc0a5d53d3269668fd703e149f3"
+  }
+}
