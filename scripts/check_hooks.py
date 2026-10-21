@@ -19,16 +19,35 @@ from il2cpp_dump import methods
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
+def match(hook, found):
+    """The dump method a hooks.json entry names, or None. Among overloads, the one with the same argument
+    count wins; otherwise the first (the runtime looks methods up by name and argument count the same way)."""
+    key = (hook.get("namespace", ""), hook["class"], hook["method"])
+    rows = [m for m in found if m.key == key]
+    if not rows:
+        return None
+    same = [m for m in rows if "args" in hook and m.args == hook["args"]]
+    return (same or rows)[0]
+
+
 def check(hooks, found):
     """(status, hook, detail) for each hook, against the methods of the new dump."""
-    by_key = {m.key: m for m in found}
     results = []
     for h in hooks:
-        key = (h.get("namespace", ""), h["class"], h["method"])
-        m = by_key.get(key)
+        m = match(h, found)
         if m is None:
-            leads = [x.full_name for x in found if x.name == h["method"] and x.class_name != h["class"]]
-            leads += [x.full_name for x in found if x.class_name == h["class"] and x.name.lower() == h["method"].lower() and x.name != h["method"]]
+            leads = [
+                x.full_name
+                for x in found
+                if x.name == h["method"] and x.class_name != h["class"]
+            ]
+            leads += [
+                x.full_name
+                for x in found
+                if x.class_name == h["class"]
+                and x.name.lower() == h["method"].lower()
+                and x.name != h["method"]
+            ]
             detail = f"same name in: {', '.join(leads[:3])}" if leads else "no lead"
             results.append(("missing", h, detail))
             continue
@@ -51,15 +70,23 @@ def main(argv=None):
     mod, dump = argv
     path = os.path.join(ROOT, "mods", mod, "hooks.json")
     if not os.path.isfile(path):
-        sys.exit(f"mods/{mod}/hooks.json not found (scripts/find_cheats.py --mod {mod} writes it)")
+        sys.exit(
+            f"mods/{mod}/hooks.json not found (scripts/find_cheats.py --mod {mod} writes it)"
+        )
     with open(path, encoding="utf-8") as f:
         hooks = json.load(f).get("hooks", [])
     results = check(hooks, methods(dump))
     for status, h, detail in results:
-        name = ".".join(p for p in (h.get("namespace", ""), h["class"], h["method"]) if p)
+        name = ".".join(
+            p for p in (h.get("namespace", ""), h["class"], h["method"]) if p
+        )
         print(f"  {status:8} {name}  {detail}")
-    counts = {s: sum(1 for r in results if r[0] == s) for s in ("ok", "changed", "missing")}
-    print(f"{counts['ok']} ok, {counts['changed']} changed, {counts['missing']} missing of {len(results)} hooks")
+    counts = {
+        s: sum(1 for r in results if r[0] == s) for s in ("ok", "changed", "missing")
+    }
+    print(
+        f"{counts['ok']} ok, {counts['changed']} changed, {counts['missing']} missing of {len(results)} hooks"
+    )
     return 1 if counts["changed"] or counts["missing"] else 0
 
 
