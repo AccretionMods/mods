@@ -256,9 +256,13 @@ const App = {
 
   async loadMods() {
     const data = await this.api("/api/mods");
-    this.mods = data.mods;
+    // latest build first (the date under each), then the ones never built, by name
+    this.mods = data.mods.slice().sort((a, b) => (b.built || 0) - (a.built || 0) || a.title.localeCompare(b.title));
     this.byId("amRoot").textContent = "Workspace: " + data.am_root;
     const box = this.byId("mods"); box.replaceChildren();
+    const when = t => { const d = new Date(t * 1000), today = new Date().toDateString() === d.toDateString();
+      return "built " + (today ? "today " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                               : d.toLocaleDateString([], { month: "short", day: "numeric", year: d.getFullYear() === new Date().getFullYear() ? undefined : "numeric" })); };
     for (const m of this.mods) {
       const badges = [
         m.personal ? this.el("span", { class: "badge", text: "personal" }) : null,
@@ -269,6 +273,7 @@ const App = {
       box.append(this.el("div", { class: "mod" + (m.name === this.mod ? " active" : ""), onclick: () => this.select(m.name) },
         this.el("div", { class: "t", text: `${m.title} ${m.version}` }),
         this.el("div", { class: "s", text: `${m.target} ${m.app_version}` }),
+        this.el("div", { class: "s", text: m.built ? when(m.built) : "never built" }),
         this.el("div", { class: "badges" }, badges)));
     }
     if (!this.mod && this.mods.length) this.select(localStorage.getItem("studio.mod") || this.mods[0].name);
@@ -680,6 +685,11 @@ const App = {
           const btn = this.el("button", { class: "small primary" }, /^am (pin|call|add|tweak) /.test(c) ? "Add" : "Run");
           btn.onclick = async () => { btn.disabled = true; try { const r = await this.api("/api/console", { line: c }); this.showJob(r); this.poll(r.id); btn.textContent = "Started"; } catch (e) { btn.disabled = false; this.toast(e.message, "bad"); } };
           list.append(this.el("div", { class: "row", style: "margin-bottom:6px" }, this.el("span", { class: "mono small grow", text: c }), btn));
+        }
+        if (j.command === "aider" && cmds.some(c => /^am (find|fields) /.test(c))) {
+          const again = this.el("button", { class: "small primary", title: "Studio runs aider's am find / am fields searches on the dump and gives aider the results with its prompt" }, "Run the searches and ask aider again");
+          again.onclick = async () => { again.disabled = true; try { const r = await this.api(`/api/jobs/${j.id}/followup`, { mod: this.mod || "" }); this.showJob(r); this.poll(r.id); again.textContent = "Asked again"; } catch (e) { again.disabled = false; this.toast(e.message, "bad"); } };
+          list.append(this.el("div", { class: "row", style: "margin-top:4px" }, again));
         }
         this.byId("job-" + j.id).append(list);
       }

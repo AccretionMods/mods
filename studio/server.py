@@ -508,6 +508,65 @@ def aider_command(prompt, mod=None):
     ]
 
 
+# aider cannot search the dump, so its first answer to a new feature is often only `am find` / `am fields`
+# lines. A follow-up runs those searches here (read only, from the cached dump) and asks aider again with the
+# results under its own prompt.
+SEARCH_LINE = re.compile(r"^am (find|fields) ([a-z0-9]+(?:-[a-z0-9]+)*)\s+(.+)$")
+SEARCH_ROWS = 40  # per search, so a broad regex cannot fill the prompt
+
+
+def run_searches(mod, lines, budget):
+    blocks, seen = [], set()
+    for line in lines:
+        cmd = line.strip().strip("`").lstrip("$> ").strip()
+        m = SEARCH_LINE.match(cmd)
+        if not m or m.group(2) != mod or cmd in seen:
+            continue
+        seen.add(cmd)
+        try:
+            words = shlex.split(m.group(3))
+            terms = [w for w in words if not w.startswith("--")]
+            if m.group(1) == "fields":
+                rows = [f"{o if isinstance(o, str) else hex(o)} {'static ' if s else ''}{t} {n}" for o, s, t, n in dev.fields_of(mod, terms[0])]
+            elif "--class" in words:
+                cls = words[words.index("--class") + 1]
+                rows = [f"{x.full_name}({', '.join(x.params)}) -> {x.return_type}"
+                        for x in dev.dump_methods(mod) if x.class_name == cls or x.full_name.rsplit(".", 1)[0] == cls]
+            elif "--fields" in words:
+                rx = re.compile(terms[0], re.IGNORECASE)
+                rows = [f"{c}.{n}  {'static ' if st else ''}{t}" for c, st, t, n in dev.field_rows(mod)
+                        if "<" not in c and rx.search(f"{c}.{n}")]
+            else:
+                rx = re.compile(terms[0], re.IGNORECASE)
+                rows = [f"{x.full_name}({', '.join(x.params)}) -> {x.return_type}"
+                        for x in dev.dump_methods(mod) if rx.search(x.full_name)]
+        except (re.error, IndexError, ValueError, OSError, dev.DevError) as error:
+            rows = [f"(this search failed: {error})"]
+        more = f"\n... {len(rows) - SEARCH_ROWS} more" if len(rows) > SEARCH_ROWS else ""
+        blocks.append(f"$ {cmd}\n" + ("\n".join(rows[:SEARCH_ROWS]) or "(nothing found)") + more)
+    text = "\n\n".join(blocks)
+    return text if len(text) <= budget else text[:budget] + "\n... (cut to fit the prompt)"
+
+
+def start_followup(job, mod):
+    if getattr(job, "engine", None) != "aider" or not getattr(job, "prompt", None):
+        raise dev.DevError("only an aider job from this Studio session can be followed up")
+    if job.status in ("queued", "running", "stopping"):
+        raise dev.DevError("wait for aider to finish first")
+    mod = job.mod or mod
+    if not (MOD_NAME.fullmatch(mod or "") and dev.mod_dir(mod).is_dir()):
+        raise dev.DevError("pick a mod first")
+    budget = 19000 - len(job.prompt) - 400
+    with LOCK:
+        results = run_searches(mod, job.lines, budget)
+    if not results:
+        raise dev.DevError(f"aider asked for no am find / am fields search on {mod}")
+    prompt = (job.prompt + "\n\nResults of the searches you asked for (run by Mod Studio on the game's dump):\n"
+              + results + "\n\nUse them now: make the change, or give the exact am pin / am add lines. Ask for "
+              "more searches only if these leave it open.")
+    return start_claude(prompt, job.read_only, "aider", mod if not job.read_only else "")
+
+
 def start_claude(prompt, read_only, engine="claude", mod=""):
     if engine not in ENGINES:
         raise dev.DevError(f"unknown model engine {engine!r}; use one of: {', '.join(ENGINES)}")
@@ -532,6 +591,8 @@ def start_claude(prompt, read_only, engine="claude", mod=""):
                 cmd=claude_command(prompt, read_only),
                 parse=claude_lines,
             )
+        # kept in memory only (never in the saved history) for an aider follow-up
+        job.prompt, job.engine, job.read_only, job.mod = prompt, engine, read_only, mod if not read_only else ""
         JOBS[job.id] = job
     job.persist()
     threading.Thread(target=job.run, daemon=True).start()
@@ -620,7 +681,19 @@ def mod_summary(name):
         "dump": bool(dump_dir and (Path(dump_dir) / "out" / "dump.cs").is_file()),
         "last_dylib": state.get("last_dylib"),
         "last_ipa": state.get("last_ipa"),
+        "built": last_built(state),
     }
+
+
+def last_built(state):
+    """When the mod was last built: the newest of its last .ipa and .dylib that still exist (epoch seconds), or None."""
+    times = []
+    for key in ("last_ipa", "last_dylib"):
+        try:
+            times.append(Path(state[key]).stat().st_mtime)
+        except (KeyError, TypeError, OSError):
+            pass
+    return max(times) if times else None
 
 
 def mod_detail(name):
@@ -1174,6 +1247,12 @@ class Handler(BaseHTTPRequestHandler):
         if parts == ["api", "console"]:
             self.local_only()
             return self.send_json(console(str(body.get("line", ""))).view())
+        if len(parts) == 4 and parts[:2] == ["api", "jobs"] and parts[3] == "followup":
+            self.local_only()
+            job = JOBS.get(parts[2])
+            if not job:
+                return self.send_json({"error": "no such job"}, HTTPStatus.NOT_FOUND)
+            return self.send_json(start_followup(job, str(body.get("mod", ""))).view())
         if len(parts) == 4 and parts[:2] == ["api", "jobs"] and parts[3] == "input":
             self.local_only()
             job = JOBS.get(parts[2])
