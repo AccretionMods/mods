@@ -122,7 +122,11 @@ main.card::after { right: -6px; bottom: -6px; border-right: 1.5px solid var(--ac
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--raised); flex: none; }
 .dot.good { background: var(--good); } .dot.bad { background: var(--bad); animation: pulse 2.4s ease-in-out infinite; } .dot.warn { background: var(--warn); }
 table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
-th, td { text-align: left; padding: 8px 8px; border-bottom: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; }
+th, td { text-align: left; padding: 8px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+/* the first column (a method or field name) takes the room and wraps; the others stay on one line at their width */
+th:first-child, td:first-child { overflow-wrap: anywhere; }
+th:not(:first-child), td:not(:first-child) { white-space: nowrap; width: 1%; }
+td .row { flex-wrap: nowrap; }
 tbody tr { transition: background .15s; }
 tbody tr:hover { background: color-mix(in srgb, var(--raised) 60%, transparent); }
 .muted { color: var(--muted); }
