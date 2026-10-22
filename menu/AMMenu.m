@@ -2,6 +2,8 @@
 #import <os/lock.h>
 #import <os/log.h>
 #import <dlfcn.h>
+#import <objc/message.h>
+#import <objc/runtime.h>
 
 static NSString *AMKey(NSString *key) {
     return [@"AM_" stringByAppendingString:key];
@@ -1564,7 +1566,8 @@ static NSString *AMCloudWhen(NSString *iso) {
 @property (nonatomic, strong) AMCardEdges *edges;
 @property (nonatomic, strong) NSArray<AMItem *> *cheats;  // the mod's own items, as registered
 @property (nonatomic, strong) AMLoginBar *login;
-@property (nonatomic, strong, nullable) UIViewController *browser;  // the sign-in page while it is open
+@property (nonatomic, strong, nullable) UIViewController *browser;  // the sign-in page while it is open (fallback)
+@property (nonatomic, strong, nullable) id authSession;  // ASWebAuthenticationSession while the sign-in sheet is open
 @property (nonatomic, strong, nullable) NSTimer *linkTimer;
 @property (nonatomic, strong) NSArray<AMItem *> *items;
 @property (nonatomic, strong) NSArray<NSString *> *allTitles;            // categories in the order first added
@@ -1675,16 +1678,41 @@ static NSString *AMGameName(NSString *fallback) {
     AMCloudCall(@"link-start", @{@"bundle": AMCloudBundle(), @"game": AMCloudGame(), @"device": AMCloudDevice()}, ^(NSDictionary *json, NSString *err) {
         [self.login show:nil busy:NO];
         if (err) { [self say:err title:@"Could not start the sign-in"]; return; }
-        NSURL *url = [NSURL URLWithString:json[@"approve_url"]];
-        [self openBrowser:url];
+        // return=accretionmods: the page sends accretionmods://linked once it has linked, which closes the sheet
+        NSURL *url = [NSURL URLWithString:[json[@"approve_url"] stringByAppendingString:@"&return=accretionmods"]];
+        [self openBrowser:url code:json[@"code"]];
         [self pollLink:json[@"code"] until:[NSDate dateWithTimeIntervalSinceNow:600]];
     });
 }
 
-- (void)openBrowser:(NSURL *)url {
-    // SafariServices is loaded when needed, so no mod's Makefile has to list it
+// iOS's sign-in sheet (ASWebAuthenticationSession): it shares Safari's sign-in, so the owner is often signed in
+// already, and it closes by itself when the page answers accretionmods://linked. Its framework is loaded when
+// needed (no mod's Makefile lists it); the plain in-app browser is the fallback.
+- (void)openBrowser:(NSURL *)url code:(NSString *)code {
     static dispatch_once_t once;
-    dispatch_once(&once, ^{ dlopen("/System/Library/Frameworks/SafariServices.framework/SafariServices", RTLD_LAZY); });
+    dispatch_once(&once, ^{
+        dlopen("/System/Library/Frameworks/AuthenticationServices.framework/AuthenticationServices", RTLD_LAZY);
+        dlopen("/System/Library/Frameworks/SafariServices.framework/SafariServices", RTLD_LAZY);
+        Protocol *provider = objc_getProtocol("ASWebAuthenticationPresentationContextProviding");
+        if (provider) class_addProtocol(AMPanel.class, provider);
+    });
+    Class auth = NSClassFromString(@"ASWebAuthenticationSession");
+    if (auth) {
+        __weak typeof(self) weak = self;
+        void (^finished)(NSURL *, NSError *) = ^(NSURL *callback, NSError *error) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                weak.authSession = nil;
+                [weak pollLink:code until:[NSDate dateWithTimeIntervalSinceNow:60]];  // closed: one last look
+            });
+        };
+        id session = ((id (*)(id, SEL, NSURL *, NSString *, id))objc_msgSend)([auth alloc],
+            @selector(initWithURL:callbackURLScheme:completionHandler:), url, @"accretionmods", finished);
+        [session setValue:self forKey:@"presentationContextProvider"];
+        [session setValue:@NO forKey:@"prefersEphemeralWebBrowserSession"];
+        self.authSession = session;
+        if (((BOOL (*)(id, SEL))objc_msgSend)(session, @selector(start))) return;
+        self.authSession = nil;
+    }
     Class safari = NSClassFromString(@"SFSafariViewController");
     if (!safari) { [UIApplication.sharedApplication openURL:url options:@{} completionHandler:nil]; return; }
     UIViewController *page = [(id)[safari alloc] initWithURL:url];
@@ -1693,12 +1721,16 @@ static NSString *AMGameName(NSString *fallback) {
     [self presentViewController:page animated:YES completion:nil];
 }
 
+- (UIWindow *)presentationAnchorForWebAuthenticationSession:(id)session {
+    return self.view.window;
+}
+
 - (void)pollLink:(NSString *)code until:(NSDate *)end {
     [self.linkTimer invalidate];
     __weak typeof(self) weak = self;
     self.linkTimer = [NSTimer scheduledTimerWithTimeInterval:2 repeats:YES block:^(NSTimer *timer) {
         typeof(self) me = weak;
-        if (!me || NSDate.date.timeIntervalSince1970 > end.timeIntervalSince1970) { [timer invalidate]; return; }
+        if (!me || AMCloudLinked() || NSDate.date.timeIntervalSince1970 > end.timeIntervalSince1970) { [timer invalidate]; return; }
         AMCloudCall(@"link-poll", @{@"code": code}, ^(NSDictionary *json, NSString *err) {
             if (err || [json[@"status"] isEqual:@"waiting"]) return;
             [timer invalidate];
@@ -1708,6 +1740,8 @@ static NSString *AMGameName(NSString *fallback) {
             state[@"account"] = json[@"account"];
             AMCloudSave(state);
             [[[UINotificationFeedbackGenerator alloc] init] notificationOccurred:UINotificationFeedbackTypeSuccess];
+            if (me.authSession) ((void (*)(id, SEL))objc_msgSend)(me.authSession, @selector(cancel));
+            me.authSession = nil;
             if (me.browser.presentingViewController) [me.browser dismissViewControllerAnimated:YES completion:nil];
             me.browser = nil;
             [me cloudChanged];
