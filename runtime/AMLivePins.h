@@ -270,6 +270,17 @@ static void AMLiveRunTweak(NSDictionary *tweak) {
             BOOL go = [when isEqual:@"lower"] ? cur < limit : [when isEqual:@"higher"] ? cur > limit : YES;
             if (!go) continue;
             if (p) {
+                // the game fights back: what this wrote half a second ago is gone again, tick after tick
+                NSString *fightKey = [stateKey stringByAppendingString:@"/fights"];
+                if (keep && sLiveState[wroteKey] && cur != sLiveState[wroteKey].doubleValue) {
+                    sLiveState[fightKey] = @(sLiveState[fightKey].intValue + 1);
+                    if (sLiveState[fightKey].intValue >= 6) {
+                        reached = NO;
+                        why = [NSString stringWithFormat:@"The game resets %@ faster than this switch writes it: it may not hold", pin[@"field"]];
+                    }
+                } else {
+                    [sLiveState removeObjectForKey:fightKey];
+                }
                 AMLiveWrite(p, t, value);
                 if (keep) sLiveState[wroteKey] = @(AMLiveRead(p, t));
             } else if (AMLiveSet(obj, tcls, pin[@"setter"], t, value)) {

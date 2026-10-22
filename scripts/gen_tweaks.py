@@ -457,6 +457,9 @@ def pin_value(pin, var, ctype_, cls, state):
     return [], c_value(value, ctype_)
 
 
+FIGHT_TICKS = 6  # 3 s of the game undoing a pin before its dot turns red
+
+
 def restorable(pin):
     """Whether turning the switch off puts the game's own value back: a single object whose field or setter the
     pin forces ("when": "always", or a multiply). Floors ("lower"/"higher"), peaks, Class[] and calls keep what
@@ -483,6 +486,8 @@ def pin_globals(pin, key, index):
             out.append(f"static void *{state}_obj;")
     elif restorable(pin):
         out.append(f"static void *{state}_obj; static {ctype_} {state}_orig, {state}_wrote; static bool {state}_has, {state}_wrote_ok;")
+        if pin.get("field"):
+            out.append(f"static int {state}_fights;  // ticks in a row the game had changed what the pin wrote")
     return out
 
 
@@ -621,7 +626,12 @@ def render_pin(pin, var, kind, key, index, waiting=None):
             cond = "true" if cmp_ is None else f"*p {cmp_} {limit}"
             if restorable(pin):
                 lines.append(
-                    f"            if ({state}_obj != obj) {{ {state}_obj = obj; {state}_orig = *p; {state}_has = true; {state}_wrote_ok = false; }}"
+                    f"            if ({state}_obj != obj) {{ {state}_obj = obj; {state}_orig = *p; {state}_has = true; {state}_wrote_ok = false; {state}_fights = 0; }}"
+                )
+                # the game fights back: what the pin wrote half a second ago is gone again, tick after tick
+                fights = c_string(f"The game resets {pin['field']} faster than this switch writes it: it may not hold")
+                lines.append(
+                    f"            if ({state}_wrote_ok && *p != {state}_wrote) {{ if (++{state}_fights >= {FIGHT_TICKS}) fought = {fights}; }} else {state}_fights = 0;"
                 )
                 lines.append(f"            if ({cond}) {{ *p = {value}; {state}_wrote = *p; {state}_wrote_ok = true; applied = true; }}")
             else:
@@ -899,11 +909,13 @@ def render(tweaks, hooks, mod_name):
         m.append(
             "    static bool logged; bool applied = false, tried = false, found = false, reached = false; const char *why = NULL;"
         )
+        m.append("    const char *fought = NULL;  // a pin the game keeps undoing turns the dot red whatever the others do")
         for i, pin in enumerate(t["pins"]):
             m += render_pin(pin, var, kind, t["key"], i, t.get("waiting"))
         m.append(
             f'    if (applied && !logged) {{ logged = true; AMIl2cppLog(@"pin {t["key"]} applied"); }}'
         )
+        m.append("    if (fought) { reached = false; why = fought; }")
         m.append(f"    if (tried) AMMenuStatus({c_string(t['key'])}, reached, why);")
         m.append("    (void)found;")
         m.append("}")

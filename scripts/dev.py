@@ -2407,7 +2407,9 @@ def cmd_scan(args):
     print(f"{len(result['rows'])} candidates in {result['classes']} game classes; {len(result['flagged'])} flagged")
     for r in rows:
         tag = f"FLAG: {r['flag']}" if r.get("flag") else ("in the mod" if r["has"] else f"score {r['score']}")
-        print(f"  {r['area']:<16} {r['object'] + ' ' + r['member']:<58} {r['ctype']:<8} {tag}")
+        hints = [h for h, on in (("lower is better", r.get("direction") == "lower"), ("kept in the save", r.get("saved"))) if on]
+        print(f"  {r['area']:<16} {r['object'] + ' ' + r['member']:<58} {r['ctype']:<8} {tag}"
+              + (f"  ({', '.join(hints)})" if hints else ""))
         if r.get("learned"):
             lr = r["learned"]
             print(f"      learned: like \"{lr['title']}\" ({lr['works']} works, {lr['fails']} fails, {lr['reached']} reached elsewhere)")

@@ -133,5 +133,32 @@ class Scan(unittest.TestCase):
         self.assertIn("SkillsManager.instance | Accuracy", text)
 
 
+
+class Checks(unittest.TestCase):
+    def test_direction_multipliers_and_chances(self):
+        sug = dump_scan._suggest
+        self.assertEqual((sug("NEW_TROOPS_ATTACK_DELAY_MULTIPLIER", "float", False)["value"],
+                          sug("NEW_TROOPS_ATTACK_DELAY_MULTIPLIER", "float", False)["direction"]), ("0.5", "lower"))
+        self.assertEqual(sug("ENEMY_TROOPS_MOVE_SPEED_MULTIPLIER", "double", False)["direction"], "lower")
+        self.assertEqual(sug("attackDelay", "float", False)["value"], "0")
+        self.assertEqual(sug("BUILDINGS_HP_MULTIPLIER", "float", False)["value"], "2")  # not 99
+        self.assertEqual(sug("CASTLE_INSTAKILL_CHANCE", "float", False)["value"], "1")   # a 0-1 chance
+        self.assertEqual(sug("CritChance", "int32_t", True)["value"], "100")            # a percent
+        self.assertEqual(sug("SkillPoints", "int32_t", True), {"value": "99", "when": "lower", "direction": "higher"})
+        self.assertIsNone(dump_scan.MULTIPLIER.search("MULTIPLE_TARGETS"))
+
+    def test_what_a_save_holds(self):
+        classes = {
+            "GameContainer": {"holds": {"PolicyVariables", "String"}},
+            "Policies.PolicyVariables": {"holds": {"Boost"}},
+            "Boost": {"holds": set()},
+            "SaveLoadButton": {"holds": {"Enemy"}},
+            "Enemy": {"holds": set()},
+        }
+        saved = dump_scan.saved_classes(classes)
+        self.assertTrue({"GameContainer", "PolicyVariables", "Boost"} <= saved)
+        self.assertNotIn("Enemy", saved)  # a UI button named Save... holds no save
+
+
 if __name__ == "__main__":
     unittest.main()

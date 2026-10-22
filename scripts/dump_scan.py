@@ -17,7 +17,7 @@ import os
 import re
 from pathlib import Path
 
-VERSION = 5  # bump when the row format or the scoring changes (the cache is rebuilt)
+VERSION = 6  # bump when the row format or the scoring changes (the cache is rebuilt)
 
 IMAGE = re.compile(r"^// Image \d+: (.+?)(?:\.dll)? - (\d+)\s*$")
 NAMESPACE = re.compile(r"^\s*// Namespace: ?(\S*)")
@@ -57,6 +57,15 @@ NOISE = re.compile(r"cache|temp|test|debug|anim|fade|lerp|ui\b|^ui|sound|volume|
                    r"offset|index|count$|timer|delay|duration|color|colour|sprite|font|pos|width|height|"
                    r"tutorial|hint|language|notch|camera|frame|button|panel|popup", re.IGNORECASE)
 PERCENT = re.compile(r"chance|accura|crit|percent|resist|rate|bleed|ammo|anything", re.IGNORECASE)
+# values that help when they go down: waits, costs, what enemies do
+LOWER = re.compile(r"delay|cool_?down|wait|reload|penalt|drain|decay|enem\w*_?(speed|damage|strength|hp|health|spawn)",
+                   re.IGNORECASE)
+MULTIPLIER = re.compile(r"multiplier|\bmult\b|factor|scale$", re.IGNORECASE)
+PROBABILITY = re.compile(r"chance|probab|odds", re.IGNORECASE)
+# classes the game writes to its save file: a field of theirs stays changed after the switch is off unless the
+# switch restores it (gen_tweaks restorable pins do)
+SAVED = re.compile(r"save|snapshot|serializ|persist|container|profile", re.IGNORECASE)
+UI_CLASS = re.compile(r"(button|panel|popup|screen|menu|view|toggle|ui)$", re.IGNORECASE)  # "SaveLoadButton" is UI
 
 
 def _split_words(name):
@@ -115,7 +124,8 @@ def parse(path):
                     full = f"{namespace}.{m.group(1)}" if namespace else m.group(1)
                     if image.startswith("Assembly-CSharp") and full not in classes:
                         current = classes[full] = {
-                            "base": m.group(2) or "", "statics": [], "fields": {}, "props": {}, "getters": set()
+                            "base": m.group(2) or "", "statics": [], "fields": {}, "props": {}, "getters": set(),
+                            "holds": set(),
                         }
                         current_name = m.group(1)
                 continue
@@ -133,6 +143,8 @@ def parse(path):
                 elif ftype in NUMERIC:
                     current["fields"][fname] = {"ctype": NUMERIC[ftype], "offset": offset,
                                                 "private": "public" not in mods}
+                else:
+                    current["holds"].add(re.sub(r"[<\[].*", "", ftype).rsplit(".", 1)[-1])
                 continue
             m = METHOD.match(line)
             if m:
@@ -145,15 +157,34 @@ def parse(path):
 
 
 def _suggest(member, ctype, has_getter):
+    """A first value for a pin, from the member's name and type (the learned value from other games wins)."""
     if ctype == "bool":
         return {"value": "true", "when": "always"}
+    floating = ctype in ("float", "double")
+    if LOWER.search(member):
+        return {"value": "0.5" if MULTIPLIER.search(member) else "0", "when": "higher" if has_getter or not floating else "always",
+                "direction": "lower"}
+    if MULTIPLIER.search(member):
+        return {"value": "2", "when": "always", "direction": "higher"}  # x2: 99 times anything overflows or breaks
+    if PROBABILITY.search(member) and floating:
+        return {"value": "1", "when": "lower", "direction": "higher"}  # a 0-1 chance: 1 is always
     value = "100" if PERCENT.search(member) else "99"
-    return {"value": value, "when": "lower" if has_getter else "always"}
+    return {"value": value, "when": "lower" if has_getter else "always", "direction": "higher"}
+
+
+def saved_classes(classes):
+    """Short names of the classes a save holds: named like a save, or held by one, two levels down."""
+    short = {k.rsplit(".", 1)[-1]: v for k, v in classes.items()}
+    saved = {n for n in short if SAVED.search(n) and not UI_CLASS.search(n)}
+    for _ in range(2):
+        saved |= {h for n in list(saved) for h in short.get(n, {}).get("holds", ()) if h in short}
+    return saved
 
 
 def build(classes, existing=frozenset(), learned=None):
     """learned(name, ctype, cls) -> (bonus, use or None): dev_learn.member_boost, what worked in other games."""
     rows, flagged = [], []
+    saved = saved_classes(classes)
     for cls, info in classes.items():
         if info["statics"]:
             obj, reach = f"{cls}.{info['statics'][0]}", 3
@@ -190,6 +221,8 @@ def build(classes, existing=frozenset(), learned=None):
             if obj.endswith("[]") and area == "Other":
                 score -= 2
             row.update(_suggest(name, ctype, getter))
+            if cls.rsplit(".", 1)[-1] in saved:
+                row["saved"] = True  # changes stay in the save: keep restore on for its switch
             if learned:
                 bonus, p = learned(name, ctype, cls)
                 if p:  # the best-proven use elsewhere: its title and value, and how it went
@@ -238,11 +271,11 @@ def scan(dump, tweaks=None, learned=None):
     if not data or data.get("stamp") != stamp:
         classes = parse(dump)
         data = {"stamp": stamp, "classes": len(classes),
-                "data": {k: dict(v, getters=sorted(v["getters"])) for k, v in classes.items()}}
+                "data": {k: dict(v, getters=sorted(v["getters"]), holds=sorted(v["holds"])) for k, v in classes.items()}}
         tmp = cache.with_name(cache.name + ".tmp")
         tmp.write_text(json.dumps(data), encoding="utf-8")
         os.replace(tmp, cache)
-    classes = {k: dict(v, getters=set(v["getters"])) for k, v in data["data"].items()}
+    classes = {k: dict(v, getters=set(v["getters"]), holds=set(v.get("holds", ()))) for k, v in data["data"].items()}
     rows, flagged = build(classes, existing_targets(tweaks), learned)
     return {"rows": rows, "flagged": flagged, "classes": data["classes"]}
 
