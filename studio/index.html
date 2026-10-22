@@ -123,11 +123,14 @@ main.card::after { right: -6px; bottom: -6px; border-right: 1.5px solid var(--ac
 .dot.good { background: var(--good); } .dot.bad { background: var(--bad); animation: pulse 2.4s ease-in-out infinite; } .dot.warn { background: var(--warn); }
 table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 th, td { text-align: left; padding: 8px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
-/* the first column (a method or field name) takes the room and wraps; the others stay on one line at their width */
-th:first-child, td:first-child { overflow-wrap: anywhere; }
-th:not(:first-child), td:not(:first-child) { white-space: nowrap; width: 1%; }
-td .row { flex-wrap: nowrap; }
-#findOut, #tab-scan, #tab-suggest { overflow-x: auto; }  /* a narrow window scrolls the table, never cuts its buttons */
+/* tables fit the window: words wrap as words, long code names (Class.method) may break anywhere, and badges,
+   addresses and a row's buttons stay whole */
+table { table-layout: auto; }
+td .mono, td.mono { overflow-wrap: anywhere; }
+td .badge, td.mono.muted.small, td .badges { white-space: nowrap; }
+td .row { flex-wrap: wrap; justify-content: flex-start; }
+td:last-child { width: 1%; }
+td:last-child .row { flex-wrap: nowrap; }
 tbody tr { transition: background .15s; }
 tbody tr:hover { background: color-mix(in srgb, var(--raised) 60%, transparent); }
 .muted { color: var(--muted); }
