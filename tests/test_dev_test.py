@@ -46,5 +46,19 @@ class Results(unittest.TestCase):
         self.assertNotIn("zz", got)
 
 
+class Share(unittest.TestCase):
+    def test_file_name_fits_the_download_proxy(self):
+        self.assertEqual(dev.share_name({"display_name": "The Wanderer+ (dev)", "version": "1.0.15"}), "The-Wanderer-Plus-dev_1.0.15.ipa")
+        self.assertEqual(dev.share_name({"name": "9Kings+", "version": "1.0.2"}), "9Kings-Plus_1.0.2.ipa")
+
+    def test_expiry_defaults_and_limits(self):
+        days = lambda **kw: dev.share_days(type("A", (), {"days": None, "months": None, **kw}))
+        self.assertEqual(days(), 180)
+        self.assertEqual(days(months=6), 183)
+        self.assertEqual(days(months=12), 365)
+        with self.assertRaises(dev.DevError):
+            days(days=401)
+
+
 if __name__ == "__main__":
     unittest.main()
