@@ -488,6 +488,21 @@ const App = {
       return this.quick("call", body);
     });
   },
+  // A flagged scan row: the scan judges by names only, so a flag can be wrong (9 Kings' in-run gold reads like a
+  // shop currency). The owner may add it after a warning and a confirmation; the rules stay what they are.
+  flaggedDialog(x, then) {
+    const why = { "sold in the shop": "it may be something the game sells (a purchase, premium currency or an unlock)",
+                  "ads": "it may control the game's ads", "accounts and online": "it may touch accounts, cloud saves or online play" }[x.flag] || x.flag;
+    this.dialog(`Flagged: ${x.flag}`, [
+      { type: "note", text: `${x.object} ${x.member}: ${why}.` },
+      { type: "note", text: "The scan reads names only, so this can be wrong: gold earned in a run, for example, reads like a shop currency. Accretion mods never change what a game sells, its ads, or online play, so add this only when you have checked that it is none of those." },
+      { name: "checked", label: "I checked: it isn't sold, an ad, or online play", type: "check" },
+    ], async v => {
+      if (!v.checked) { this.toast("Tick the check first, or Cancel.", "bad"); return false; }
+      setTimeout(then, 0);
+      return true;
+    }, "Continue");
+  },
   plainSwitchDialog() {
     this.dialog("A switch or slider with no hook", [
       { type: "note", text: "Read it in Tweak.x as am_<key> (BOOL, or float for a slider)." },
@@ -710,11 +725,14 @@ const App = {
         const tb = this.el("tbody");
         for (const x of rows) {
           const tag = x.flag ? this.el("span", { class: "badge bad", text: x.flag }) : x.has ? this.el("span", { class: "badge good", text: "in the mod" }) : this.el("span", { class: "badge accent", style: "white-space:nowrap", text: "score " + x.score });
-          const add = x.flag || x.has ? null : this.el("button", { class: "small", style: "white-space:nowrap", onclick: () => this.pinDialog({ target: `${x.class}.${x.member}`, object: x.object, value: x.value, when: x.when, title: nice(x.name) }) }, "Add…");
+          const pin = () => this.pinDialog({ target: `${x.class}.${x.member}`, object: x.object, value: x.value, when: x.when, title: nice(x.name) });
+          const add = x.has ? null
+            : x.flag ? this.el("button", { class: "small ghost danger", style: "white-space:nowrap", onclick: () => this.flaggedDialog(x, pin) }, "Add anyway…")
+            : this.el("button", { class: "small", style: "white-space:nowrap", onclick: pin }, "Add…");
           tb.append(this.el("tr", {},
             this.el("td", { text: x.area }),
             this.el("td", {}, this.el("span", { class: "mono", text: `${x.object} ${x.member}` }), this.el("br"), this.el("span", { class: "muted small", text: `${x.ctype} ${x.kind}${x.offset ? " at " + x.offset : ""}${x.value && !x.flag ? " · suggested " + x.value + (x.when !== "always" ? " when lower" : "") : ""}` })),
-            this.el("td", {}, this.el("div", { class: "badges", style: "margin:0" }, tag,
+            this.el("td", { style: "min-width:150px" }, this.el("div", { class: "badges", style: "margin:0" }, tag,
               x.learned ? this.el("span", { class: "badge good", title: `${x.learned.works} works, ${x.learned.fails} fails, ${x.learned.reached} reached in other games`, text: `like “${x.learned.title}”` }) : null,
               x.direction === "lower" ? this.el("span", { class: "badge", text: "lower is better" }) : null,
               x.saved ? this.el("span", { class: "badge warn", title: "the game keeps this in its save: switching off restores it", text: "kept in the save" }) : null)),
