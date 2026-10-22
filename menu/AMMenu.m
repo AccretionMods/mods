@@ -218,7 +218,7 @@ static UIColor *AMNeon(BOOL ok) {
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
-    return @"Made by Accretion. Settings are saved on this device. A switch that is on shows a dot: green when its cheat is reaching the game, red when it is not, with the reason.";
+    return @"Made by Accretion. Settings are saved on this device. A switch that is on shows a dot: green when its cheat is reaching the game, red when it is not, with the reason. The ring around the menu button sums them up: green all working, yellow some, red none.";
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
@@ -326,8 +326,11 @@ static UIColor *AMNeon(BOOL ok) {
 
 #pragma mark - Floating button
 
+typedef NS_ENUM(NSInteger, AMRingState) { AMRingNone, AMRingGood, AMRingSome, AMRingBad };
+
 @interface AMButton : UIButton
-@property (nonatomic, strong) AMStatusDot *dot;
+@property (nonatomic, strong) CAShapeLayer *ring;
+@property (nonatomic) AMRingState ringState;
 @end
 
 @implementation AMButton
@@ -342,12 +345,48 @@ static UIColor *AMNeon(BOOL ok) {
         [self setImage:icon forState:UIControlStateNormal];
         self.tintColor = UIColor.whiteColor;
         [self addGestureRecognizer:[[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(drag:)]];
-        _dot = [AMStatusDot new];
-        _dot.center = CGPointMake(38, 6);
-        _dot.hidden = YES;
-        [self addSubview:_dot];
+        // the status ring just outside the button: green all working, yellow some, red none (AMMenu updateBadge)
+        _ring = [CAShapeLayer layer];
+        _ring.path = [UIBezierPath bezierPathWithOvalInRect:CGRectInset(self.bounds, -3, -3)].CGPath;
+        _ring.fillColor = UIColor.clearColor.CGColor;
+        _ring.lineWidth = 3;
+        _ring.shadowOffset = CGSizeZero;
+        _ring.shadowRadius = 6;
+        _ring.shadowOpacity = 0.9;
+        _ring.hidden = YES;
+        [self.layer addSublayer:_ring];
     }
     return self;
+}
+
+- (void)setRingState:(AMRingState)state {
+    // same state: nothing to do, unless iOS dropped the pulse (it removes layer animations in the background)
+    BOOL pulses = (state == AMRingSome || state == AMRingBad) && !UIAccessibilityIsReduceMotionEnabled();
+    if (state == _ringState && (!pulses || [_ring animationForKey:@"pulse"])) return;
+    _ringState = state;
+    _ring.hidden = state == AMRingNone;
+    UIColor *c = state == AMRingGood ? [UIColor colorWithRed:0.22 green:1.00 blue:0.08 alpha:1]   // neon green
+               : state == AMRingSome ? [UIColor colorWithRed:1.00 green:0.86 blue:0.10 alpha:1]   // neon yellow
+                                     : [UIColor colorWithRed:1.00 green:0.19 blue:0.19 alpha:1];  // neon red
+    _ring.strokeColor = c.CGColor;
+    _ring.shadowColor = c.CGColor;
+    [_ring removeAllAnimations];
+    // calm when all is well; a pulse only when something needs a look (none with Reduce Motion)
+    if ((state == AMRingSome || state == AMRingBad) && !UIAccessibilityIsReduceMotionEnabled()) {
+        CABasicAnimation *glow = [CABasicAnimation animationWithKeyPath:@"shadowRadius"];
+        glow.fromValue = @3;
+        glow.toValue = @11;
+        CABasicAnimation *fade = [CABasicAnimation animationWithKeyPath:@"opacity"];
+        fade.fromValue = @1;
+        fade.toValue = @0.5;
+        CAAnimationGroup *pulse = [CAAnimationGroup animation];
+        pulse.animations = @[glow, fade];
+        pulse.duration = state == AMRingBad ? 0.6 : 1.0;
+        pulse.autoreverses = YES;
+        pulse.repeatCount = HUGE_VALF;
+        pulse.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
+        [_ring addAnimation:pulse forKey:@"pulse"];
+    }
 }
 
 - (void)drag:(UIPanGestureRecognizer *)pan {
@@ -454,7 +493,8 @@ static UIColor *AMNeon(BOOL ok) {
     }
 }
 
-// The button's dot: hidden when no switch is on, red when any switch that is on is not working, else green.
+// The button's ring: none when no switch is on, green when every switch that is on works, red when none of
+// them does, yellow when some do.
 - (void)updateBadge {
     NSUInteger on = 0, failing = 0;
     for (AMItem *item in _items) {
@@ -463,8 +503,7 @@ static UIColor *AMNeon(BOOL ok) {
         if (!AMStatusFor(item.key, NULL)) failing++;
     }
     for (AMButton *button in _buttons) {
-        button.dot.hidden = on == 0;
-        button.dot.ok = failing == 0;
+        button.ringState = on == 0 ? AMRingNone : failing == 0 ? AMRingGood : failing == on ? AMRingBad : AMRingSome;
         button.accessibilityValue = on == 0 ? nil
             : failing ? [NSString stringWithFormat:@"%lu of %lu cheats not working", (unsigned long)failing, (unsigned long)on]
                       : [NSString stringWithFormat:@"%lu cheats working", (unsigned long)on];
