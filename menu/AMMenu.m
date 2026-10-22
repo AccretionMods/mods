@@ -145,9 +145,24 @@ static BOOL AMStatusFor(NSString *key, NSString **line) {
     return ok;
 }
 
+// The menu's Display category: whether the status dot and ring pulse, and whether switches show their toggle.
+// Kept in the game's NSUserDefaults with the switches; both on until turned off.
+static NSString *const AMDisplaySection = @"Display";
+static NSString *const AMPulseKey = @"AM__pulse";
+static NSString *const AMTogglesKey = @"AM__toggles";
+
+static BOOL AMDisplayOn(NSString *key) {
+    id value = [NSUserDefaults.standardUserDefaults objectForKey:key];
+    return value ? [value boolValue] : YES;
+}
+
+static BOOL AMPulseAllowed(void) {
+    return !UIAccessibilityIsReduceMotionEnabled() && AMDisplayOn(AMPulseKey);
+}
+
 static void AMPulse(CALayer *layer, CGFloat from, CGFloat to, CFTimeInterval duration) {
     [layer removeAllAnimations];
-    if (UIAccessibilityIsReduceMotionEnabled()) return;
+    if (!AMPulseAllowed()) return;
     CABasicAnimation *fade = [CABasicAnimation animationWithKeyPath:@"opacity"];
     fade.fromValue = @(from);
     fade.toValue = @(to);
@@ -230,24 +245,23 @@ static void AMPulse(CALayer *layer, CGFloat from, CGFloat to, CFTimeInterval dur
     if ((self = [super initWithFrame:CGRectMake(0, 0, 8, 8)])) {
         self.userInteractionEnabled = NO;
         self.layer.cornerRadius = 4;
-        _ok = YES;
         [self setOk:NO];
     }
     return self;
 }
 
 - (void)setOk:(BOOL)ok {
-    BOOL changed = ok != _ok || ![self.layer animationForKey:@"pulse"];
     _ok = ok;
     self.backgroundColor = ok ? AM_GOOD : AM_BAD;
-    if (!changed) return;
-    if (ok) [self.layer removeAllAnimations];
-    else if (self.window) AMPulse(self.layer, 1, 0.35, 2.4);
+    BOOL want = !ok && self.window && AMPulseAllowed();  // a red dot holds still when Pulsing dot is off
+    BOOL has = [self.layer animationForKey:@"pulse"] != nil;
+    if (want && !has) AMPulse(self.layer, 1, 0.35, 2.4);
+    else if (!want && has) [self.layer removeAllAnimations];
 }
 
 - (void)didMoveToWindow {
     [super didMoveToWindow];
-    if (self.window && !self.ok) AMPulse(self.layer, 1, 0.35, 2.4);
+    [self setOk:self.ok];
 }
 
 @end
@@ -272,13 +286,14 @@ static UIBarButtonItem *AMBarText(NSString *title, id target, SEL action) {
 @property (nonatomic, copy) NSArray<NSDictionary<NSString *, NSString *> *> *(^entries)(void);
 @property (nonatomic, copy) void (^onPick)(NSInteger);
 @property (nonatomic, copy) NSString *section;  // the menu group it belongs to ("" before any addSection)
+@property (nonatomic) BOOL display;  // one of the menu's own Display settings: never counted as a cheat that is on
 @end
 
 @implementation AMItem
 @end
 
 static BOOL AMItemOn(AMItem *item) {
-    if (item.isList) return NO;
+    if (item.isList || item.display) return NO;
     if (item.isSlider) return [NSUserDefaults.standardUserDefaults floatForKey:AMKey(item.key)] != item.defaultValue;
     return [NSUserDefaults.standardUserDefaults boolForKey:AMKey(item.key)];
 }
@@ -829,9 +844,12 @@ static UITextField *AMSearchField(NSUInteger count) {
 @property (nonatomic, strong) UILabel *title, *detail;
 @property (nonatomic, strong) AMLineToggle *toggle;
 @property (nonatomic, copy, nullable) NSString *reason;  // set while the switch is on and not working
+- (void)showToggle:(BOOL)show;
 @end
 
-@implementation AMSwitchCell
+@implementation AMSwitchCell {
+    NSArray<NSLayoutConstraint *> *_byToggle, *_byEdge;  // where the text ends: before the toggle, or at the edge
+}
 
 - (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier {
     if ((self = [super initWithStyle:style reuseIdentifier:reuseIdentifier])) {
@@ -860,10 +878,8 @@ static UITextField *AMSearchField(NSUInteger count) {
             [_dot.centerYAnchor constraintEqualToAnchor:_title.firstBaselineAnchor constant:-4.5],
             [_title.topAnchor constraintEqualToAnchor:m.topAnchor constant:2],
             [_title.leadingAnchor constraintEqualToAnchor:m.leadingAnchor constant:AMDotColumn],
-            [_title.trailingAnchor constraintLessThanOrEqualToAnchor:_toggle.leadingAnchor constant:-12],
             [_detail.topAnchor constraintEqualToAnchor:_title.bottomAnchor],
             [_detail.leadingAnchor constraintEqualToAnchor:_title.leadingAnchor],
-            [_detail.trailingAnchor constraintLessThanOrEqualToAnchor:_toggle.leadingAnchor constant:-12],
             [_detail.bottomAnchor constraintEqualToAnchor:m.bottomAnchor constant:-2],
             [_toggle.widthAnchor constraintEqualToConstant:34],
             [_toggle.heightAnchor constraintEqualToConstant:20],
@@ -871,10 +887,22 @@ static UITextField *AMSearchField(NSUInteger count) {
             [_toggle.centerYAnchor constraintEqualToAnchor:self.contentView.centerYAnchor],
             [self.contentView.heightAnchor constraintGreaterThanOrEqualToConstant:30],
         ]];
+        _byToggle = @[[_title.trailingAnchor constraintLessThanOrEqualToAnchor:_toggle.leadingAnchor constant:-12],
+                      [_detail.trailingAnchor constraintLessThanOrEqualToAnchor:_toggle.leadingAnchor constant:-12]];
+        _byEdge = @[[_title.trailingAnchor constraintLessThanOrEqualToAnchor:m.trailingAnchor],
+                    [_detail.trailingAnchor constraintLessThanOrEqualToAnchor:m.trailingAnchor]];
+        [NSLayoutConstraint activateConstraints:_byToggle];
         self.isAccessibilityElement = YES;
         self.accessibilityTraits = UIAccessibilityTraitButton;
     }
     return self;
+}
+
+- (void)showToggle:(BOOL)show {
+    if (self.toggle.hidden == !show) return;
+    self.toggle.hidden = !show;
+    [NSLayoutConstraint deactivateConstraints:show ? _byEdge : _byToggle];
+    [NSLayoutConstraint activateConstraints:show ? _byToggle : _byEdge];
 }
 
 - (NSString *)accessibilityLabel { return self.title.text; }
@@ -1061,6 +1089,17 @@ static NSString *AMGameName(NSString *fallback) {
 
 - (instancetype)initWithItems:(NSArray<AMItem *> *)items title:(NSString *)title {
     if ((self = [super initWithStyle:UITableViewStyleGrouped])) {
+        NSUInteger cheats = items.count;
+        NSMutableArray<AMItem *> *all = [items mutableCopy];
+        for (NSArray<NSString *> *d in @[@[@"_pulse", @"Pulsing dot"], @[@"_toggles", @"Toggles"]]) {
+            AMItem *item = [AMItem new];  // AMKey(@"_pulse") is AMPulseKey
+            item.key = d[0];
+            item.title = d[1];
+            item.section = AMDisplaySection;
+            item.display = YES;
+            [all addObject:item];
+        }
+        items = all;
         _items = items;
         _query = @"";
         self.title = title;
@@ -1075,14 +1114,14 @@ static NSString *AMGameName(NSString *fallback) {
         NSMutableArray *ordered = [NSMutableArray new];
         for (NSString *t in titles) [ordered addObject:rows[t]];
         _allRows = ordered;
-        _folds = items.count > 30 && titles.count > 1;
+        _folds = cheats > 30 && titles.count > 2;
         [self filter];
     }
     return self;
 }
 
 - (BOOL)isOpen:(NSString *)section {
-    if (!self.folds || self.query.length || !section.length) return YES;
+    if (!self.folds || self.query.length || !section.length || [section isEqualToString:AMDisplaySection]) return YES;
     return [[NSUserDefaults.standardUserDefaults arrayForKey:AMOpenSections] containsObject:section];
 }
 
@@ -1163,8 +1202,8 @@ static NSString *AMGameName(NSString *fallback) {
     titleView.alignment = UIStackViewAlignmentCenter;
     self.navigationItem.titleView = titleView;
     [self refreshAllOff];
-    if (self.items.count > 12) {
-        self.search = AMSearchField(self.items.count);
+    if (self.items.count - 2 > 12) {
+        self.search = AMSearchField(self.items.count - 2);
         self.search.delegate = self;
         [self.search addTarget:self action:@selector(searchChanged:) forControlEvents:UIControlEventEditingChanged];
         table.tableHeaderView = [[AMSearchHeader alloc] initWithField:self.search];
@@ -1262,7 +1301,7 @@ static NSString *AMGameName(NSString *fallback) {
     BOOL open = [self isOpen:title];
     head.label.attributedText = AMLabel(title, AM_MUTED);
     head.tap.accessibilityIdentifier = title;
-    head.tap.userInteractionEnabled = self.folds && !self.query.length;
+    head.tap.userInteractionEnabled = self.folds && !self.query.length && ![title isEqualToString:AMDisplaySection];
     NSUInteger on = 0;
     for (NSNumber *n in self.shownRows[section]) if (AMItemOn(self.items[n.integerValue])) on++;
     NSMutableAttributedString *r = [NSMutableAttributedString new];
@@ -1387,7 +1426,20 @@ static NSString *AMGameName(NSString *fallback) {
 }
 
 - (void)showStatusOf:(AMItem *)item inRow:(AMSwitchCell *)row animated:(BOOL)animated {
+    if (item.display) {  // a setting of the menu: its toggle always shows, no dot, no status
+        BOOL on = AMDisplayOn(AMKey(item.key));
+        row.reason = nil;
+        row.dot.hidden = YES;
+        row.detail.text = nil;
+        row.title.textColor = AM_FG;
+        [row showToggle:YES];
+        if (row.toggle.on != on || row.toggle.bad) [row.toggle setOn:on bad:NO animated:animated];
+        return;
+    }
     BOOL on = [NSUserDefaults.standardUserDefaults boolForKey:AMKey(item.key)];
+    BOOL toggles = AMDisplayOn(AMTogglesKey);
+    [row showToggle:toggles];
+    row.title.textColor = toggles || on ? AM_FG : AM_MUTED;  // without toggles, bright text and the dot say "on"
     NSString *line = nil;
     BOOL ok = on && AMStatusFor(item.key, &line);
     row.reason = on && !ok ? line : nil;
@@ -1459,6 +1511,12 @@ static NSString *AMGameName(NSString *fallback) {
 
 - (void)flip:(NSInteger)flat {
     AMItem *item = self.items[flat];
+    if (item.display) {
+        [NSUserDefaults.standardUserDefaults setBool:!AMDisplayOn(AMKey(item.key)) forKey:AMKey(item.key)];
+        [[[UISelectionFeedbackGenerator alloc] init] selectionChanged];
+        [self.tableView reloadData];  // every row follows the new setting
+        return;
+    }
     BOOL on = ![NSUserDefaults.standardUserDefaults boolForKey:AMKey(item.key)];
     [NSUserDefaults.standardUserDefaults setBool:on forKey:AMKey(item.key)];
     if (item.onSwitch) item.onSwitch(on);
@@ -1582,7 +1640,8 @@ static NSString *const AMButtonSpot = @"AM__buttonSpot";  // where the button wa
 - (void)setRingState:(AMRingState)state {
     // same state: nothing to do, unless iOS dropped the pulse (it removes layer animations in the background)
     BOOL pulses = state == AMRingSome || state == AMRingBad;
-    if (state == _ringState && (!pulses || UIAccessibilityIsReduceMotionEnabled() || [_ring animationForKey:@"pulse"])) return;
+    BOOL pulsing = [_ring animationForKey:@"pulse"] != nil;
+    if (state == _ringState && pulsing == (pulses && AMPulseAllowed())) return;
     _ringState = state;
     _ring.hidden = state == AMRingNone;
     _idle.hidden = state != AMRingNone;  // a status ring replaces the brand edge
