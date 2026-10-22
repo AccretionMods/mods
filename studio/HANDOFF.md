@@ -13,7 +13,11 @@ chose a local web app in this repo over a desktop app, a Claude panel or an iOS 
 - `studio/index.html`: the page (vanilla JS, Accretion's design tokens, dark/light).
 - Binds 127.0.0.1 by default. `--host 0.0.0.0` exposes it on the LAN with no login: trusted Wi-Fi only.
 - Apple ID prompts (2FA) can't be answered through the page: sign in once from a console (`am sign ... --install`).
-- **Get .ipa** (2026-10-22, uncommitted): top-bar dialog over `scripts/ipa_fetch.py` (`am fetch`): source
+- **Games tab** (2026-10-22): `studio/games.py` + `/api/games?list=&region=`: App Store charts (RSS genre 6014,
+  new feeds filtered to games), "like the games we mod" (themes from name/description + sub-genres, iTunes
+  Search), cards with our-mod / .ipa-ready / online badges, Get .ipa and New mod (no copy: opens Get .ipa).
+  Checked in the page: similar list (wasteland/survival RPGs), Top free, New mod -> Get .ipa. First load ~10 s.
+- **Get .ipa** (2026-10-22, merged in mods #20): top-bar dialog over `scripts/ipa_fetch.py` (`am fetch`): source
   decrypt.34306.lol (search, site account; captcha -> browser hand-off), decrypt.day and armconverter (browser
   only); the `fetch` job waits for the download in Downloads and files it in intake/. Build & phone tab: "Get the
   newest from the decrypt site". Checked in the page against the live site (paused, captcha shown); no real download yet.

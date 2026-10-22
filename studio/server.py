@@ -9,7 +9,8 @@ fetch) run as jobs: a `python dev.py <command> ...` subprocess whose output the 
 (2FA) can't be answered from a page: do it once from a console, plumesign keeps the session.
 
 API (JSON): GET /api/mods, /api/mods/<mod>, /api/mods/<mod>/find?q=&limit=, /api/mods/<mod>/fields?class=,
-/api/mods/<mod>/suggest, /api/bases, /api/fetch/account, /api/fetch/search?q=&region=&platform=;
+/api/mods/<mod>/suggest, /api/bases, /api/fetch/account, /api/fetch/search?q=&region=&platform=,
+/api/games?list=top-free|top-paid|top-grossing|new-free|new-paid|similar&region= (studio/games.py);
 POST /api/fetch/login {"email", "password"} (passed to the decrypt site, never saved), /api/fetch/logout; POST /api/mods/<mod>/<add|pin|call|tweak|remove|gen|mark> with the
 command's options as JSON (the same names as dev.py's flags, dashes as underscores); POST /api/jobs
 {"command": "build", "mod": "...", "args": ["--ipa"]}, GET /api/jobs/<id>?since=N, POST /api/jobs/<id>/stop.
@@ -39,6 +40,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import dev
 import dev_learn
+import games
 import gen_tweaks
 import ipa_fetch
 
@@ -262,6 +264,30 @@ def fetch_client():
     return ipa_fetch.Client(dev.am_root())
 
 
+def games_list(kind, region):
+    """A Games tab list, each game marked with our mods of it and copies waiting in intake/ or Downloads."""
+    if not re.fullmatch(r"[a-z]{2}", region):
+        raise dev.DevError("region: a two-letter store code like us")
+    mods = {}
+    for path in sorted((ROOT / "mods").glob("*/mod.json")):
+        meta = dev.read_json(path)
+        if meta.get("target_bundle_id"):
+            mods.setdefault(meta["target_bundle_id"], []).append(
+                {"name": path.parent.name, "title": meta.get("display_name") or meta["name"]}
+            )
+    if kind == "similar":
+        rows = games.similar({b: ms[0]["title"] for b, ms in mods.items()}, region)
+    else:
+        rows = games.chart(kind, region)
+    have = {}
+    for ipa in bases()["ipas"]:
+        have.setdefault(ipa["bundle"], ipa)
+    for r in rows:
+        r["mods"] = mods.get(r["bundle"], [])
+        r["ipa"] = have.get(r["bundle"])
+    return {"list": kind, "region": region, "games": rows}
+
+
 def bases():
     """Decrypted .ipa files in intake/ and Downloads, for the New mod form."""
     rows = []
@@ -402,7 +428,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
             self.handle_get()
-        except (dev.DevError, ipa_fetch.FetchError) as e:
+        except (dev.DevError, ipa_fetch.FetchError, games.GamesError) as e:
             self.send_json({"error": str(e)}, HTTPStatus.BAD_REQUEST)
         except Exception as e:  # noqa: BLE001
             self.send_json(
@@ -436,6 +462,8 @@ class Handler(BaseHTTPRequestHandler):
             )
         if parts[1:] == ["bases"]:
             return self.send_json(bases())
+        if parts[1:] == ["games"]:
+            return self.send_json(games_list(q.get("list", "top-free"), q.get("region", "us")))
         if parts[1:] == ["fetch", "account"]:
             return self.send_json(fetch_client().account())
         if parts[1:] == ["fetch", "search"]:
