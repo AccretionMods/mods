@@ -1,6 +1,7 @@
 // Accretion Mods IL2CPP data helpers (see AMIl2cppData.h). Data calls only: nothing here changes code.
 
 #import "AMIl2cppData.h"
+#import "AMIl2cpp.h"
 #import <dlfcn.h>
 #import <os/log.h>
 #import <string.h>
@@ -105,13 +106,38 @@ static void *lookupClass(const char *name) {
     return NULL;
 }
 
+// FieldInfo and MethodInfo pointers live as long as the game, so a lookup by name is done once: the pins ask
+// for the same ones twice a second.
+static NSString *lookupKey(const char *cls, const char *name, int argc) {
+    return [NSString stringWithFormat:@"%s.%s/%d", cls, name, argc];
+}
+
 static void *field(const char *cls, const char *name) {
+    static NSMutableDictionary<NSString *, NSValue *> *cache;
+    NSString *key = lookupKey(cls, name, -1);
+    NSValue *hit = cache[key];
+    if (hit) return hit.pointerValue;
     void *klass = AMIl2cppClass(cls);
     class_get_field_from_name_t *from_name = IL2CPP(class_get_field_from_name);
     if (!klass || !from_name) return NULL;
     void *f = from_name(klass, name);
-    if (!f) logOnce([NSString stringWithFormat:@"field %s.%s not found", cls, name]);
+    if (!f) { logOnce([NSString stringWithFormat:@"field %s.%s not found", cls, name]); return NULL; }
+    if (!cache) cache = [NSMutableDictionary new];
+    cache[key] = [NSValue valueWithPointer:f];
     return f;
+}
+
+static void *methodNamed(void *klass, const char *cls, const char *name, int argc) {
+    static NSMutableDictionary<NSString *, NSValue *> *cache;
+    NSString *key = lookupKey(cls, name, argc);
+    NSValue *hit = cache[key];
+    if (hit) return hit.pointerValue;
+    class_get_method_from_name_t *from_name = IL2CPP(class_get_method_from_name);
+    void *m = from_name ? from_name(klass, name, argc) : NULL;
+    if (!m) return NULL;
+    if (!cache) cache = [NSMutableDictionary new];
+    cache[key] = [NSValue valueWithPointer:m];
+    return m;
 }
 
 #define FIELD_ATTRIBUTE_STATIC 0x10
@@ -234,13 +260,26 @@ void *AMIl2cppArrayAt(void *array, int32_t index) {
 
 bool AMIl2cppCall(void *obj, const char *cls, const char *method, int argc, void **argv, void **out) {
     void *klass = AMIl2cppClass(cls);
-    class_get_method_from_name_t *from_name = IL2CPP(class_get_method_from_name);
     runtime_invoke_t *run = IL2CPP(runtime_invoke);
-    if (!klass || !from_name || !run) return false;
-    void *m = from_name(klass, method, argc);
+    if (!klass || !run) return false;
+    void *m = methodNamed(klass, cls, method, argc);
     if (!m) { logOnce([NSString stringWithFormat:@"method %s.%s/%d not found", cls, method, argc]); return false; }
+    // Without JIT a hooked method's MethodInfo points at our replacement, and runtime_invoke would call it:
+    // a pin reading SkillsManager.get_SkillPoints got the hook's 99, not the game's real 0, and never wrote.
+    // So the call goes to the game's function for its duration (main thread, a few microseconds).
+    void **fields = m;
+    void *now = fields[0], *real = AMIl2cppOriginalOf(now);
+    bool second = false;
+    if (real) {
+        fields[0] = real;
+        if (fields[1] == now) { fields[1] = real; second = true; }  // Unity 2021.2+ virtualMethodPointer
+    }
     void *exception = NULL;
     void *result = run(m, obj, argv, &exception);
+    if (real) {
+        fields[0] = now;
+        if (second) fields[1] = now;
+    }
     if (exception) {
         logOnce([NSString stringWithFormat:@"%s.%s threw", cls, method]);
         return false;

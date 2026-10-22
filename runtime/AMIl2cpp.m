@@ -66,6 +66,14 @@ void AMIl2cppRegister(const char *name, void *replacement, void **original) {
     replacements[replacement_count++] = (AMHookReplacement){name, replacement, original};
 }
 
+void *AMIl2cppOriginalOf(void *pointer) {
+    if (!pointer) return NULL;
+    for (size_t i = 0; i < replacement_count; i++) {
+        if (replacements[i].replacement == pointer && replacements[i].original) return *replacements[i].original;
+    }
+    return NULL;
+}
+
 // A game that quits on its own (exit(), Application.Quit) leaves no crash report. The device log then
 // shows who called it: each frame as image+offset, which the game's dump maps to a method.
 static void logExit(void) {
