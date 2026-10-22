@@ -27,8 +27,8 @@ chose a local web app in this repo over a desktop app, a Claude panel or an iOS 
   found and fixed on the way: `send_error` crashed the quiet `log_message` (HTTPStatus as first arg); sign/install
   jobs got the mod name prepended where the file path goes; a server started outside a login shell had no `uv` or
   `pymobiledevice3` on PATH (dev.py now looks in `~/.local/bin` and uv's tool folder; the job env adds `~/.local/bin`).
-  Seen in the log afterwards: health 100 -> 90 while keepStats was on, and it stayed at 90 for two watch lines; not
-  explained (the owner may have toggled the switch on the phone). Clicking the "open the app first" label with a
+  Seen in the log afterwards: health 100 -> 90 that stayed for two watch lines; the owner was tapping switches on
+  the phone during the capture (keepStats off at that moment), so nothing to chase. Clicking the "open the app first" label with a
   tap near the Log button did not toggle it; setting the checkbox directly did.
 - Not tried from the page yet: dump, run, update, New mod.
 - The built-in browser launches the server from `.claude/launch.json` (local, not committed: it holds the user's uv
