@@ -9,7 +9,8 @@ fetch) run as jobs: a `python dev.py <command> ...` subprocess whose output the 
 (2FA) can't be answered from a page: do it once from a console, plumesign keeps the session.
 
 API (JSON): GET /api/mods, /api/mods/<mod>, /api/mods/<mod>/find?q=&limit=, /api/mods/<mod>/fields?class=,
-/api/mods/<mod>/suggest, /api/mods/<mod>/context (facts for the prompt builder), /api/prompts
+/api/mods/<mod>/suggest, /api/mods/<mod>/scan?area=&find=&flagged=1&text=1 (no-JIT candidates,
+scripts/dump_scan.py), /api/mods/<mod>/context (facts for the prompt builder), /api/prompts
 (studio/prompts.json), /api/bases, /api/fetch/account, /api/fetch/search?q=&region=&platform=,
 /api/games?list=top-free|top-paid|top-grossing|new-free|new-paid|similar|search|like&region=&q=&bundle=
 (scripts/games.py through dev.games_list; also `dev.py games`), /api/games/info?bundle=&region=;
@@ -650,6 +651,15 @@ class Handler(BaseHTTPRequestHandler):
                     )
                 if rest == ["fields"]:
                     return self.send_json(fields(name, q.get("class", "")))
+                if rest == ["scan"]:
+                    result, rows = dev.scan_rows(name, q.get("area") or None, q.get("find") or None, q.get("flagged") == "1")
+                    if q.get("text") == "1":  # for the Claude prompt: not yet in the mod, best first
+                        fresh = [r for r in rows if not r["has"]]
+                        return self.send_json({"text": dev.dump_scan.as_text(fresh, int(q.get("limit", 60)))})
+                    return self.send_json({
+                        "classes": result["classes"], "total": len(result["rows"]), "flagged": len(result["flagged"]),
+                        "rows": rows[: int(q.get("limit", 300))],
+                    })
                 if rest == ["context"]:
                     return self.send_json(mod_context(name))
                 if rest == ["suggest"]:

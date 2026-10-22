@@ -36,6 +36,8 @@ it); signing and device logs need the phone on USB and run on Windows (plumesign
          [--platform iphone] [--force]                           (AM_DECRYPT_URL; default decrypt.34306.lol, a third party)
   dev.py fetch --login [--email E] | --logout | --account        the site account a new decrypt needs
   dev.py fetch --save-login | --forget-login                     keep it in Windows Credential Manager; fetch signs in
+  dev.py scan <mod> [--area Combat] [--find word] [--limit 40]   no-JIT switch candidates in the dump, scored,
+         [--flagged] [--json] [--text]                            with what is sold/online flagged (Studio: Scan tab)
   dev.py games [top-free|top-paid|top-grossing|new-free|new-paid|similar] [--region us] [--json] [--all]
   dev.py games search <words or bundle ID> [--games]              the App Store's own search
   dev.py games like <bundle-id>                                   games like that one
@@ -74,6 +76,7 @@ ROOT = (
 sys.path.insert(0, str(HERE))
 
 import dev_learn
+import dump_scan
 import games
 import gen_tweaks
 import ipa_fetch
@@ -629,8 +632,8 @@ def cmd_pin(args):
         ]
         pin["object"] = f"{cls}.{statics[0][3]}" if statics else cls
     raw = args.value
-    if args.slider and raw in (None, "slider"):
-        value = "slider"
+    if (args.slider and raw in (None, "slider")) or (raw == "slider" and args.to):
+        value = "slider"  # with --to, the slider is the existing tweak's (checked below)
     elif raw == "peak":
         value = "peak"
     elif raw and raw.startswith("getter:"):
@@ -1821,6 +1824,39 @@ def games_info(bundle, region="us"):
         raise DevError(str(e)) from e
 
 
+def scan_rows(mod, area=None, find=None, flagged=False):
+    folder = mod_dir(mod)
+    meta = read_json(folder / "mod.json")
+    result = dump_scan.scan(dump_path(mod), load_tweaks(folder, meta))
+    rows = result["flagged"] if flagged else result["rows"]
+    if area:
+        rows = [r for r in rows if r["area"].lower().startswith(area.lower())]
+    if find:
+        rx = re.compile(find, re.IGNORECASE)
+        rows = [r for r in rows if rx.search(f"{r['class']}.{r['member']}")]
+    return result, rows
+
+
+def cmd_scan(args):
+    result, rows = scan_rows(args.mod, args.area, args.find, args.flagged)
+    rows = rows[: args.limit]
+    if args.json:
+        print(json.dumps(rows, indent=2))
+        return 0
+    if args.text:
+        print(dump_scan.as_text(rows, args.limit))
+        return 0
+    print(f"{len(result['rows'])} candidates in {result['classes']} game classes; {len(result['flagged'])} flagged")
+    for r in rows:
+        tag = f"FLAG: {r['flag']}" if r.get("flag") else ("in the mod" if r["has"] else f"score {r['score']}")
+        print(f"  {r['area']:<16} {r['object'] + ' ' + r['member']:<58} {r['ctype']:<8} {tag}")
+        if not r.get("flag") and not r["has"]:
+            when = f" --when {r['when']}" if r["when"] != "always" else ""
+            obj = f' --object "{r["object"]}"'
+            print(f"      am pin {args.mod} {r['class']}.{r['member']}{obj} --value {r['value']}{when} --title \"...\"")
+    return 0
+
+
 def cmd_games(args):
     what, rest = args.what, list(args.rest)
     if what == "info":
@@ -2138,6 +2174,16 @@ def build_parser():
     s = sub.add_parser("learn", help="import a mod's hooks.json into the pattern store")
     s.add_argument("mod")
     s.set_defaults(fn=cmd_learn)
+
+    s = sub.add_parser("scan", help="no-JIT switch candidates in the dump, scored; sold/online flagged")
+    s.add_argument("mod")
+    s.add_argument("--area", help="Survival, Combat, Progress, Items, Pet, Exploration, Other")
+    s.add_argument("--find", help="regex on Class.member")
+    s.add_argument("--limit", type=int, default=40)
+    s.add_argument("--flagged", action="store_true", help="list what must not become a switch, and why")
+    s.add_argument("--json", action="store_true")
+    s.add_argument("--text", action="store_true", help="one line per candidate (for a prompt)")
+    s.set_defaults(fn=cmd_scan)
 
     s = sub.add_parser("games", help="App Store games: charts, search, like a game, one game's details")
     s.add_argument(
