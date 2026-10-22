@@ -670,6 +670,32 @@ class Pins(unittest.TestCase):
         self.assertEqual(m.count("s_keepStats_0_next:;"), 1)
         self.assertEqual(m.count("s_keepStats_1_next:;"), 1)
 
+    def test_off_restores_what_a_pin_forced(self):
+        _h, m = gen_tweaks.render(PIN_TWEAKS, HOOKS, "game-plus")
+        # a forced field: the game's value is kept once per object, and goes back while the field holds ours
+        self.assertIn("if (s_rads_0_obj != obj) { s_rads_0_obj = obj; s_rads_0_orig = *p;", m)
+        self.assertIn("*p == s_rads_0_wrote) { *p = s_rads_0_orig; restored = true; }", m)
+        # a multiply: the base goes back
+        self.assertIn("if (p && *p == s_dmg_0_set) { *p = s_dmg_0_base; restored = true; }", m)
+        # floors, peaks, Class[] and calls keep what the game has
+        for key in ("keepStats", "lock", "miss", "give", "sp"):
+            self.assertNotIn(f"s_{key}_0_orig", m)
+        data = json.loads(json.dumps(PIN_TWEAKS))
+        next(t for t in data["tweaks"] if t["key"] == "rads")["restore"] = False
+        _h, m = gen_tweaks.render(data, HOOKS, "game-plus")
+        self.assertNotIn("s_rads_0_orig", m)
+        refill = {"object": "A.i", "field": "hp", "ctype": "float", "value": {"field": "max"}}
+        self.assertFalse(gen_tweaks.restorable(refill))
+
+    def test_slider_note_and_pause(self):
+        _h, m = gen_tweaks.render(PIN_TWEAKS, HOOKS, "game-plus")
+        self.assertIn('if ((am_dmg != 1.0f)) { if (s_dmg_0_set) AMNoteValue("dmg", (double)s_dmg_0_base); return; }', m)
+        self.assertIn("        am_note_dmg();\n", m)
+        self.assertIn("menu.onOpenChange = ^(BOOL open) { AMIl2cppPauseGame(open); };", m)
+        data = dict(PIN_TWEAKS, pause_menu=False)
+        _h, m = gen_tweaks.render(data, HOOKS, "game-plus")
+        self.assertNotIn("AMIl2cppPauseGame", m)
+
     def test_pins_drop_the_jit_label(self):
         data = {
             "title": "T",

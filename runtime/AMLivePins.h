@@ -3,6 +3,9 @@
 // (checked every 2 s), adds menu items for switches the build doesn't have, and runs their pins on each tick the
 // same way the generated code does (field writes, setter calls with read-back, timed calls; the menu's status dot).
 // A compiled switch whose key is in the file steps aside (AMLivePinsHas), so the file always wins.
+// Like the generated code, a switch going off puts the game's own values back (restorable pins), and a slider
+// shows the game's own value under its title. A top-level "test": {"id": "...", "on": [keys]} (am test) turns
+// those switches on (sliders to a test value) and, when the id changes or the block goes, turns them off again.
 // Included once, by AMTweaks.gen.m (static functions: no Makefile change). Data calls only: no JIT needed.
 
 #import <Foundation/Foundation.h>
@@ -18,6 +21,13 @@ static NSMutableDictionary<NSString *, NSNumber *> *sLiveState;  // peaks, multi
 static NSString *AMLivePath(void) {
     NSString *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
     return [docs stringByAppendingPathComponent:@"live_tweaks.json"];
+}
+
+// "Game value 2" under a slider (AMMenuNote); used by the generated code too.
+static void AMNoteValue(const char *key, double v) {
+    char text[48];
+    snprintf(text, sizeof text, "Game value %.4g", v);
+    AMMenuNote(key, text);
 }
 
 static BOOL AMLivePinsHas(const char *key) {
@@ -89,12 +99,96 @@ static BOOL AMLiveValue(NSDictionary *pin, NSString *stateKey, void *obj, NSStri
     return NO;
 }
 
+// Same rule as gen_tweaks.restorable: a single object whose field or setter the pin forces; not floors, peaks,
+// refills, calls or "restore": false.
+static BOOL AMLiveRestorable(NSDictionary *tweak, NSDictionary *pin) {
+    NSString *object = pin[@"object"];
+    if ([object hasSuffix:@"[]"] || pin[@"call"] || [pin[@"value"] isEqual:@"peak"]) return NO;
+    if ([pin[@"restore"] isEqual:@NO] || [tweak[@"restore"] isEqual:@NO] || [pin[@"value"] isKindOfClass:NSDictionary.class]) return NO;
+    if (pin[@"setter"] && ![pin[@"setter"] hasPrefix:@"set_"]) return NO;
+    return [(pin[@"when"] ?: @"always") isEqual:@"always"] || [pin[@"op"] isEqual:@"multiply"];
+}
+
+static NSString *AMLiveClass(NSString *object) {
+    NSRange last = [object rangeOfString:@"." options:NSBackwardsSearch];
+    return [object hasSuffix:@"[]"] ? [object substringToIndex:object.length - 2]
+         : last.location != NSNotFound ? [object substringToIndex:last.location] : object;
+}
+
+// The object a pin writes (after "via"), or NULL. Single objects only (restore and notes).
+static void *AMLiveTarget(NSDictionary *pin, NSString **tclsOut) {
+    NSString *cls = AMLiveClass(pin[@"object"]);
+    void *obj = AMLiveObjects(pin[@"object"]).firstObject.pointerValue;
+    if (obj && pin[@"via"]) {
+        void *via = NULL;
+        obj = AMIl2cppCall(obj, cls.UTF8String, [pin[@"via"] UTF8String], 0, NULL, &via) ? via : NULL;
+    }
+    if (tclsOut) *tclsOut = pin[@"class"] ?: cls;
+    return obj;
+}
+
+// The switch went off: the game's own value back on each restorable pin's object, if it still holds ours.
+static void AMLiveRestore(NSDictionary *tweak) {
+    NSString *key = tweak[@"key"];
+    NSArray *pins = tweak[@"pins"];
+    BOOL restored = NO;
+    for (NSUInteger i = 0; i < pins.count; i++) {
+        NSDictionary *pin = pins[i];
+        NSString *sk = [NSString stringWithFormat:@"%@/%lu", key, (unsigned long)i];
+        NSNumber *was = sLiveState[[sk stringByAppendingString:@"/obj"]], *orig = sLiveState[[sk stringByAppendingString:@"/orig"]];
+        NSNumber *wrote = sLiveState[[sk stringByAppendingString:@"/wrote"]];
+        for (NSString *suffix in @[@"/obj", @"/orig", @"/wrote", @"/set"]) [sLiveState removeObjectForKey:[sk stringByAppendingString:suffix]];
+        if (!AMLiveRestorable(tweak, pin) || !was || !orig || !wrote) continue;
+        NSString *tcls = nil, *t = pin[@"ctype"] ?: @"int32_t";
+        void *obj = AMLiveTarget(pin, &tcls);
+        if (!obj || (uintptr_t)obj != was.unsignedLongLongValue) continue;
+        if (pin[@"field"]) {
+            void *p = AMIl2cppField(obj, tcls.UTF8String, [pin[@"field"] UTF8String]);
+            if (p && AMLiveRead(p, t) == wrote.doubleValue) { AMLiveWrite(p, t, orig.doubleValue); restored = YES; }
+        } else {
+            double cur = 0;
+            NSString *getter = [@"get_" stringByAppendingString:[pin[@"setter"] substringFromIndex:4]];
+            if (AMLiveGet(obj, tcls, getter, t, &cur) && cur == wrote.doubleValue && AMLiveSet(obj, tcls, pin[@"setter"], t, orig.doubleValue)) restored = YES;
+        }
+    }
+    if (restored) AMIl2cppLog(@"pin %@ off: the game's values are back", key);
+}
+
+// "Game value 2" under a live slider (AMLivePinsTick, every 3 s). While it is on, the value from before it.
+static void AMLiveNote(NSDictionary *tweak) {
+    NSDictionary *pin = [tweak[@"pins"] firstObject];
+    if (![tweak[@"kind"] isEqual:@"slider"] || ![pin isKindOfClass:NSDictionary.class] || pin[@"call"] || [pin[@"object"] hasSuffix:@"[]"]) return;
+    NSString *key = tweak[@"key"], *sk = [key stringByAppendingString:@"/0"];
+    if (sLiveState[[key stringByAppendingString:@"/on"]]) {
+        NSNumber *v = [pin[@"op"] isEqual:@"multiply"] ? sLiveState[[sk stringByAppendingString:@"/base"]] : sLiveState[[sk stringByAppendingString:@"/orig"]];
+        if (v) AMNoteValue(key.UTF8String, v.doubleValue);
+        return;
+    }
+    NSString *tcls = nil, *t = pin[@"ctype"] ?: @"int32_t";
+    void *obj = AMLiveTarget(pin, &tcls);
+    if (!obj) return;
+    double v = 0;
+    if (pin[@"field"]) {
+        void *p = AMIl2cppField(obj, tcls.UTF8String, [pin[@"field"] UTF8String]);
+        if (!p) return;
+        v = AMLiveRead(p, t);
+    } else if (![pin[@"setter"] hasPrefix:@"set_"] || !AMLiveGet(obj, tcls, [@"get_" stringByAppendingString:[pin[@"setter"] substringFromIndex:4]], t, &v)) {
+        return;
+    }
+    AMNoteValue(key.UTF8String, v);
+}
+
 static void AMLiveRunTweak(NSDictionary *tweak) {
     NSString *key = tweak[@"key"];
     BOOL slider = [tweak[@"kind"] isEqual:@"slider"];
     double sliderValue = slider ? [AMMenu floatForKey:key] : 0;
     BOOL on = slider ? sliderValue != [tweak[@"default"] ?: tweak[@"min"] doubleValue] : [AMMenu boolForKey:key];
-    if (!on) return;
+    NSString *onKey = [key stringByAppendingString:@"/on"];
+    if (!on) {
+        if (sLiveState[onKey]) { [sLiveState removeObjectForKey:onKey]; AMLiveRestore(tweak); }
+        return;
+    }
+    sLiveState[onKey] = @YES;
     BOOL tried = NO, reached = NO;
     NSString *why = nil;
     NSString *waiting = tweak[@"waiting"] ?: @"Waiting for the game: load a save first";
@@ -112,9 +206,10 @@ static void AMLiveRunTweak(NSDictionary *tweak) {
         tried = YES;
         if (!why) why = waiting;
         NSString *object = pin[@"object"];
-        NSRange last = [object rangeOfString:@"." options:NSBackwardsSearch];
-        NSString *cls = [object hasSuffix:@"[]"] ? [object substringToIndex:object.length - 2]
-                      : last.location != NSNotFound ? [object substringToIndex:last.location] : object;
+        NSString *cls = AMLiveClass(object);
+        BOOL keep = AMLiveRestorable(tweak, pin);
+        NSString *objKey = [stateKey stringByAppendingString:@"/obj"], *origKey = [stateKey stringByAppendingString:@"/orig"];
+        NSString *wroteKey = [stateKey stringByAppendingString:@"/wrote"];
         for (NSValue *box in AMLiveObjects(object)) {
             void *obj = box.pointerValue;
             NSString *tcls = cls;
@@ -151,6 +246,14 @@ static void AMLiveRunTweak(NSDictionary *tweak) {
                 if (!AMLiveGet(obj, tcls, getter, t, &cur)) continue;
             }
             reached = YES;
+            if (keep && sLiveState[objKey].unsignedLongLongValue != (uintptr_t)obj) {  // the game's own value, once per object
+                double orig = cur;
+                BOOL known = p != NULL || getter != nil;
+                if (!known) known = AMLiveGet(obj, tcls, [@"get_" stringByAppendingString:[pin[@"setter"] substringFromIndex:4]], t, &orig);
+                sLiveState[objKey] = @((uintptr_t)obj);
+                if (known) sLiveState[origKey] = @(orig); else [sLiveState removeObjectForKey:origKey];
+                [sLiveState removeObjectForKey:wroteKey];
+            }
             if ([pin[@"value"] isEqual:@"peak"] && (!sLiveState[stateKey] || cur > sLiveState[stateKey].doubleValue)) sLiveState[stateKey] = @(cur);
             if (!AMLiveValue(pin, stateKey, obj, tcls, t, sliderValue, &value)) continue;
             if ([pin[@"op"] isEqual:@"multiply"] && p) {  // field = base * slider; the game recalculating it gives a new base
@@ -159,6 +262,8 @@ static void AMLiveRunTweak(NSDictionary *tweak) {
                 double want = sLiveState[baseKey].doubleValue * value;
                 if (want > 0 && cur != want) AMLiveWrite(p, t, want);
                 sLiveState[setKey] = @(want);
+                sLiveState[origKey] = sLiveState[baseKey];  // off: the base goes back while the field holds ours
+                sLiveState[wroteKey] = @(want);
                 continue;
             }
             double limit = pin[@"threshold"] ? [pin[@"threshold"] doubleValue] : value;
@@ -166,9 +271,11 @@ static void AMLiveRunTweak(NSDictionary *tweak) {
             if (!go) continue;
             if (p) {
                 AMLiveWrite(p, t, value);
-            } else if (AMLiveSet(obj, tcls, pin[@"setter"], t, value) && getter) {
+                if (keep) sLiveState[wroteKey] = @(AMLiveRead(p, t));
+            } else if (AMLiveSet(obj, tcls, pin[@"setter"], t, value)) {
+                if (keep) sLiveState[wroteKey] = @(value);
                 double back = 0;  // read back: a setter that ignores the value turns the dot red
-                if (AMLiveGet(obj, tcls, getter, t, &back) && back != value) {
+                if (getter && AMLiveGet(obj, tcls, getter, t, &back) && back != value) {
                     reached = NO;
                     why = [NSString stringWithFormat:@"%@.%@ didn't take the value (the game clamps or recomputes it)", tcls, pin[@"setter"]];
                 }
@@ -178,11 +285,47 @@ static void AMLiveRunTweak(NSDictionary *tweak) {
     if (tried) AMMenuStatus(key.UTF8String, reached, reached ? NULL : why.UTF8String);
 }
 
+// am test: {"id": "...", "on": ["key", ...]} turns those switches on (a slider goes to its max, or its min
+// when the default is the max) and logs "test <id> on <n>". The keys it turned on are kept in the app's
+// settings, so a new id, or a file without the block, turns them off again even after a relaunch.
+static void AMLiveTest(id test) {
+    NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
+    NSString *runningId = [d stringForKey:@"AM__testId"];
+    NSString *newId = [test isKindOfClass:NSDictionary.class] && [test[@"id"] isKindOfClass:NSString.class] ? test[@"id"] : nil;
+    if (runningId && [runningId isEqualToString:newId ?: @""]) return;
+    AMMenu *menu = AMMenu.shared;
+    for (NSString *key in [d arrayForKey:@"AM__testKeys"] ?: @[]) {
+        NSArray<NSNumber *> *range = [menu sliderRange:key];
+        if (range) [menu setSlider:key value:range[2].floatValue];
+        else [menu setSwitch:key on:NO];
+    }
+    [d removeObjectForKey:@"AM__testKeys"];
+    [d removeObjectForKey:@"AM__testId"];
+    if (runningId) AMIl2cppLog(@"test %@ off", runningId);
+    if (!newId) return;
+    NSMutableArray *done = [NSMutableArray new];
+    for (NSString *key in [test[@"on"] isKindOfClass:NSArray.class] ? test[@"on"] : @[]) {
+        if (![key isKindOfClass:NSString.class]) continue;
+        NSArray<NSNumber *> *range = [menu sliderRange:key];
+        BOOL set = range ? [menu setSlider:key value:(range[2].floatValue == range[1].floatValue ? range[0] : range[1]).floatValue]
+                         : [menu setSwitch:key on:YES];
+        if (set) [done addObject:key];
+    }
+    [d setObject:done forKey:@"AM__testKeys"];
+    [d setObject:newId forKey:@"AM__testId"];
+    AMIl2cppLog(@"test %@ on %lu", newId, (unsigned long)done.count);
+}
+
 // Reads live_tweaks.json when it changed; new switches and sliders join the menu (in their sections).
 static void AMLivePinsLoad(void) {
     NSString *path = AMLivePath();
     NSDate *stamp = [NSFileManager.defaultManager attributesOfItemAtPath:path error:NULL].fileModificationDate;
-    if (!stamp) { if (sLiveKeys.count) { sLiveTweaks = @[]; sLiveKeys = [NSSet set]; AMIl2cppLog(@"live pins: file removed, the build's own switches again"); } sLiveStamp = nil; return; }
+    if (!stamp) {
+        if (sLiveKeys.count) { sLiveTweaks = @[]; sLiveKeys = [NSSet set]; AMIl2cppLog(@"live pins: file removed, the build's own switches again"); }
+        if (!sLiveStamp) AMLiveTest(nil);  // a test left on by a file that is gone
+        sLiveStamp = nil;
+        return;
+    }
     if (sLiveStamp && [stamp isEqualToDate:sLiveStamp]) return;
     sLiveStamp = stamp;
     NSData *data = [NSData dataWithContentsOfFile:path];
@@ -209,6 +352,7 @@ static void AMLivePinsLoad(void) {
     }
     sLiveTweaks = withPins;
     sLiveKeys = keys;
+    AMLiveTest([json isKindOfClass:NSDictionary.class] ? json[@"test"] : nil);
     if (!sLiveState) sLiveState = [NSMutableDictionary new];
     AMIl2cppLog(@"live pins: %lu switches from live_tweaks.json", (unsigned long)withPins.count);
 }
@@ -216,6 +360,12 @@ static void AMLivePinsLoad(void) {
 // Once per tick (AMTweaksTick): reload when the file changed, then run every live switch that is on.
 static void AMLivePinsTick(void) {
     CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+    static CFAbsoluteTime notesAt;
+    BOOL notes = now - notesAt >= 3;
+    if (notes) notesAt = now;
     if (now - sLiveCheckedAt >= 2) { sLiveCheckedAt = now; AMLivePinsLoad(); }
-    for (NSDictionary *t in sLiveTweaks) AMLiveRunTweak(t);
+    for (NSDictionary *t in sLiveTweaks) {
+        AMLiveRunTweak(t);
+        if (notes) AMLiveNote(t);
+    }
 }

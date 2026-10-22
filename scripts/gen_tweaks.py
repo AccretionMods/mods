@@ -34,6 +34,12 @@ what the player reads under the red dot when the object is not there ("Start a f
 default is "Waiting for the game: load a save first"). "jit_label": false means the mod has its own no-JIT
 code for a hook-only tweak: no "(JIT)" title, and Tweak.x reports its status itself.
 
+Turning a switch off puts the game's own values back where a pin forced them (see restorable(): fields and
+setters written "always" or multiplied, on one object); "restore": false on a tweak or pin keeps what the game
+has instead (radiation, for example). A slider shows the game's own value of its first pin's target under its
+title ("Game value 2"). The game pauses while the menu is open (Unity Time.timeScale); "pause_menu": false at
+the top of tweaks.json turns that off.
+
 Actions, while the tweak is on (a slider counts as on when its value is not its default):
   skip      a void method is not called
   return    the method returns "value" (bool, int or float) instead of running
@@ -451,6 +457,102 @@ def pin_value(pin, var, ctype_, cls, state):
     return [], c_value(value, ctype_)
 
 
+def restorable(pin):
+    """Whether turning the switch off puts the game's own value back: a single object whose field or setter the
+    pin forces ("when": "always", or a multiply). Floors ("lower"/"higher"), peaks, Class[] and calls keep what
+    the game has, and so do refills ({"getter"}/{"field"} values) and pins or tweaks with "restore": false (a
+    resource like radiation, where the old value coming back would hurt). The value goes back only while the field still holds what the pin wrote (the game moving it
+    since wins)."""
+    if pin["object"].endswith("[]") or pin.get("call") or pin.get("value") == "peak":
+        return False
+    if pin.get("restore") is False or isinstance(pin.get("value"), dict):  # opted out, or a refill (health = max)
+        return False
+    if pin.get("setter") and not pin["setter"].startswith("set_"):
+        return False
+    return pin.get("when", "always") == "always" or pin.get("op") == "multiply"
+
+
+def pin_globals(pin, key, index):
+    """File-scope state of one pin: the object it acts on, the game's value before it, what it wrote last."""
+    state = f"s_{key}_{index}"
+    ctype_ = pin.get("ctype")
+    out = []
+    if pin.get("op") == "multiply":
+        out.append(f"static {ctype_} {state}_base, {state}_set;")
+        if restorable(pin):
+            out.append(f"static void *{state}_obj;")
+    elif restorable(pin):
+        out.append(f"static void *{state}_obj; static {ctype_} {state}_orig, {state}_wrote; static bool {state}_has, {state}_wrote_ok;")
+    return out
+
+
+def render_restore(pin, key, index):
+    """C lines (in am_pin_<key>, when the switch goes off) that put the game's value back on the same object."""
+    state = f"s_{key}_{index}"
+    ctype_ = pin["ctype"]
+    objects, closers, cls = pin_objects(pin)
+    lines = [f"        {{  // restore pin {index}"] + ["    " + line for line in objects]
+    lines.append(f"                if (obj == {state}_obj) {{")
+    if pin.get("op") == "multiply":
+        lines.append(f"                    {ctype_} *p = AMIl2cppField(obj, {c_string(cls)}, {c_string(pin['field'])});")
+        lines.append(f"                    if (p && *p == {state}_set) {{ *p = {state}_base; restored = true; }}")
+    elif pin.get("field"):
+        lines.append(f"                    {ctype_} *p = AMIl2cppField(obj, {c_string(cls)}, {c_string(pin['field'])});")
+        lines.append(f"                    if (p && {state}_has && {state}_wrote_ok && *p == {state}_wrote) {{ *p = {state}_orig; restored = true; }}")
+    else:
+        getter = "get_" + pin["setter"][4:]
+        lines.append(f"                    void *b = NULL; {ctype_} *cur = {state}_has && {state}_wrote_ok && AMIl2cppCall(obj, {c_string(cls)}, {c_string(getter)}, 0, NULL, &b) ? AMIl2cppUnbox(b) : NULL;")
+        lines.append(f"                    if (cur && *cur == {state}_wrote) {{ {ctype_} v = {state}_orig; void *argv[1] = {{&v}}; if (AMIl2cppCall(obj, {c_string(cls)}, {c_string(pin['setter'])}, 1, argv, NULL)) restored = true; }}")
+    lines.append("                }")
+    lines += ["    " + c for c in closers]
+    if pin.get("op") == "multiply":
+        lines.append(f"            {state}_set = 0; {state}_obj = NULL;")
+    else:
+        lines.append(f"            {state}_obj = NULL; {state}_has = {state}_wrote_ok = false;")
+    lines.append("        }")
+    return lines
+
+
+def note_pin(t):
+    """The pin whose target shows the game's own value under a slider ("Game value 2"), or None."""
+    if t.get("kind") != "slider" or not t.get("pins"):
+        return None
+    pin = t["pins"][0]
+    if pin["object"].endswith("[]") or pin.get("call") or not (pin.get("field") or str(pin.get("setter", "")).startswith("set_")):
+        return None
+    return pin
+
+
+def render_note(t):
+    """static void am_note_<key>(void): the game's own value of a slider's target, for the menu (AMMenuNote).
+    While the slider is on, the value the game had before it (or the base of a multiply)."""
+    key = t["key"]
+    pin = note_pin(t)
+    state = f"s_{key}_0"
+    ctype_ = pin["ctype"]
+    on = f"(am_{key} != {c_value(t.get('default', t['min']), 'float')})"
+    objects, closers, cls = pin_objects(pin)
+    lines = [f"static void am_note_{key}(void) {{", f"    if (AMLivePinsHas({c_string(key)})) return;"]
+    if pin.get("op") == "multiply":
+        lines.append(f"    if ({on}) {{ if ({state}_set) AMNoteValue({c_string(key)}, (double){state}_base); return; }}")
+    elif restorable(pin):
+        lines.append(f"    if ({on}) {{ if ({state}_has) AMNoteValue({c_string(key)}, (double){state}_orig); return; }}")
+    else:
+        lines.append(f"    if ({on}) return;")
+    lines.append("    {")
+    lines += objects
+    if pin.get("field"):
+        lines.append(f"            {ctype_} *v = AMIl2cppField(obj, {c_string(cls)}, {c_string(pin['field'])});")
+    else:
+        lines.append(f"            void *b = NULL; {ctype_} *v = AMIl2cppCall(obj, {c_string(cls)}, {c_string('get_' + pin['setter'][4:])}, 0, NULL, &b) ? AMIl2cppUnbox(b) : NULL;")
+    lines.append(f"            if (v) AMNoteValue({c_string(key)}, (double)*v);")
+    lines += closers
+    lines.append("    }")
+    lines.append("}")
+    lines.append("")
+    return lines
+
+
 def render_pin(pin, var, kind, key, index, waiting=None):
     """C lines (inside am_pin_<key>) that apply one pin to its object(s) once."""
     state = f"s_{key}_{index}"
@@ -508,7 +610,7 @@ def render_pin(pin, var, kind, key, index, waiting=None):
         lines.append("            reached = true;")
         if pin.get("op") == "multiply":
             lines.append(
-                f"            static {ctype_} {state}_base, {state}_set; if (*p != {state}_set) {state}_base = *p;"
+                f"            if (*p != {state}_set) {state}_base = *p; {state}_obj = obj;"
             )
             lines.append(
                 f"            {ctype_} want = ({ctype_})({state}_base * {value}); if (want > 0 && *p != want) {{ *p = want; applied = true; }} {state}_set = want;"
@@ -517,14 +619,27 @@ def render_pin(pin, var, kind, key, index, waiting=None):
             if pin["value"] == "peak":
                 lines.append(f"            if (*p > {state}_peak) {state}_peak = *p;")
             cond = "true" if cmp_ is None else f"*p {cmp_} {limit}"
-            lines.append(f"            if ({cond}) {{ *p = {value}; applied = true; }}")
+            if restorable(pin):
+                lines.append(
+                    f"            if ({state}_obj != obj) {{ {state}_obj = obj; {state}_orig = *p; {state}_has = true; {state}_wrote_ok = false; }}"
+                )
+                lines.append(f"            if ({cond}) {{ *p = {value}; {state}_wrote = *p; {state}_wrote_ok = true; applied = true; }}")
+            else:
+                lines.append(f"            if ({cond}) {{ *p = {value}; applied = true; }}")
     else:
         setter = pin["setter"]
         getter = "get_" + setter[4:] if setter.startswith("set_") else None
         if cmp_ is None and pin["value"] != "peak":
+            if restorable(pin):
+                lines.append(
+                    f"            if ({state}_obj != obj) {{ {state}_obj = obj; void *ob = NULL; {ctype_} *o = AMIl2cppCall(obj, {c_string(cls)}, {c_string(getter)}, 0, NULL, &ob) ? AMIl2cppUnbox(ob) : NULL;"
+                    f" {state}_has = o != NULL; if (o) {state}_orig = *o; {state}_wrote_ok = false; }}"
+                )
             lines.append(f"            {ctype_} v = {value}; void *argv[1] = {{&v}};")
             lines.append(
-                f"            if (AMIl2cppCall(obj, {c_string(cls)}, {c_string(setter)}, 1, argv, NULL)) applied = reached = true;"
+                f"            if (AMIl2cppCall(obj, {c_string(cls)}, {c_string(setter)}, 1, argv, NULL)) {{ applied = reached = true;"
+                + (f" {state}_wrote = v; {state}_wrote_ok = true;" if restorable(pin) else "")
+                + " }"
             )
         else:
             if not getter:
@@ -628,6 +743,11 @@ def render_watch(watch, every):
 
 def render(tweaks, hooks, mod_name):
     """(header, implementation) for a valid tweaks.json."""
+    tweaks = json.loads(json.dumps(tweaks))  # a copy: "restore": false moves from the tweak to its pins
+    for t in tweaks["tweaks"]:
+        if t.get("restore") is False:
+            for pin in t.get("pins", []):
+                pin.setdefault("restore", False)
     by_name = {}
     for h in hooks.get("hooks", []):
         by_name[hook_name(h)] = h
@@ -756,9 +876,26 @@ def render(tweaks, hooks, mod_name):
             if kind == "switch"
             else f"({var} != {c_value(t.get('default', t['min']), 'float')})"
         )
+        for i, pin in enumerate(t["pins"]):
+            m += pin_globals(pin, t["key"], i)
         m.append(f"static void am_pin_{t['key']}(void) {{")
-        m.append(f"    if (!{on}) return;")
+        restores = [i for i, pin in enumerate(t["pins"]) if restorable(pin)]
+        if restores:
+            # turned off: the game's own values back (restorable), on the objects the pins wrote
+            m.append("    static bool was_on;")
+            m.append(f"    if (!{on}) {{")
+            m.append("        if (!was_on) return;")
+            m.append("        was_on = false; bool restored = false;")
+            for i in restores:
+                m += render_restore(t["pins"][i], t["key"], i)
+            m.append(f'        if (restored) AMIl2cppLog(@"pin {t["key"]} off: the game\'s values are back");')
+            m.append("        return;")
+            m.append("    }")
+        else:
+            m.append(f"    if (!{on}) return;")
         m.append(f"    if (AMLivePinsHas({c_string(t['key'])})) return;  // the pushed live_tweaks.json has this switch")
+        if restores:
+            m.append("    was_on = true;")
         m.append(
             "    static bool logged; bool applied = false, tried = false, found = false, reached = false; const char *why = NULL;"
         )
@@ -772,6 +909,9 @@ def render(tweaks, hooks, mod_name):
         m.append("}")
         m.append("")
         pinned.append(t["key"])
+    noted = [t for t in tweaks["tweaks"] if note_pin(t)]
+    for t in noted:
+        m += render_note(t)
     if tweaks.get("watch"):
         m += render_watch(tweaks["watch"], tweaks.get("watch_every", 10))
     m.append("void AMTweaksTick(void) {")
@@ -784,6 +924,14 @@ def render(tweaks, hooks, mod_name):
                 f"    if (am_{t['key']} && !AMLivePinsHas({c_string(t['key'])})) AMMenuStatus({c_string(t['key'])}, AMIl2cppHasJIT(), "
                 f"\"Needs JIT, and this phone has none\");"
             )
+    if noted:
+        # every 3 s: the game's own value under each slider ("Game value 2")
+        m.append("    static CFAbsoluteTime notes_at; CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();")
+        m.append("    if (now - notes_at >= 3) {")
+        m.append("        notes_at = now;")
+        for t in noted:
+            m.append(f"        am_note_{t['key']}();")
+        m.append("    }")
     m.append("    AMLivePinsTick();  // switches pushed as live_tweaks.json (dev.py push): no rebuild")
     if tweaks.get("watch"):
         m.append("    am_watch();")
@@ -793,6 +941,10 @@ def render(tweaks, hooks, mod_name):
         "void AMTweaksRegister(void) {",
         "    AMMenu *menu = AMMenu.shared;",
         "    menu.title = AMTweaksTitle;",
+    ]
+    if tweaks.get("pause_menu", True):
+        m.append("    menu.onOpenChange = ^(BOOL open) { AMIl2cppPauseGame(open); };  // the game stops while the menu is open")
+    m += [
         '    NSString *jit = AMIl2cppHasJIT() ? @"" : @" (JIT)";',
         "    (void)jit;",
     ]

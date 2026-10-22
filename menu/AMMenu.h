@@ -3,6 +3,9 @@
 // Each mod registers its switches and sliders once, in %ctor, then calls -install.
 // Values are saved in the app's own NSUserDefaults under "AM_<key>", so they survive
 // relaunches and stay inside the app's sandbox.
+//
+// The look follows Accretion's design system (dark first, violet-black grounds, surface cards on hairlines,
+// calm status colours). Long menus fold their sections and get a search field.
 
 #import <UIKit/UIKit.h>
 
@@ -13,6 +16,10 @@ NS_ASSUME_NONNULL_BEGIN
 @property (class, readonly) AMMenu *shared;
 @property (nonatomic, copy) NSString *title;
 
+// Called with YES as the menu starts to open and NO once it has closed (a Unity mod pauses the game with it:
+// AMIl2cppPauseGame). Taps on the game are blocked from the button tap until the menu is fully up.
+@property (nonatomic, copy, nullable) void (^onOpenChange)(BOOL open);
+
 // Items added after this go under a section header with this title. Adding a title used before puts the
 // next items back in that section (after what it already has), so related items can be added from anywhere.
 - (void)addSection:(NSString *)title;
@@ -22,6 +29,13 @@ NS_ASSUME_NONNULL_BEGIN
 
 + (BOOL)boolForKey:(NSString *)key;
 + (float)floatForKey:(NSString *)key;
+
+// Sets a switch or slider from outside the menu (am test turns switches on and off this way): saves the value,
+// runs the item's onChange and logs the change. NO when no item has the key.
+- (BOOL)setSwitch:(NSString *)key on:(BOOL)on;
+- (BOOL)setSlider:(NSString *)key value:(float)value;
+// The slider's range and default ({min, max, default}), or nil for an unknown key or a switch.
+- (nullable NSArray<NSNumber *> *)sliderRange:(NSString *)key;
 
 - (void)addSwitch:(NSString *)key
             title:(NSString *)title
@@ -50,12 +64,18 @@ NS_ASSUME_NONNULL_BEGIN
 
 // Live status of a switch while it is on: ok when the cheat reached the game this tick (found its object and
 // read or wrote it, or a JIT hook ran), else why not ("no Enemy in the game right now", "needs JIT").
-// The menu shows a glowing dot by each switch that is on, green working and red not, the reason under its
-// title, and one dot on the floating button (red when any switch that is on is failing). A switch with no
-// report for 15 s shows red. Cheap and thread-safe: call it every tick, or from a hook.
+// The menu shows a dot by each switch that is on, green working and red not, the reason under its title, and a
+// ring on the floating button (green all, yellow some, red none working). A switch with no report for 15 s
+// shows red. Cheap and thread-safe: call it every tick, or from a hook.
 #ifdef __cplusplus
 extern "C"
 #endif
 void AMMenuStatus(const char *key, bool ok, const char *_Nullable reason);
+
+// A short note shown under a slider's title, such as the game's own value ("Game 2.0"). NULL clears it.
+#ifdef __cplusplus
+extern "C"
+#endif
+void AMMenuNote(const char *key, const char *_Nullable note);
 
 NS_ASSUME_NONNULL_END
