@@ -4,6 +4,7 @@
 #import <dlfcn.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
+#import <CommonCrypto/CommonDigest.h>
 
 static NSString *AMKey(NSString *key) {
     return [@"AM_" stringByAppendingString:key];
@@ -1437,7 +1438,9 @@ static void AMCloudCollect(NSString *folder, NSMutableDictionary *files, NSUInte
 }
 
 // The save as a zip, or nil with why.
-static NSData *AMCloudPack(NSString **why) {
+// The save as a zip, or nil with why; *hash fingerprints the save itself (not when or where it was packed), so an
+// unchanged save is not uploaded again.
+static NSData *AMCloudPack(NSString **why, NSString **hash) {
     NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
     [d synchronize];
     NSMutableDictionary *prefs = [[d persistentDomainForName:NSBundle.mainBundle.bundleIdentifier] mutableCopy] ?: [NSMutableDictionary new];
@@ -1449,6 +1452,14 @@ static NSData *AMCloudPack(NSString **why) {
     AMCloudCollect(@"Documents", files, &total);
     AMCloudCollect(@"Library/Application Support", files, &total);
     if (files.count <= 1 && prefs.count == 0) { if (why) *why = @"There is no save yet: play a little first"; return nil; }
+    if (hash) {
+        NSData *contents = AMZip(files);  // stored entries with no dates: the same save gives the same bytes
+        unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+        CC_SHA256(contents.bytes, (CC_LONG)contents.length, digest);
+        NSMutableString *hex = [NSMutableString new];
+        for (int i = 0; i < CC_SHA256_DIGEST_LENGTH; i++) [hex appendFormat:@"%02x", digest[i]];
+        *hash = hex;
+    }
     NSString *game, *mod;
     AMCloudVersions(&game, &mod);
     NSDictionary *about = @{@"game": AMCloudGame(), @"bundle": AMCloudBundle(), @"game_version": game, @"mod_version": mod,
@@ -1459,9 +1470,10 @@ static NSData *AMCloudPack(NSString **why) {
 
 // Back up now: pack, ask for a place, upload, confirm. text: "Backed up · 2.3 MB" or why not.
 static void AMCloudBackup(void (^done)(BOOL ok, NSString *text)) {
-    NSString *why = nil;
-    NSData *zip = AMCloudPack(&why);
+    NSString *why = nil, *hash = nil;
+    NSData *zip = AMCloudPack(&why, &hash);
     if (!zip) { done(NO, why); return; }
+    if ([AMCloudState()[@"last_hash"] isEqual:hash]) { done(YES, @"Already backed up"); return; }
     NSString *game, *mod;
     AMCloudVersions(&game, &mod);
     AMCloudCall(@"backup-start", @{@"size": @(zip.length), @"mod_version": mod, @"game_version": game}, ^(NSDictionary *json, NSString *err) {
@@ -1472,6 +1484,7 @@ static void AMCloudBackup(void (^done)(BOOL ok, NSString *text)) {
                 if (err3) { done(NO, err3); return; }
                 NSMutableDictionary *state = AMCloudState();
                 state[@"last_backup"] = @((long long)NSDate.date.timeIntervalSince1970);
+                state[@"last_hash"] = hash;
                 AMCloudSave(state);
                 done(YES, [@"Backed up · " stringByAppendingString:AMCloudSize(zip.length)]);
             });
@@ -1531,16 +1544,22 @@ __attribute__((constructor)) static void AMCloudApplyRestore(void) {
 }
 
 // Restore: keep a backup of the current save first, then download, stage, and close the game.
+// Restore: download the chosen backup first (so nothing can push it out), keep a backup of the current save, then
+// stage the chosen one and close the game.
 static void AMCloudRestore(NSString *backupId, void (^done)(BOOL ok, NSString *text)) {
-    AMCloudBackup(^(BOOL keptOk, NSString *keptText) {
-        // with no save yet there is nothing to keep; any other failure stops the restore (the current save stays)
-        if (!keptOk && ![keptText hasPrefix:@"There is no save yet"]) { done(NO, [@"Your current save could not be kept: " stringByAppendingString:keptText]); return; }
-        AMCloudCall(@"restore", @{@"id": backupId}, ^(NSDictionary *json, NSString *err) {
-            if (err) { done(NO, err); return; }
-            AMCloudTransfer(@"GET", json[@"download_url"], nil, ^(NSData *zip, NSString *err2) {
-                if (err2) { done(NO, err2); return; }
+    AMCloudCall(@"restore", @{@"id": backupId}, ^(NSDictionary *json, NSString *err) {
+        if (err) { done(NO, err); return; }
+        AMCloudTransfer(@"GET", json[@"download_url"], nil, ^(NSData *zip, NSString *err2) {
+            if (err2) { done(NO, err2); return; }
+            AMCloudBackup(^(BOOL keptOk, NSString *keptText) {
+                // with no save yet there is nothing to keep; any other failure stops the restore (the current save stays)
+                if (!keptOk && ![keptText hasPrefix:@"There is no save yet"]) { done(NO, [@"Your current save could not be kept: " stringByAppendingString:keptText]); return; }
                 NSString *why = nil;
                 if (!AMCloudStage(zip, &why)) { done(NO, why); return; }
+                NSMutableDictionary *state = AMCloudState();  // the restored save is the one to back up from now on
+                state[@"last_backup"] = @((long long)NSDate.date.timeIntervalSince1970);
+                [state removeObjectForKey:@"last_hash"];
+                AMCloudSave(state);
                 done(YES, @"Restored: the game closes; open it again");
             });
         });
@@ -1772,7 +1791,7 @@ static NSString *AMGameName(NSString *fallback) {
     [self presentViewController:ask animated:YES completion:nil];
 }
 
-// Restore a backup: the account's backups of this game, this device's first, as a list page; a pick asks first.
+// Restore a backup: the account's backups of this game, newest first, as a list page; a pick asks first.
 - (void)showBackups:(void (^)(BOOL, NSString *))done {
     AMCloudCall(@"list", @{}, ^(NSDictionary *json, NSString *err) {
         if (err) { done(NO, err); return; }
@@ -1780,15 +1799,13 @@ static NSString *AMGameName(NSString *fallback) {
         if (![backups isKindOfClass:NSArray.class] || !backups.count) { done(NO, @"No backups yet: Back up now first"); return; }
         done(YES, nil);
         NSMutableArray *entries = [NSMutableArray new], *ids = [NSMutableArray new];
-        for (NSNumber *mine in @[@YES, @NO]) {
-            for (NSDictionary *b in backups) {
-                if ([b[@"this_device"] boolValue] != mine.boolValue) continue;
-                NSString *detail = [NSString stringWithFormat:@"%@mod %@ · %@", mine.boolValue ? @"" : [NSString stringWithFormat:@"%@ · ", b[@"device"]],
-                                    b[@"mod_version"] ?: @"?", AMCloudSize([b[@"size"] longLongValue])];
-                [entries addObject:@{@"title": AMCloudWhen(b[@"created_at"]), @"detail": detail,
-                                     @"group": mine.boolValue ? @"This device" : @"Other devices"}];
-                [ids addObject:b[@"id"]];
-            }
+        // one list, newest first (Accretion sends them so), the device on each row: after a reinstall the same
+        // phone links as a new device, so "this device" first hid the save that mattered
+        for (NSDictionary *b in backups) {
+            NSString *detail = [NSString stringWithFormat:@"%@ · mod %@ · %@", b[@"device"] ?: @"device",
+                                b[@"mod_version"] ?: @"?", AMCloudSize([b[@"size"] longLongValue])];
+            [entries addObject:@{@"title": AMCloudWhen(b[@"created_at"]), @"detail": detail}];
+            [ids addObject:b[@"id"]];
         }
         AMItem *list = [AMItem new];
         list.title = @"Restore a backup";
@@ -2947,7 +2964,9 @@ static NSString *const AMButtonSpot = @"AM__buttonSpot";  // where the button wa
     if (self.onOpenChange) self.onOpenChange(YES);
     AMPanel *panel = [[AMPanel alloc] initWithItems:_items title:AMGameName(self.title)];
     NSNumber *last = AMCloudState()[@"last_backup"];
-    if (AMCloudLinked() && AMDisplayOn(AMCloudAutoKey) && NSDate.date.timeIntervalSince1970 - last.doubleValue > 3600) {
+    // only once this install has backed up or restored by hand: a fresh install's new game must never push the
+    // real save out of the five kept
+    if (AMCloudLinked() && last && AMDisplayOn(AMCloudAutoKey) && NSDate.date.timeIntervalSince1970 - last.doubleValue > 3600) {
         AMCloudBackup(^(BOOL ok, NSString *text) {  // at most hourly, in the background
             os_log(OS_LOG_DEFAULT, "[AccretionMods] cloud auto backup: %{public}@", text);
         });
