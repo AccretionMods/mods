@@ -1009,7 +1009,7 @@ static UITextField *AMSearchField(NSString *placeholder) {
 @property (nonatomic, copy, nullable) void (^onClose)(void);  // the whole menu went away (Done or swipe down)
 @end
 
-static NSString *const AMOpenSections = @"AM__openSections";
+static NSString *const AMFoldedSections = @"AM__foldedSections";  // every category starts open; these were folded
 static NSString *const AMSite = @"https://getaccretion.app";
 
 // The menu's title: the game's own name as the phone shows it under its icon, the same rule for every mod. The
@@ -1061,14 +1061,14 @@ static NSString *AMGameName(NSString *fallback) {
 
 - (BOOL)isOpen:(NSString *)section {
     if (!self.folds || self.query.length || !section.length || [section isEqualToString:AMDisplaySection]) return YES;
-    return [[NSUserDefaults.standardUserDefaults arrayForKey:AMOpenSections] containsObject:section];
+    return ![[NSUserDefaults.standardUserDefaults arrayForKey:AMFoldedSections] containsObject:section];
 }
 
 - (void)toggle:(NSString *)section {
-    NSMutableArray *open = [[NSUserDefaults.standardUserDefaults arrayForKey:AMOpenSections] mutableCopy] ?: [NSMutableArray new];
-    if ([open containsObject:section]) [open removeObject:section];
-    else [open addObject:section];
-    [NSUserDefaults.standardUserDefaults setObject:open forKey:AMOpenSections];
+    NSMutableArray *folded = [[NSUserDefaults.standardUserDefaults arrayForKey:AMFoldedSections] mutableCopy] ?: [NSMutableArray new];
+    if ([folded containsObject:section]) [folded removeObject:section];
+    else [folded addObject:section];
+    [NSUserDefaults.standardUserDefaults setObject:folded forKey:AMFoldedSections];
     NSUInteger s = [self.shownTitles indexOfObject:section];
     if (s == NSNotFound) return;
     [UIView performWithoutAnimation:^{
@@ -1558,7 +1558,7 @@ static UIColor *AMTierColor(NSString *group) {
 
 // A list page (a mod's addList): the menu's look, its entries in boxes. Entries that name a "group" (a quality
 // tier such as Legendary or Rare) get one box per group, in the order the mod lists them (best first), the label
-// in the tier's colour with the count; the first two groups are open, the rest folded until tapped. A search
+// in the tier's colour with the count; every group starts open and folds when its label is tapped. A search
 // field above long lists. A pick calls the mod with the entry's index in its own list; the page stays open.
 @implementation AMListPanel {
     NSArray<NSString *> *_groups;              // shown groups ("" for entries with none)
@@ -1599,15 +1599,7 @@ static UIColor *AMTierColor(NSString *group) {
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
     self.entries = self.item.entries ? self.item.entries() : @[];
-    if (!_folded) {  // the first time: the two best groups open
-        _folded = [NSMutableSet new];
-        NSMutableArray<NSString *> *order = [NSMutableArray new];
-        for (NSDictionary *e in self.entries) {
-            NSString *g = e[@"group"] ?: @"";
-            if (![order containsObject:g]) [order addObject:g];
-        }
-        for (NSUInteger i = 2; i < order.count; i++) [_folded addObject:order[i]];
-    }
+    if (!_folded) _folded = [NSMutableSet new];  // every group starts open
     if (self.entries.count > 20 && ![self.tableView.tableHeaderView isKindOfClass:AMSearchHeader.class]) {
         UITextField *field = AMSearchField([NSString stringWithFormat:@"Search %lu", (unsigned long)self.entries.count]);
         field.delegate = self;
