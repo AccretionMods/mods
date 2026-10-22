@@ -34,6 +34,7 @@ it); signing and device logs need the phone on USB and run on Windows (plumesign
   dev.py mark <mod> <key> --works|--fails                        the phone result; feeds the suggestions
   dev.py share <mod> [--months 6|12 | --days N] [--file x.ipa]  private download link (dl.getaccretion.app/s/<id>)
   dev.py share --list | --renew <id> [--months N] | --revoke <id> same link, new expiry; or end it
+  dev.py share <mod> --update <id>                               same link, the mod's newest build
   dev.py test <mod> [--section S | --keys a,b] [--seconds 20]    switches on from the PC a section at a time;
                                                                  which reach the game (off again after)
   dev.py learn <mod>                                             import an existing mod's hooks.json into the patterns
@@ -1719,7 +1720,7 @@ def cmd_share(args):
         print(f"==> {SHARE_ORIGIN}{args.revoke} revoked: it no longer downloads")
         return 0
     if not args.mod:
-        raise DevError("which mod? dev.py share <mod> (or --list, --renew <id>, --revoke <id>)")
+        raise DevError("which mod? dev.py share <mod> (or --list, --renew <id>, --revoke <id>, <mod> --update <id>)")
     meta = read_json(mod_dir(args.mod) / "mod.json")
     ipa = Path(args.file) if args.file else newest_build(args.mod, args.signed)
     if not ipa.is_file():
@@ -1744,6 +1745,10 @@ def cmd_share(args):
         print(f"    {storage_link()}")
         return 0
     name = share_name(meta)
+    if args.update:  # same link, this build: the address and its expiry stay
+        share_call("update", {"id": args.update, "sha256": sha, "name": name})
+        print(f"==> {SHARE_ORIGIN}{args.update} now serves {ipa.name} (saves as {name}); same link, same expiry")
+        return 0
     days = share_days(args)
     made = share_call("create", {"sha256": sha, "name": name, "days": days, "note": args.note or ipa.name})
     record = am_root() / "dev" / "shares.json"
@@ -2759,6 +2764,7 @@ def build_parser():
     g.add_argument("--list", action="store_true", help="every share link, its expiry and downloads")
     g.add_argument("--renew", metavar="ID", help="same link, new expiry (--days or --months, from today)")
     g.add_argument("--revoke", metavar="ID", help="end a link for good")
+    g.add_argument("--update", metavar="ID", help="same link, the mod's newest build (or --file)")
     s.set_defaults(fn=cmd_share)
 
     s = sub.add_parser("test", help="switches on from the PC, a section at a time: which reach the game")
