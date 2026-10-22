@@ -38,6 +38,8 @@ it); signing and device logs need the phone on USB and run on Windows (plumesign
   dev.py fetch --save-login | --forget-login                     keep it in Windows Credential Manager; fetch signs in
   dev.py start <bundle-id | file.ipa> [--name N] [--title T]      new game in one go: decrypted copy, report,
                                                                  mod folder + dump, scan with the best candidates
+  dev.py post <mod> [--draft] [-o file]                          the release post (workspace template) once every
+                                                                 switch is marked works on the tested game version
   dev.py report <mod | file.ipa> [--json]                        is it worth modding: engine, decrypted, online,
                                                                  ads and purchases; scan counts once dumped
   dev.py scan <mod> [--area Combat] [--find word] [--limit 40]   no-JIT switch candidates in the dump, scored,
@@ -1866,6 +1868,67 @@ def report_for(target):
     return facts, scan
 
 
+POST_CREDITS = ["RaZza_0X", "[url=https://getaccretion.app]Accretion[/url]"]
+
+
+def cmd_post(args):
+    """The release post for a fully validated mod, from <AM_ROOT>/templates/release_post.md, written locally only."""
+    folder = mod_dir(args.mod)
+    meta = read_json(folder / "mod.json")
+    tweaks = load_tweaks(folder, meta)
+    app_version = meta.get("tested_app_version", "")
+    items = [t for t in tweaks.get("tweaks", []) if t.get("kind", "switch") in ("switch", "slider")]
+    ok = [t for t in items if (t.get("verified") or {}).get("result") == "works"
+          and (t.get("verified") or {}).get("app_version") == app_version]
+    left = [t for t in items if t not in ok]
+    if left and not args.draft:
+        raise DevError(
+            f"not every switch is marked works on {app_version} yet ({len(ok)} of {len(items)}): "
+            + ", ".join(t["key"] for t in left) + ". Test them (am mark <mod> <key> --works), or --draft"
+        )
+    template = am_root() / "templates" / "release_post.md"
+    if not template.is_file():
+        raise DevError(f"no template at {template}: put the release post template there")
+    try:
+        app = (games.lookup(bundles=[meta["target_bundle_id"]]) or [{}])[0]
+    except games.GamesError:
+        app = {}
+    state = load_state(args.mod)
+    before = state.get("posted") or {}
+    new_keys = set() if not before else {t["key"] for t in ok} - set(before.get("features", []))
+    shown = ok if not args.draft else items
+    features = "\n".join(f"- {t['title']}" + (" (NEW)" if t["key"] in new_keys else "") for t in shown)
+    text = template.read_text(encoding="utf-8")
+    for k, v in {
+        "logo": app.get("artworkUrl512") or "[APP LOGO LINK]",
+        "app": app.get("trackName") or meta.get("display_name") or meta["name"],
+        "seller": app.get("sellerName") or "?",
+        "bundle": meta["target_bundle_id"],
+        "store_link": app.get("trackViewUrl") or "?",
+        "features": features or "- ",
+        "credits": "\n".join(f"- {c}" for c in meta.get("post_credits", POST_CREDITS)),
+    }.items():
+        text = text.replace("{" + k + "}", v)
+    head = []
+    if args.draft and left:
+        head.append(f"DRAFT, not validated yet: {', '.join(t['key'] for t in left)}")
+    if before and before.get("version") != meta["version"]:
+        head.append(f"🔄 Update: {meta.get('display_name') or meta['name']} {before.get('version')} → {meta['version']} "
+                    f"(game {app_version})" + (f", {len(new_keys)} new" if new_keys else ""))
+    if head:
+        text = "\n".join(head) + "\n\n" + text
+    out = Path(args.output) if args.output else am_root() / "posts" / (
+        f"{args.mod}-{meta['version']}" + ("-draft" if args.draft and left else "") + ".txt")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(text, encoding="utf-8")
+    if not (args.draft and left):  # the validated post of this version: the next one is an update of it
+        state["posted"] = {"version": meta["version"], "app_version": app_version, "features": [t["key"] for t in ok]}
+        save_state(args.mod, state)
+    print(text)
+    print(f"==> written to {out} (local only: nothing is posted)")
+    return 0
+
+
 def cmd_report(args):
     facts, scan = report_for(args.target)
     if args.json:
@@ -2255,6 +2318,12 @@ def build_parser():
     s = sub.add_parser("learn", help="import a mod's hooks.json into the pattern store")
     s.add_argument("mod")
     s.set_defaults(fn=cmd_learn)
+
+    s = sub.add_parser("post", help="the release post, once every switch is marked works (written locally)")
+    s.add_argument("mod")
+    s.add_argument("--draft", action="store_true", help="write it anyway, marked DRAFT with what is not validated")
+    s.add_argument("-o", "--output")
+    s.set_defaults(fn=cmd_post)
 
     s = sub.add_parser("report", help="is a game worth modding: engine, decrypted, online, ads, purchases")
     s.add_argument("target", help="a mod name or an .ipa file")
