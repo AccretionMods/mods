@@ -415,6 +415,7 @@ static CGFloat AMInset(CGFloat width) {
 static const CGFloat AMPad = 12;    // inside a panel
 static const CGFloat AMDotColumn = 16;  // titles start after the status dot's column, on or off
 static const CGFloat AMRadius = 12;
+static const CGFloat AMCardAlpha = 0.6;  // the box lets the drifting lights through a little
 
 typedef NS_ENUM(NSInteger, AMPiece) { AMPieceTop, AMPieceMiddle, AMPieceBottom, AMPieceWhole };
 
@@ -447,14 +448,14 @@ typedef NS_ENUM(NSInteger, AMPiece) { AMPieceTop, AMPieceMiddle, AMPieceBottom, 
 - (void)setRule:(BOOL)rule { _rule = rule; [self setNeedsLayout]; }
 
 - (void)applyColors {
-    _fill.fillColor = AMResolved(AM_SURFACE, self.traitCollection).CGColor;
+    _fill.fillColor = [AMResolved(AM_SURFACE, self.traitCollection) colorWithAlphaComponent:AMCardAlpha].CGColor;
     _edge.strokeColor = AMResolved(AM_LINE, self.traitCollection).CGColor;
-    _hair.strokeColor = AMResolved(AM_LINE, self.traitCollection).CGColor;
+    _hair.strokeColor = [AMResolved(AM_FG, self.traitCollection) colorWithAlphaComponent:0.07].CGColor;  // barely there
 }
 
 // A pick's confirmation: the slice glows in `color`, then fades back to `surface` over 1.4 s.
 - (void)flash:(UIColor *)color {
-    UIColor *base = AMResolved(AM_SURFACE, self.traitCollection);
+    UIColor *base = [AMResolved(AM_SURFACE, self.traitCollection) colorWithAlphaComponent:AMCardAlpha];
     UIColor *tint = [AMResolved(color, self.traitCollection) colorWithAlphaComponent:0.22];
     CABasicAnimation *glow = [CABasicAnimation animationWithKeyPath:@"fillColor"];
     glow.fromValue = (id)tint.CGColor;
@@ -500,9 +501,9 @@ typedef NS_ENUM(NSInteger, AMPiece) { AMPieceTop, AMPieceMiddle, AMPieceBottom, 
     [e addLineToPoint:CGPointMake(x1, bottom ? y1 - R : y1)];
     _edge.path = e.CGPath;
     UIBezierPath *h = [UIBezierPath bezierPath];
-    if (self.rule && !top) {
-        [h moveToPoint:CGPointMake(x0 + AMPad, 0.25)];
-        [h addLineToPoint:CGPointMake(x1 - AMPad, 0.25)];
+    if (self.rule && !top) {  // edge to edge inside the box
+        [h moveToPoint:CGPointMake(x0 + 0.5, 0.25)];
+        [h addLineToPoint:CGPointMake(x1 - 0.5, 0.25)];
     }
     _hair.path = h.CGPath;
 }
@@ -613,6 +614,134 @@ static UITextField *AMSearchField(NSString *placeholder) {
 - (void)didMoveToWindow {
     [super didMoveToWindow];
     [self setNeedsLayout];  // iOS drops layer animations off screen: start it again
+}
+
+@end
+
+// A category's moving edge: the light that runs around the search field, around the category's whole box (violet
+// into cyan with a bright glint, the rest of the outline in `line`), once every 6 s. The rows each draw their own
+// slice of the box, so this sits over them as one view per open category (AMCardEdges places them). Core Animation
+// only; still with Reduce Motion or Low Power Mode.
+@interface AMCardEdge : UIView
+@end
+
+@implementation AMCardEdge {
+    CAGradientLayer *_spin;
+    CAShapeLayer *_mask;
+}
+
+- (instancetype)init {
+    if ((self = [super initWithFrame:CGRectZero])) {
+        self.userInteractionEnabled = NO;
+        self.layer.zPosition = 5;  // over the rows' own outline
+        _spin = [CAGradientLayer layer];
+        _spin.type = kCAGradientLayerConic;
+        _spin.startPoint = CGPointMake(0.5, 0.5);
+        _spin.endPoint = CGPointMake(0.5, 0);
+        [self.layer addSublayer:_spin];
+        _mask = [CAShapeLayer layer];
+        _mask.fillColor = UIColor.clearColor.CGColor;
+        _mask.strokeColor = UIColor.blackColor.CGColor;
+        _mask.lineWidth = 1;
+        self.layer.mask = _mask;
+        [self applyColors];
+    }
+    return self;
+}
+
+- (void)applyColors {
+    UITraitCollection *t = self.traitCollection;
+    UIColor *line = AMResolved(AM_LINE, t), *a = AMResolved(AM_ACCENT, t), *b = AMResolved(AM_ACCENT2, t);
+    UIColor *glint = b;
+    CGFloat h, sat, br, al;
+    if ([b getHue:&h saturation:&sat brightness:&br alpha:&al]) glint = [UIColor colorWithHue:h saturation:sat * 0.3 brightness:1 alpha:1];
+    _spin.colors = @[(id)line.CGColor, (id)a.CGColor, (id)b.CGColor, (id)glint.CGColor, (id)b.CGColor, (id)line.CGColor, (id)line.CGColor];
+    _spin.locations = @[@0, @0.11, @0.22, @0.26, @0.31, @0.44, @1];
+}
+
+- (void)traitCollectionDidChange:(UITraitCollection *)previous {
+    [super traitCollectionDidChange:previous];
+    [self applyColors];
+}
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    _mask.frame = self.bounds;
+    _mask.path = [UIBezierPath bezierPathWithRoundedRect:CGRectInset(self.bounds, 0.5, 0.5) cornerRadius:AMRadius].CGPath;
+    CGFloat d = hypot(self.bounds.size.width, self.bounds.size.height);
+    _spin.bounds = CGRectMake(0, 0, d, d);
+    _spin.position = CGPointMake(CGRectGetMidX(self.bounds), CGRectGetMidY(self.bounds));
+    [CATransaction commit];
+    if (AMStill()) { [_spin removeAllAnimations]; return; }
+    if ([_spin animationForKey:@"spin"]) return;
+    CABasicAnimation *spin = [CABasicAnimation animationWithKeyPath:@"transform.rotation.z"];
+    spin.fromValue = @0;
+    spin.toValue = @(2 * M_PI);
+    spin.duration = 6;
+    spin.repeatCount = HUGE_VALF;
+    [_spin addAnimation:spin forKey:@"spin"];
+}
+
+- (void)didMoveToWindow {
+    [super didMoveToWindow];
+    [self setNeedsLayout];  // iOS drops layer animations off screen: start it again
+}
+
+@end
+
+// Keeps one AMCardEdge around each open category's rows in a table, following its content as rows come, go,
+// grow (a status line) and fold.
+@interface AMCardEdges : NSObject
+- (instancetype)initWithTable:(UITableView *)table;
+- (void)layout;
+@end
+
+@implementation AMCardEdges {
+    UITableView *_table;
+    NSMutableArray<AMCardEdge *> *_edges;
+    BOOL _queued;
+}
+
+- (instancetype)initWithTable:(UITableView *)table {
+    if ((self = [super init])) {
+        _table = table;
+        _edges = [NSMutableArray new];
+        [table addObserver:self forKeyPath:@"contentSize" options:0 context:NULL];
+    }
+    return self;
+}
+
+- (void)dealloc {
+    [_table removeObserver:self forKeyPath:@"contentSize"];
+}
+
+- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary *)change context:(void *)context {
+    if (_queued) return;
+    _queued = YES;
+    dispatch_async(dispatch_get_main_queue(), ^{ self->_queued = NO; [self layout]; });
+}
+
+- (void)layout {
+    UITableView *table = _table;
+    CGFloat width = table.bounds.size.width, side = AMInset(width);
+    NSUInteger used = 0;
+    for (NSInteger s = 0; s < table.numberOfSections; s++) {
+        NSInteger rows = [table numberOfRowsInSection:s];
+        if (!rows) continue;  // a folded category is just its label
+        CGRect first = [table rectForRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:s]];
+        CGRect last = [table rectForRowAtIndexPath:[NSIndexPath indexPathForRow:rows - 1 inSection:s]];
+        if (used == _edges.count) [_edges addObject:[AMCardEdge new]];
+        AMCardEdge *edge = _edges[used++];
+        if (edge.superview != table) [table addSubview:edge];
+        CGRect frame = CGRectMake(side, CGRectGetMinY(first), width - 2 * side, CGRectGetMaxY(last) - CGRectGetMinY(first));
+        if (!CGRectEqualToRect(edge.frame, frame)) edge.frame = frame;
+    }
+    while (_edges.count > used) {
+        [_edges.lastObject removeFromSuperview];
+        [_edges removeLastObject];
+    }
 }
 
 @end
@@ -1017,6 +1146,7 @@ static UITextField *AMSearchField(NSString *placeholder) {
 #pragma mark - Panel
 
 @interface AMPanel : UITableViewController <UITextFieldDelegate>
+@property (nonatomic, strong) AMCardEdges *edges;
 @property (nonatomic, strong) NSArray<AMItem *> *items;
 @property (nonatomic, strong) NSArray<NSString *> *allTitles;            // categories in the order first added
 @property (nonatomic, strong) NSArray<NSArray<NSNumber *> *> *allRows;   // indexes into items
@@ -1195,6 +1325,8 @@ static NSString *AMGameName(NSString *fallback) {
 // The header and footer take the table's own width (the sheet can be narrower than the screen).
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
+    if (!self.edges) self.edges = [[AMCardEdges alloc] initWithTable:self.tableView];
+    [self.edges layout];
     CGFloat width = self.tableView.bounds.size.width;
     for (UIView *v in @[self.tableView.tableHeaderView ?: [UIView new], self.tableView.tableFooterView ?: [UIView new]]) {
         if (!v.superview || fabs(v.frame.size.width - width) < 0.5) continue;
@@ -1377,7 +1509,7 @@ static NSString *AMGameName(NSString *fallback) {
     // which slice of the category's box this row draws
     BOOL last = indexPath.row == (NSInteger)self.shownRows[indexPath.section].count - 1;
     BOOL first = indexPath.row == 0;
-    [cell setPiece:last ? (first ? AMPieceWhole : AMPieceBottom) : (first ? AMPieceTop : AMPieceMiddle) rule:NO];
+    [cell setPiece:last ? (first ? AMPieceWhole : AMPieceBottom) : (first ? AMPieceTop : AMPieceMiddle) rule:!first];
     return cell;
 }
 
@@ -1601,6 +1733,7 @@ static UIColor *AMTierColor(NSString *group) {
 // in the tier's colour with the count; every group starts open and folds when its label is tapped. A search
 // field above long lists. A pick calls the mod with the entry's index in its own list; the page stays open.
 @implementation AMListPanel {
+    AMCardEdges *_edges;
     NSArray<NSString *> *_groups;              // shown groups ("" for entries with none)
     NSArray<NSArray<NSNumber *> *> *_rows;     // indexes into entries, per shown group
     NSMutableSet<NSString *> *_folded;
@@ -1653,6 +1786,8 @@ static UIColor *AMTierColor(NSString *group) {
 // The header and footer take the table's own width (the sheet can be narrower than the screen).
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
+    if (!_edges) _edges = [[AMCardEdges alloc] initWithTable:self.tableView];
+    [_edges layout];
     CGFloat width = self.tableView.bounds.size.width;
     UIView *head = self.tableView.tableHeaderView;
     if (head && fabs(head.frame.size.width - width) > 0.5) {
@@ -1769,7 +1904,7 @@ static UIColor *AMTierColor(NSString *group) {
     cell.accessibilityValue = nil;
     [cell setSymbol:e[@"symbol"]];
     BOOL last = indexPath.row == (NSInteger)_rows[indexPath.section].count - 1, first = indexPath.row == 0;
-    [cell setPiece:last ? (first ? AMPieceWhole : AMPieceBottom) : (first ? AMPieceTop : AMPieceMiddle) rule:NO];
+    [cell setPiece:last ? (first ? AMPieceWhole : AMPieceBottom) : (first ? AMPieceTop : AMPieceMiddle) rule:!first];
     return cell;
 }
 
