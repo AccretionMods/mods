@@ -32,6 +32,13 @@ class JobHistory(unittest.TestCase):
             "next": 1,
         }
 
+    def test_history_keeps_the_newest_records(self):
+        self.history.MAX_RECORDS = 3
+        for n in range(5):
+            self.history.save(self.view(f"job{n}"))
+            time.sleep(0.02)
+        self.assertEqual(sorted(r["id"] for r in self.history.load()), ["job2", "job3", "job4"])
+
     def test_recovered_jobs_never_resume_and_completed_output_retained(self):
         for i, status in enumerate(
             ("queued", "running", "stopping", "done", "failed", "stopped")
@@ -173,6 +180,16 @@ class Scheduling(unittest.TestCase):
         coordinator.release(["device"])
         self.assertTrue(coordinator.acquire(["device"], threading.Event()))
         coordinator.release(["device"])
+
+
+class Resources(unittest.TestCase):
+    def test_log_and_test_hold_only_the_phone(self):
+        import server  # studio/server.py (on sys.path above)
+
+        self.assertEqual(server.job_resources("log", ["sample-mod", "--seconds", "60"]), ["device"])
+        self.assertEqual(server.job_resources("test", ["sample-mod"]), ["device"])
+        self.assertIn("mod:sample-mod", server.job_resources("build", ["sample-mod"]))
+        self.assertEqual(server.job_resources("run", ["sample-mod"]), ["device", "mod:sample-mod"])
 
 
 if __name__ == "__main__":

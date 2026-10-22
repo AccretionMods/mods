@@ -118,7 +118,8 @@ def job_resources(command, argv):
     if (
         argv
         and MOD_NAME.fullmatch(argv[0])
-        and command not in {"games", "fetch", "sign", "install"}
+        # log, test and push only read the mod (they hold the phone): Add, Pin and a build may run beside them
+        and command not in {"games", "fetch", "sign", "install", "log", "test", "push"}
     ):
         resources.append("mod:" + argv[0])
     if command in ("claude", "codex") and argv != ["(read only)"]:
@@ -176,12 +177,15 @@ class Job:
             ):
                 folder = ROOT / "mods" / self.argv[0]
                 if folder.is_dir():
-                    workspace.snapshot_create(
-                        dev.am_root() / "studio",
-                        self.argv[0],
-                        folder,
-                        "before " + self.command,
-                    )
+                    try:
+                        workspace.snapshot_create(
+                            dev.am_root() / "studio",
+                            self.argv[0],
+                            folder,
+                            "before " + self.command,
+                        )
+                    except (OSError, ValueError) as error:  # a snapshot problem never stops the job
+                        self.lines.append(f"(no snapshot: {error})")
             self._execute()
         except Exception as error:  # noqa: BLE001 - report a worker failure and always release its resources
             self.lines.append(jobs_state.redact(f"Job failed: {error}"))
@@ -1004,9 +1008,12 @@ def quick(name, command, body):
     dev._dump_cache.clear() if command == "gen" else None
 
     def change():
-        workspace.snapshot_create(
-            dev.am_root() / "studio", name, dev.mod_dir(name), "before " + command
-        )
+        try:
+            workspace.snapshot_create(
+                dev.am_root() / "studio", name, dev.mod_dir(name), "before " + command
+            )
+        except (OSError, ValueError) as error:  # a snapshot problem never stops the change
+            print(f"(no snapshot: {error})")
         return fn(ns)
 
     cancelled = threading.Event()
@@ -1309,6 +1316,7 @@ class Handler(BaseHTTPRequestHandler):
             job.send(str(body.get("text", "")))
             return self.send_json(job.view(len(job.lines)))
         if parts == ["api", "jobs"]:
+            self.local_only()  # builds, signs and installs run on this PC: this PC's Studio page only
             command = body.get("command", "")
             argv = []
             # sign and install take a file, not a mod; new makes the mod; fetch takes an app
@@ -1318,20 +1326,24 @@ class Handler(BaseHTTPRequestHandler):
             job = start_job(command, argv)
             return self.send_json(job.view())
         if parts == ["api", "fetch", "login"]:
+            self.local_only()
             user = fetch_client().login(
                 str(body.get("email", "")), str(body.get("password", ""))
             )
             return self.send_json({"user": user})
         if parts == ["api", "fetch", "logout"]:
+            self.local_only()
             fetch_client().logout()
             return self.send_json({"ok": True})
         if len(parts) == 4 and parts[:2] == ["api", "jobs"] and parts[3] == "stop":
+            self.local_only()
             job = JOBS.get(parts[2])
             if not job:
                 return self.send_json({"error": "no such job"}, HTTPStatus.NOT_FOUND)
             job.stop()
             return self.send_json(job.view(len(job.lines)))
         if len(parts) == 4 and parts[:2] == ["api", "mods"] and parts[3] in QUICK:
+            self.local_only()
             name = self.mod_name(parts[2])
             result = quick(name, parts[3], body)
             result["mod"] = mod_detail(name)

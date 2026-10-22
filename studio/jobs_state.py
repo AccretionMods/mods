@@ -171,6 +171,14 @@ class History:
                 os.replace(temporary, path)
             finally:
                 temporary.unlink(missing_ok=True)
+            self._prune()
+
+    MAX_RECORDS = 300  # finished jobs kept; the oldest go first
+
+    def _prune(self):
+        paths = sorted(self.folder.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        for old in paths[self.MAX_RECORDS:]:
+            old.unlink(missing_ok=True)
 
     def load(self) -> list[dict]:
         result = []
