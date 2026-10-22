@@ -346,13 +346,17 @@ def type_kinds(mod):
 
 
 def fields_of(mod, cls):
-    """[(offset, static?, type, name)] of a class, from dump.cs."""
-    found, inside, depth = [], False, 0
+    """[(offset, static?, type, name)] of a class, from dump.cs. cls may carry its namespace (Core.PlayerLife)."""
+    found, inside, depth, ns = [], False, 0, ""
     with open(dump_path(mod), encoding="utf-8", errors="ignore") as f:
         for line in f:
             if not inside:
+                if line.startswith("// Namespace:"):
+                    ns = line[13:].strip()
+                    continue
                 m = TYPE_KIND.match(line)
-                if m and m.group(2).split("<")[0] == cls:
+                name = m.group(2).split("<")[0] if m else None
+                if m and (name == cls or (ns and f"{ns}.{name}" == cls)):
                     inside, depth = True, 0
                 continue
             depth += line.count("{") - line.count("}")
