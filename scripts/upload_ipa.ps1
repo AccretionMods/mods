@@ -9,8 +9,8 @@ Manual upload, no prompts: takes an unsigned mod .ipa and publishes it to Accret
   scripts/upload_ipa.ps1 -DryRun              check everything and print the command, upload nothing
 
 Candidates are *_accretion.ipa files (what scripts/local_ipa.sh makes); signed copies and other files are
-skipped. The mod name comes from the file name (<mod>_<version>_accretion.ipa) and must have mods/<mod>/mod.json
-without "personal": true. Hands the file to scripts/publish.py, which uploads it with the git-ignored
+skipped. The mod name comes from the file name (<mod>_<version>_accretion.ipa) and must have mods/<mod>/mod.json.
+Hands the file to scripts/publish.py, which uploads it with the git-ignored
 .upload-key (or ACCRETION_UPLOAD_KEY) and records it in releases.json and mods.json. It does not commit or
 push: the store sees the build once those two files reach main (scripts/checked_push.py or a pull request).
 Runs publish.py with uv (python on this PC's PATH is only the Store stub). Exit code 0 only after publish.py
@@ -52,9 +52,6 @@ $mod = $Matches.mod
 $version = $Matches.version
 $meta = Join-Path $repo "mods\$mod\mod.json"
 if (-not (Test-Path $meta)) { Write-Host "No mods/$mod/mod.json in $repo"; exit 1 }
-if ((Get-Content $meta -Raw | ConvertFrom-Json).personal) {
-    Write-Host "mods/$mod/mod.json has personal: true; publish.py refuses personal mods. Remove the flag first."; exit 1
-}
 if (-not (Test-Path (Join-Path $repo ".upload-key")) -and -not $env:ACCRETION_UPLOAD_KEY) {
     Write-Host "No .upload-key in $repo and no ACCRETION_UPLOAD_KEY"; exit 1
 }
