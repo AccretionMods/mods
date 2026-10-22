@@ -111,6 +111,13 @@ never copy, restyle or replace it. Change the look only in `menu/AMMenu.m`, so e
 - **Display category (last):** Pulsing dot and Toggles, both on by default, kept per game. They are not cheats:
   All off and the counts ignore them.
 - **Background:** only the two slow drifting lights and the moving line under the title.
+- **Cloud saves:** a "Log in · back up your saves" capsule under the title (moving edge) opens Accretion's sign-in in
+  iOS's sign-in sheet with a one-time code; once linked (the sheet closes by itself) a Cloud saves category above
+  Display has Back up now, Restore a backup (newest first, any device), Back up when the menu opens (only after a
+  first manual backup or restore) and Unlink. A backup is a zip of the game's saved settings, Documents and
+  Application Support (50 MB at most, the newest 5 per game, unchanged saves not uploaded again); a restore keeps
+  the current save first and is put in place at the next launch. The store's `saves` function and #/link page
+  (getaccretion.github.io) are the other side.
 
 ### Private bases and ready-made tweaks
 
