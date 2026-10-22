@@ -17,6 +17,9 @@ NS_ASSUME_NONNULL_BEGIN
 // next items back in that section (after what it already has), so related items can be added from anywhere.
 - (void)addSection:(NSString *)title;
 
+// Whether a switch or slider with this key is already in the menu (live pins add the ones a build lacks).
+- (BOOL)hasItem:(NSString *)key;
+
 + (BOOL)boolForKey:(NSString *)key;
 + (float)floatForKey:(NSString *)key;
 

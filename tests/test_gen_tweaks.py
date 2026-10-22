@@ -541,11 +541,15 @@ class Pins(unittest.TestCase):
         self.assertIn('why = "Open a lock to see it work"', mh)
         self.assertIn('if (tried) AMMenuStatus("lock", reached, why);', m)
         self.assertIn("StatHandler.set_Hunger didn't take the value", m)  # read back after a setter
+        # live pins: a pushed live_tweaks.json wins over the compiled pins, and is run and loaded every tick
+        self.assertIn('if (AMLivePinsHas("keepStats")) return;', m)
+        self.assertIn("    AMLivePinsTick();", m)
+        self.assertIn('#import "runtime/AMLivePins.h"', m)
         _, m = gen_tweaks.render(TWEAKS, HOOKS, "game-plus")
         # a hook that runs with its switch on says so; a hook-only switch needs JIT
         self.assertIn('if (am_noDamage) AMMenuStatus("noDamage", true, NULL);', m)
         self.assertIn(
-            'if (am_noDamage) AMMenuStatus("noDamage", AMIl2cppHasJIT(), "Needs JIT, and this phone has none");', m
+            'if (am_noDamage && !AMLivePinsHas("noDamage")) AMMenuStatus("noDamage", AMIl2cppHasJIT(), "Needs JIT, and this phone has none");', m
         )
         own = json.loads(json.dumps(TWEAKS))
         for t in own["tweaks"]:

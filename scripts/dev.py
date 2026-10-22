@@ -38,6 +38,8 @@ it); signing and device logs need the phone on USB and run on Windows (plumesign
   dev.py fetch --save-login | --forget-login                     keep it in Windows Credential Manager; fetch signs in
   dev.py start <bundle-id | file.ipa> [--name N] [--title T]      new game in one go: decrypted copy, report,
                                                                  mod folder + dump, scan with the best candidates
+  dev.py push <mod> [--off] [--launch]                           switches to the phone without rebuilding: the
+                                                                 mod's tweaks.json as the app's live_tweaks.json
   dev.py post <mod> [--draft] [-o file]                          the release post (workspace template) once every
                                                                  switch is marked works on the tested game version
   dev.py report <mod | file.ipa> [--json]                        is it worth modding: engine, decrypted, online,
@@ -1436,6 +1438,41 @@ def cmd_install(args):
     return r.returncode
 
 
+def cmd_push(args):
+    """tweaks.json into the installed app as Documents/live_tweaks.json: the build's runtime (AMLivePins.h) reads
+    it within 2 s, runs its pins instead of the compiled ones, and adds new switches to the menu. --off removes
+    it, so the build's own switches apply again. Needs a build that has AMLivePins (built after it existed)."""
+    folder = mod_dir(args.mod)
+    meta = read_json(folder / "mod.json")
+    found = installed_bundles(meta["bundle_id"])
+    if not found:
+        raise DevError(f"{meta['bundle_id']} is not on the phone (dev.py run {args.mod})")
+    cli = pymobiledevice3_cli()
+    if args.off:
+        r = subprocess.run([cli, "apps", "rm", found[0], "Documents/live_tweaks.json"], capture_output=True, text=True)
+        print("==> live switches removed: the build's own switches apply again" if r.returncode == 0
+              else f"==> nothing removed ({(r.stderr or r.stdout).strip().splitlines()[-1:] or ['no file']})")
+        return 0
+    if not args.no_check:
+        problems = pin_problems_in_dump(args.mod)
+        print_pin_problems(problems)
+        if any(p[0] == "error" for p in problems):
+            raise DevError("pins that can't work (above): fix them, or push anyway with --no-check")
+    tweaks = load_tweaks(folder, meta)
+    live = {"title": tweaks.get("title"), "tweaks": [t for t in tweaks.get("tweaks", []) if t.get("pins")]}
+    tmp = am_root() / "work" / f"live_tweaks-{args.mod}.json"
+    tmp.parent.mkdir(parents=True, exist_ok=True)
+    tmp.write_text(json.dumps(live), encoding="utf-8")
+    r = subprocess.run([cli, "apps", "push", found[0], str(tmp), "Documents/live_tweaks.json"],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        raise DevError(f"push failed: {(r.stderr or r.stdout).strip()[-300:]}")
+    print(f"==> {len(live['tweaks'])} switches pushed to {found[0]}: the game picks them up within 2 s, no rebuild")
+    if args.launch:
+        launch_app(found[0])
+    return 0
+
+
 def cmd_log(args):
     folder = mod_dir(args.mod)
     meta = read_json(folder / "mod.json")
@@ -2411,6 +2448,13 @@ def build_parser():
     s = sub.add_parser("learn", help="import a mod's hooks.json into the pattern store")
     s.add_argument("mod")
     s.set_defaults(fn=cmd_learn)
+
+    s = sub.add_parser("push", help="switches to the phone without rebuilding (live_tweaks.json)")
+    s.add_argument("mod")
+    s.add_argument("--off", action="store_true", help="remove the pushed file: the build's own switches again")
+    s.add_argument("--launch", action="store_true", help="(re)open the game after pushing")
+    s.add_argument("--no-check", action="store_true", help="push even when a pin fails the dump check")
+    s.set_defaults(fn=cmd_push)
 
     s = sub.add_parser("post", help="the release post, once every switch is marked works (written locally)")
     s.add_argument("mod")
