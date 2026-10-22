@@ -95,7 +95,8 @@ never copy, restyle or replace it. Change the look only in `menu/AMMenu.m`, so e
 - **Title and footer:** the game's own name (as under its icon) with the Accretion mark; a plain Done and All off;
   a small "More at getaccretion.app" link under the note.
 - **Categories:** one outlined box per category, the label above it with "N on" and a plain Off. Every
-  category starts expanded; tapping a label folds it. No lines between rows.
+  category starts expanded; tapping a label folds it. The box is see-through (60% fill). A violet-into-cyan
+  light with a bright glint runs around each open box's edge every 6 s. Faint hairlines (7%) sit between rows.
 - **Switch rows:** 13 pt text, about 30 pt tall. A small outlined line toggle: grey off, cyan on, red when on and
   not reaching the game. Tap anywhere on the row. No checkmarks anywhere.
 - **Status:** the dot left of the title while a switch is on: steady green when it works, red pulsing when not,
