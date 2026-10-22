@@ -81,6 +81,14 @@ dialog h3 { margin: 0 0 6px; }
 .sec h3 { margin: 0 0 8px; font-size: 15px; }
 .hidden { display: none !important; }
 .copy { float: right; }
+.games { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+.game { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--raised); min-width: 0; }
+.game .top { display: flex; gap: 10px; align-items: center; min-width: 0; }
+.game img { width: 64px; height: 64px; border-radius: 15px; flex: none; background: var(--surface); border: 1px solid var(--line); }
+.game .name { font-weight: 600; line-height: 1.25; overflow-wrap: anywhere; }
+.game .seller { color: var(--muted); font-size: 12.5px; overflow-wrap: anywhere; }
+.game .meta { color: var(--muted); font-size: 12.5px; }
+.game .acts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: auto; }
 </style>
 </head>
 <body>
@@ -104,12 +112,14 @@ dialog h3 { margin: 0 0 6px; }
       <button data-tab="suggest">Suggest</button>
       <button data-tab="phone">Build &amp; Phone</button>
       <button data-tab="files">Files</button>
+      <button data-tab="games">Games</button>
     </div>
     <section id="tab-switches"></section>
     <section id="tab-find" class="hidden"></section>
     <section id="tab-suggest" class="hidden"></section>
     <section id="tab-phone" class="hidden"></section>
     <section id="tab-files" class="hidden"></section>
+    <section id="tab-games" class="hidden"></section>
   </main>
 </div>
 
@@ -179,12 +189,12 @@ const App = {
   setTab(tab) {
     this.tab = tab;
     document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
-    for (const s of ["switches", "find", "suggest", "phone", "files"]) this.byId("tab-" + s).classList.toggle("hidden", s !== tab);
+    for (const s of ["switches", "find", "suggest", "phone", "files", "games"]) this.byId("tab-" + s).classList.toggle("hidden", s !== tab);
     this.render();
   },
   render() {
     if (!this.detail) return;
-    ({ switches: this.renderSwitches, find: this.renderFind, suggest: this.renderSuggest, phone: this.renderPhone, files: this.renderFiles })[this.tab].call(this);
+    ({ switches: this.renderSwitches, find: this.renderFind, suggest: this.renderSuggest, phone: this.renderPhone, files: this.renderFiles, games: this.renderGames })[this.tab].call(this);
   },
 
   // ---------------------------------------------------------------- switches
@@ -507,17 +517,81 @@ const App = {
       pre("hooks.json", JSON.stringify({ engine: "unity-il2cpp", hooks: d.hooks_json }, null, 2)));
   },
 
+  // ---------------------------------------------------------------- games
+  renderGames() {
+    const box = this.byId("tab-games");
+    if (box.childElementCount) return;  // built once; Refresh reloads the list
+    const pref = (k, d) => { try { return localStorage.getItem("studio.games." + k) || d; } catch (e) { return d; } };
+    const save = (k, v) => { try { localStorage.setItem("studio.games." + k, v); } catch (e) {} };
+    const list = this.el("select", {}, [["similar", "Like the games we mod"], ["top-free", "Top free"], ["top-paid", "Top paid"], ["top-grossing", "Top grossing"], ["new-free", "New free"], ["new-paid", "New paid"]].map(o => this.el("option", { value: o[0], text: o[1] })));
+    const region = this.el("select", {}, [["us", "USA"], ["jp", "Japan"], ["cn", "China"], ["vn", "Vietnam"], ["gb", "UK"], ["de", "Germany"], ["br", "Brazil"], ["mx", "Mexico"]].map(o => this.el("option", { value: o[0], text: o[1] })));
+    const filter = this.el("input", { placeholder: "filter by name, maker or genre", style: "flex:1;min-width:160px" });
+    const offline = this.el("input", { type: "checkbox" });
+    list.value = pref("list", "similar"); region.value = pref("region", "us"); offline.checked = pref("offline", "1") === "1";
+    const note = this.el("p", { class: "hint" });
+    const grid = this.el("div", { class: "games" });
+    let rows = [];
+    const draw = () => {
+      const f = filter.value.trim().toLowerCase();
+      const shown = rows.filter(g => (!offline.checked || !g.online) && (!f || [g.name, g.seller, ...g.genres].join(" ").toLowerCase().includes(f)));
+      const hidden = rows.filter(g => g.online).length;
+      note.textContent = `${shown.length} of ${rows.length} games` + (offline.checked && hidden ? ` · ${hidden} online or multiplayer hidden (no online cheats)` : "");
+      grid.replaceChildren(...shown.map(g => this.gameCard(g, region.value)));
+    };
+    const load = async () => {
+      save("list", list.value); save("region", region.value);
+      note.textContent = list.value === "similar" ? "Looking for games like ours (the first time takes about 10 s)…" : "Loading…";
+      grid.replaceChildren();
+      try { rows = (await this.api(`/api/games?list=${list.value}&region=${region.value}`)).games; draw(); }
+      catch (e) { note.textContent = e.message; }
+    };
+    list.addEventListener("change", load); region.addEventListener("change", load);
+    filter.addEventListener("input", draw); offline.addEventListener("change", () => { save("offline", offline.checked ? "1" : "0"); draw(); });
+    box.append(
+      this.el("div", { class: "row", style: "margin-bottom:10px" }, list, region, filter,
+        this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center" }, offline, "single-player only"),
+        this.el("button", { class: "small", onclick: load }, "Refresh")),
+      this.el("p", { class: "hint", text: "From the App Store's public charts and search. \"Like the games we mod\" ranks games by the themes and genres they share with our mods' games. Get .ipa looks the game up on the decrypt site; New mod starts a mod from a decrypted copy." }),
+      note, grid);
+    load();
+  },
+  gameCard(g, region) {
+    const fmt = n => n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? Math.round(n / 1e3) + "K" : String(n);
+    const badges = [
+      ...g.mods.map(m => this.el("span", { class: "badge good", text: "our mod: " + m.title })),
+      g.ipa ? this.el("span", { class: "badge accent", text: ".ipa " + (g.ipa.version || "") + " ready" }) : null,
+      g.online ? this.el("span", { class: "badge warn", text: "online" }) : null,
+      ...g.like.map(t => this.el("span", { class: "badge", text: "like " + t })),
+    ];
+    const newMod = g.mods.length
+      ? this.el("button", { class: "small", onclick: () => { this.select(g.mods[0].name); this.setTab("switches"); } }, "Open mod")
+      : this.el("button", { class: "small primary", onclick: () => this.newModDialog(g.bundle, g.name) }, "New mod");
+    return this.el("div", { class: "game" },
+      this.el("div", { class: "top" },
+        this.el("img", { src: g.icon, alt: "", loading: "lazy" }),
+        this.el("div", { style: "min-width:0" }, this.el("div", { class: "name", text: g.name }), this.el("div", { class: "seller", text: g.seller }))),
+      this.el("div", { class: "meta", text: [g.rating ? `★ ${g.rating} (${fmt(g.ratings)})` : "no ratings", g.price, g.size ? this.mb(g.size) : null, g.updated ? "updated " + g.updated : null].filter(Boolean).join(" · ") }),
+      g.genres.length ? this.el("div", { class: "meta", text: g.genres.join(", ") }) : null,
+      this.el("div", { class: "badges" }, badges),
+      this.el("div", { class: "acts" },
+        this.el("button", { class: "small", onclick: () => this.getIpaDialog(g.bundle, region) }, "Get .ipa"),
+        newMod,
+        g.url ? this.el("a", { href: g.url, target: "_blank", rel: "noopener", class: "small", style: "align-self:center" }, "App Store") : null));
+  },
+
   // ---------------------------------------------------------------- new mod
-  async newModDialog() {
+  async newModDialog(bundle, appName) {
     let ipas = [];
     try { ipas = (await this.api("/api/bases")).ipas; } catch (e) { this.toast(e.message, "bad"); }
+    const base = bundle ? ipas.find(i => i.bundle === bundle) : null;
+    if (bundle && !base) { this.toast(`No decrypted .ipa of ${appName || bundle} yet: get one first`, "bad"); return this.getIpaDialog(bundle); }
     const opts = [["", "choose a decrypted .ipa from intake/ or Downloads…"], ...ipas.map(i => [i.path, `${i.name} ${i.version} · ${i.bundle} · ${this.mb(i.size)}${i.fetched ? " · decrypt site" : ""}`])];
     this.dialog("New personal mod", [
       { type: "note", text: "Makes mods/<name>/ from a decrypted .ipa of the game, then dumps it. Nothing is uploaded. No copy yet? Close this and use Get .ipa." },
-      { name: "name", label: "Folder name", help: "lowercase letters, digits, dashes", value: "", placeholder: "my-game-plus", mono: true },
-      { name: "title", label: "Menu title", value: "", placeholder: "My Game+" },
-      { name: "pick", label: "Base .ipa", type: "select", options: opts, onchange: i => { if (i.pick.value) { const row = ipas.find(x => x.path === i.pick.value); i.path.value = i.pick.value; if (!i.title.value) i.title.value = row.name + "+"; if (!i.name.value) i.name.value = row.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") + "-plus"; } } },
-      { name: "path", label: "or a path", value: "", mono: true },
+      { name: "name", label: "Folder name", help: "lowercase letters, digits, dashes", value: base ? (base.name || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") + "-plus" : "", placeholder: "my-game-plus", mono: true },
+      { name: "title", label: "Menu title", value: base ? (base.name || "") + "+" : "", placeholder: "My Game+" },
+      { name: "pick", label: "Base .ipa", type: "select", options: opts, value: base ? base.path : "", onchange: i => { if (i.pick.value) { const row = ipas.find(x => x.path === i.pick.value); i.path.value = i.pick.value; if (!i.title.value) i.title.value = row.name + "+"; if (!i.name.value) i.name.value = row.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") + "-plus"; } } },
+      { name: "path", label: "or a path", value: base ? base.path : "", mono: true },
     ], async v => {
       if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(v.name)) { this.toast("name: lowercase letters, digits and dashes", "bad"); return false; }
       if (!v.path) { this.toast("choose a base .ipa", "bad"); return false; }
@@ -527,7 +601,7 @@ const App = {
   },
 
   // ---------------------------------------------------------------- get .ipa (decrypt site)
-  async getIpaDialog(preset) {
+  async getIpaDialog(preset, presetRegion) {
     const dlg = this.byId("dlg"), body = this.byId("dlgBody"); body.replaceChildren();
     const status = this.el("p", { class: "hint", text: "Checking the decrypt site…" });
     const q = this.el("input", { class: "mono", placeholder: "bundle ID (com.company.game) or app name", value: preset || "", style: "width:100%" });
@@ -583,6 +657,7 @@ const App = {
       this.el("div", { class: "row", style: "margin-top:14px;justify-content:flex-end" }, this.el("button", { onclick: () => dlg.close() }, "Close")));
     dlg.showModal();
     this.api("/api/fetch/account").then(showAccount).catch(e => { status.textContent = e.message; });
+    if (presetRegion && ["us", "jp", "cn", "vn"].includes(presetRegion)) region.value = presetRegion;
     if (preset) search();
   },
 

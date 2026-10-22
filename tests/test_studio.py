@@ -180,6 +180,9 @@ class Api(unittest.TestCase):
         self.assertEqual(status, 200, job)
         self.assertEqual(job["args"], ["C:/no/such.ipa", "--install"])
         self.post(f"/api/jobs/{job['id']}/stop", {})
+        status, data = self.get("/api/games?list=top-free&region=../x")
+        self.assertEqual(status, 400)
+        self.assertIn("region", data["error"])
         # fetch takes an app, not a mod
         os.environ["AM_DECRYPT_URL"] = "http://127.0.0.1:9"  # nothing listens: no network in tests
         try:

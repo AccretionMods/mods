@@ -182,11 +182,16 @@ the game. After about 20 s an alert shows the mode, each probe hook and how ofte
 http://localhost:8765/: the mods on the left; tabs for the switches (hooks and pins as chips, phone
 results, remove), Find (search the dump, fields of a class, Hook / Pin / Call buttons that open a
 prefilled form), Suggest (what worked in earlier games), Build & Phone (dump, build, sign + install,
-run, log, update to a newer base, with the job output streamed into the page) and Files. Quick commands
+run, log, update to a newer base, with the job output streamed into the page), Files and Games. Games
+shows App Store games as cards (top free, paid and grossing, new free and paid, or "like the games we
+mod": ranked by the themes and genres they share with our mods' games, from `studio/games.py` over
+Apple's public RSS, Lookup and Search APIs, cached half an hour), marks the ones we already mod and the
+ones with a decrypted copy waiting, flags online or multiplayer games (hidden by default: no online
+cheats), and has Get .ipa and New mod (or Open mod) on each card. Quick commands
 run through `dev.py`'s own functions; long ones run `dev.py` as a subprocess. The first Apple ID
 sign-in (2FA) must be done once from a console, then the page's phone buttons work. The server binds
 127.0.0.1; `--host 0.0.0.0` shows the page on the Wi-Fi with no login, for a trusted network only.
-Tests: `tests/test_studio.py`.
+Tests: `tests/test_studio.py`, `tests/test_games.py`.
 
 #### Dev loop for personal mods (`scripts/dev.py`)
 
