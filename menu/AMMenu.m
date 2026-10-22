@@ -500,6 +500,147 @@ static UITextField *AMSearchField(NSUInteger count) {
     return field;
 }
 
+// The search field's frame: its own width (the sheet's, never the screen's), and a live edge: violet into cyan
+// with a light travelling around it every 6 s (a conic gradient turning under a stroke-shaped mask; Core Animation,
+// no timers; still with Reduce Motion or Low Power Mode).
+@interface AMSearchHeader : UIView
+@property (nonatomic, strong) UITextField *field;
+@end
+
+@implementation AMSearchHeader {
+    CALayer *_edge;
+    CAGradientLayer *_spin;
+    CAShapeLayer *_mask;
+}
+
+- (instancetype)initWithField:(UITextField *)field {
+    if ((self = [super initWithFrame:CGRectMake(0, 0, 320, 64)])) {
+        _field = field;
+        field.layer.borderWidth = 0;
+        [self addSubview:field];
+        _edge = [CALayer layer];
+        _spin = [CAGradientLayer layer];
+        _spin.type = kCAGradientLayerConic;
+        _spin.startPoint = CGPointMake(0.5, 0.5);
+        _spin.endPoint = CGPointMake(0.5, 0);
+        [_edge addSublayer:_spin];
+        _mask = [CAShapeLayer layer];
+        _mask.fillColor = UIColor.clearColor.CGColor;
+        _mask.strokeColor = UIColor.blackColor.CGColor;
+        _mask.lineWidth = 1.5;
+        _edge.mask = _mask;
+        [self.layer addSublayer:_edge];
+        [self applyColors];
+    }
+    return self;
+}
+
+- (void)applyColors {
+    UITraitCollection *t = self.traitCollection;
+    UIColor *a = AMResolved(AM_ACCENT, t), *b = AMResolved(AM_ACCENT2, t);
+    UIColor *glint = [b colorWithAlphaComponent:1];
+    CGFloat h, sat, br, al;
+    if ([b getHue:&h saturation:&sat brightness:&br alpha:&al]) glint = [UIColor colorWithHue:h saturation:sat * 0.3 brightness:1 alpha:1];
+    _spin.colors = @[(id)a.CGColor, (id)b.CGColor, (id)glint.CGColor, (id)b.CGColor, (id)a.CGColor, (id)a.CGColor];
+    _spin.locations = @[@0, @0.18, @0.25, @0.32, @0.5, @1];
+}
+
+- (void)traitCollectionDidChange:(UITraitCollection *)previous {
+    [super traitCollectionDidChange:previous];
+    [self applyColors];
+}
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    CGRect r = CGRectMake(AMSide, 14, self.bounds.size.width - 2 * AMSide, 40);
+    self.field.frame = r;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    _edge.frame = CGRectInset(r, -1, -1);
+    CGRect local = CGRectInset(_edge.bounds, 0.75, 0.75);
+    _mask.frame = _edge.bounds;
+    _mask.path = [UIBezierPath bezierPathWithRoundedRect:local cornerRadius:10.75].CGPath;
+    CGFloat d = hypot(_edge.bounds.size.width, _edge.bounds.size.height);
+    _spin.bounds = CGRectMake(0, 0, d, d);
+    _spin.position = CGPointMake(CGRectGetMidX(_edge.bounds), CGRectGetMidY(_edge.bounds));
+    [CATransaction commit];
+    if (AMStill()) { [_spin removeAllAnimations]; return; }
+    if ([_spin animationForKey:@"spin"]) return;
+    CABasicAnimation *spin = [CABasicAnimation animationWithKeyPath:@"transform.rotation.z"];
+    spin.fromValue = @0;
+    spin.toValue = @(2 * M_PI);
+    spin.duration = 6;
+    spin.repeatCount = HUGE_VALF;
+    [_spin addAnimation:spin forKey:@"spin"];
+}
+
+- (void)didMoveToWindow {
+    [super didMoveToWindow];
+    [self setNeedsLayout];  // iOS drops layer animations off screen: start it again
+}
+
+@end
+
+// The one motif, everywhere the same: a hairline in violet into cyan with a soft light travelling along it
+// every 6 s. Under the title bar here; the search edge and the idle floating button use the same colours.
+@interface AMFlowLine : UIView
+@end
+
+@implementation AMFlowLine {
+    CAGradientLayer *_g;
+}
+
+- (instancetype)init {
+    if ((self = [super initWithFrame:CGRectZero])) {
+        self.userInteractionEnabled = NO;
+        self.clipsToBounds = YES;
+        _g = [CAGradientLayer layer];
+        _g.startPoint = CGPointMake(0, 0.5);
+        _g.endPoint = CGPointMake(1, 0.5);
+        [self.layer addSublayer:_g];
+        [self applyColors];
+    }
+    return self;
+}
+
+- (void)applyColors {
+    UIColor *a = AMResolved(AM_ACCENT, self.traitCollection), *b = AMResolved(AM_ACCENT2, self.traitCollection);
+    UIColor *glint = b;
+    CGFloat h, sat, br, al;
+    if ([b getHue:&h saturation:&sat brightness:&br alpha:&al]) glint = [UIColor colorWithHue:h saturation:sat * 0.3 brightness:1 alpha:1];
+    // three widths of gradient: violet, cyan, the light, cyan, violet; it slides one width per loop
+    _g.colors = @[(id)a.CGColor, (id)b.CGColor, (id)glint.CGColor, (id)b.CGColor, (id)a.CGColor, (id)b.CGColor, (id)a.CGColor];
+}
+
+- (void)traitCollectionDidChange:(UITraitCollection *)previous {
+    [super traitCollectionDidChange:previous];
+    [self applyColors];
+}
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    CGFloat w = self.bounds.size.width;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    _g.frame = CGRectMake(-2 * w, 0, 3 * w, self.bounds.size.height);
+    [CATransaction commit];
+    [_g removeAllAnimations];
+    if (AMStill() || w == 0) return;
+    CABasicAnimation *flow = [CABasicAnimation animationWithKeyPath:@"position.x"];
+    flow.fromValue = @(-0.5 * w);
+    flow.toValue = @(1.5 * w);
+    flow.duration = 6;
+    flow.repeatCount = HUGE_VALF;
+    [_g addAnimation:flow forKey:@"flow"];
+}
+
+- (void)didMoveToWindow {
+    [super didMoveToWindow];
+    [self setNeedsLayout];
+}
+
+@end
+
 #pragma mark - Rows
 
 // Every row sits in its category's panel: a slice of the border as its background, content inside the panel's padding.
@@ -551,6 +692,11 @@ static UITextField *AMSearchField(NSUInteger count) {
         _detail.numberOfLines = 0;
         _toggle = [UISwitch new];
         _toggle.onTintColor = AM_ACCENT_FILL;
+        [_toggle setContentCompressionResistancePriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+        [_toggle setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+        for (UILabel *l in @[_title, _detail]) {  // long titles wrap; they never push the switch out of the panel
+            [l setContentCompressionResistancePriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
+        }
         for (UIView *v in @[_dot, _title, _detail, _toggle]) {
             v.translatesAutoresizingMaskIntoConstraints = NO;
             [self.contentView addSubview:v];
@@ -823,14 +969,10 @@ static NSString *const AMOpenSections = @"AM__openSections";
     self.navigationItem.rightBarButtonItem =
         [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(close)];
     if (self.items.count > 12) {
-        UIView *head = [[UIView alloc] initWithFrame:CGRectMake(0, 0, UIScreen.mainScreen.bounds.size.width, 64)];
         self.search = AMSearchField(self.items.count);
-        self.search.frame = CGRectMake(AMSide, 14, head.bounds.size.width - 2 * AMSide, 40);
-        self.search.autoresizingMask = UIViewAutoresizingFlexibleWidth;
         self.search.delegate = self;
         [self.search addTarget:self action:@selector(searchChanged:) forControlEvents:UIControlEventEditingChanged];
-        [head addSubview:self.search];
-        table.tableHeaderView = head;
+        table.tableHeaderView = [[AMSearchHeader alloc] initWithField:self.search];
     } else {
         table.tableHeaderView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 1, 8)];
     }
@@ -843,6 +985,33 @@ static NSString *const AMOpenSections = @"AM__openSections";
     [foot addSubview:self.note];
     table.tableFooterView = foot;
     [self showNote];
+}
+
+// The header and footer take the table's own width (the sheet can be narrower than the screen).
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    CGFloat width = self.tableView.bounds.size.width;
+    for (UIView *v in @[self.tableView.tableHeaderView ?: [UIView new], self.tableView.tableFooterView ?: [UIView new]]) {
+        if (!v.superview || fabs(v.frame.size.width - width) < 0.5) continue;
+        CGRect f = v.frame;
+        f.size.width = width;
+        v.frame = f;
+        if (v == self.tableView.tableHeaderView) self.tableView.tableHeaderView = v;
+        else self.tableView.tableFooterView = v;
+    }
+}
+
+// The flowing hairline under the title bar (the bar's own shadow line is cleared for it).
+- (void)addFlowLine {
+    UINavigationBar *bar = self.navigationController.navigationBar;
+    if (!bar || [bar viewWithTag:9301]) return;
+    for (UINavigationBarAppearance *a in @[bar.standardAppearance, bar.scrollEdgeAppearance ?: bar.standardAppearance]) a.shadowColor = UIColor.clearColor;
+    AMFlowLine *line = [AMFlowLine new];
+    line.tag = 9301;
+    line.alpha = 0.85;
+    line.frame = CGRectMake(0, bar.bounds.size.height - 1, bar.bounds.size.width, 1);
+    line.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleTopMargin;
+    [bar addSubview:line];
 }
 
 - (void)showNote {
@@ -998,6 +1167,7 @@ static NSString *const AMOpenSections = @"AM__openSections";
 
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
+    [self addFlowLine];
     [self.statusTimer invalidate];
     __weak typeof(self) weak = self;
     self.statusTimer = [NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *t) { [weak refreshStatus]; }];
@@ -1063,6 +1233,7 @@ typedef NS_ENUM(NSInteger, AMRingState) { AMRingNone, AMRingGood, AMRingSome, AM
 
 @interface AMButton : UIButton
 @property (nonatomic, strong) CAShapeLayer *ring;
+@property (nonatomic, strong) CALayer *idle;  // the brand edge while no switch is on: violet into cyan, turning
 @property (nonatomic) AMRingState ringState;
 @property (nonatomic) BOOL menuOpen;  // hidden while the menu is open
 @property (nonatomic, strong, nullable) NSTimer *idleTimer;
@@ -1097,8 +1268,46 @@ static NSString *const AMButtonSpot = @"AM__buttonSpot";  // where the button wa
         _ring.lineWidth = 2;
         _ring.hidden = YES;
         [self.layer addSublayer:_ring];
+        // idle: the same motif as the menu's lines, a conic violet-to-cyan edge turning once every 6 s
+        _idle = [CALayer layer];
+        _idle.frame = CGRectInset(self.bounds, -3, -3);
+        CAGradientLayer *spin = [CAGradientLayer layer];
+        spin.type = kCAGradientLayerConic;
+        spin.startPoint = CGPointMake(0.5, 0.5);
+        spin.endPoint = CGPointMake(0.5, 0);
+        spin.frame = _idle.bounds;
+        UIColor *a = AMTok(0x8B5CF6, 0x8B5CF6), *b = AMTok(0x22D3EE, 0x22D3EE);
+        spin.colors = @[(id)a.CGColor, (id)b.CGColor, (id)[UIColor colorWithRed:0.75 green:0.97 blue:1 alpha:1].CGColor, (id)b.CGColor, (id)a.CGColor, (id)a.CGColor];
+        spin.locations = @[@0, @0.18, @0.25, @0.32, @0.5, @1];
+        [_idle addSublayer:spin];
+        CAShapeLayer *mask = [CAShapeLayer layer];
+        mask.path = [UIBezierPath bezierPathWithOvalInRect:CGRectInset(_idle.bounds, 1, 1)].CGPath;
+        mask.fillColor = UIColor.clearColor.CGColor;
+        mask.strokeColor = UIColor.blackColor.CGColor;
+        mask.lineWidth = 1.5;
+        _idle.mask = mask;
+        _idle.opacity = 0.8;
+        [self.layer addSublayer:_idle];
+        [self spinIdle];
     }
     return self;
+}
+
+- (void)spinIdle {
+    CALayer *spin = self.idle.sublayers.firstObject;
+    [spin removeAllAnimations];
+    if (AMStill()) return;
+    CABasicAnimation *turn = [CABasicAnimation animationWithKeyPath:@"transform.rotation.z"];
+    turn.fromValue = @0;
+    turn.toValue = @(2 * M_PI);
+    turn.duration = 6;
+    turn.repeatCount = HUGE_VALF;
+    [spin addAnimation:turn forKey:@"turn"];
+}
+
+- (void)didMoveToWindow {
+    [super didMoveToWindow];
+    if (self.window) [self spinIdle];  // iOS drops layer animations off screen
 }
 
 // The design system's press: dim and shrink to 0.96 on a spring.
@@ -1117,6 +1326,7 @@ static NSString *const AMButtonSpot = @"AM__buttonSpot";  // where the button wa
     if (state == _ringState && (!pulses || UIAccessibilityIsReduceMotionEnabled() || [_ring animationForKey:@"pulse"])) return;
     _ringState = state;
     _ring.hidden = state == AMRingNone;
+    _idle.hidden = state != AMRingNone;  // a status ring replaces the brand edge
     UIColor *c = state == AMRingGood ? AMTok(0x34D399, 0x34D399) : state == AMRingSome ? AMTok(0xF59E0B, 0xF59E0B) : AMTok(0xF87171, 0xF87171);
     _ring.strokeColor = c.CGColor;
     [_ring removeAllAnimations];
