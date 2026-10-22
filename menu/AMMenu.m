@@ -1352,6 +1352,7 @@ static NSString *AMGameName(NSString *fallback) {
         if (!row) {
             row = [[AMSliderCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"slider"];
             [row.slider addTarget:self action:@selector(sliderChanged:) forControlEvents:UIControlEventValueChanged];
+            [row.slider addTarget:self action:@selector(sliderReleased:) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside];
         }
         row.title.text = item.title;
         row.slider.minimumValue = item.min;
@@ -1470,27 +1471,44 @@ static NSString *AMGameName(NSString *fallback) {
     if ([head isKindOfClass:AMSectionHead.class]) [self configureHeader:head section:s];
 }
 
+// A tap's confirmation, like a list pick's: the row glows (cyan when the switch went on, the line colour when it
+// went off) with a success or light haptic. Whether the cheat then reaches the game is the dot's job.
+- (void)confirm:(BOOL)on row:(nullable UITableViewCell *)row {
+    if (on) [[[UINotificationFeedbackGenerator alloc] init] notificationOccurred:UINotificationFeedbackTypeSuccess];
+    else [[[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight] impactOccurred];
+    if ([row.backgroundView isKindOfClass:AMPanelPiece.class]) [(AMPanelPiece *)row.backgroundView flash:on ? AM_ACCENT2 : AM_LINE_STRONG];
+}
+
 - (void)flip:(NSInteger)flat {
     AMItem *item = self.items[flat];
     if (item.display) {
-        [NSUserDefaults.standardUserDefaults setBool:!AMDisplayOn(AMKey(item.key)) forKey:AMKey(item.key)];
-        [[[UISelectionFeedbackGenerator alloc] init] selectionChanged];
+        BOOL on = !AMDisplayOn(AMKey(item.key));
+        [NSUserDefaults.standardUserDefaults setBool:on forKey:AMKey(item.key)];
         [self.tableView reloadData];  // every row follows the new setting
+        [self.tableView layoutIfNeeded];  // so the row exists to glow
+        NSIndexPath *path = [self pathOfFlat:flat];
+        [self confirm:on row:path ? [self.tableView cellForRowAtIndexPath:path] : nil];
         return;
     }
     BOOL on = ![NSUserDefaults.standardUserDefaults boolForKey:AMKey(item.key)];
     [NSUserDefaults.standardUserDefaults setBool:on forKey:AMKey(item.key)];
     if (item.onSwitch) item.onSwitch(on);
     if (!on) os_log(OS_LOG_DEFAULT, "[AccretionMods] status %{public}@ off", item.key);
-    [[[UISelectionFeedbackGenerator alloc] init] selectionChanged];
     NSIndexPath *path = [self pathOfFlat:flat];
     AMSwitchCell *row = path ? (AMSwitchCell *)[self.tableView cellForRowAtIndexPath:path] : nil;
     if ([row isKindOfClass:AMSwitchCell.class]) {
         [self showStatusOf:item inRow:row animated:YES];
         [UIView performWithoutAnimation:^{ [self.tableView beginUpdates]; [self.tableView endUpdates]; }];  // the line may come or go
     }
+    [self confirm:on row:row];
     [self refreshHeaderOf:flat];
     [self refreshAllOff];
+}
+
+// Letting go of a slider confirms like a switch: cyan when it is off its default (on), the line colour back at it.
+- (void)sliderReleased:(UISlider *)s {
+    NSIndexPath *path = [self pathOfFlat:s.tag];
+    [self confirm:s.value != self.items[s.tag].defaultValue row:path ? [self.tableView cellForRowAtIndexPath:path] : nil];
 }
 
 - (void)sliderChanged:(UISlider *)s {
