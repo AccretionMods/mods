@@ -3,6 +3,25 @@ Read first when resuming. Project row in `~/PROJECTS.md`. The handbook rules (`.
 this lives in the AccretionMods/mods repo, so nothing personal, no secrets, neutral commits, PRs with auto-merge.
 
 ## What it is
+The eight approved workflow improvements are implemented (2026-10-22): managed instance reuse and
+source-version detection, capability/result filters, cached offset paging, grouped property variants,
+no-JIT candidate explanations, configuration snapshots with preview/recovery, persistent redacted job
+history with resource queues, and exact game-version verification with stale evidence labels.
+
+Store/IAP discovery includes mutable scalar fields and supported methods across assemblies while
+hiding generated metadata. Group expansion preserves overload signatures. Ambiguous name/arity
+methods cannot be added directly because the runtime cannot resolve them safely.
+
+No-JIT alternatives are structural candidates, not equivalent replacements for direct interception.
+The read-only configured-hook audit found one property/field alternative and nine timed-call candidates
+among Wanderer's 19 matched JIT methods. No personal game configuration was changed or phone-tested.
+The managed local instance uses port 8768; the launcher reuses its registered port. Older instances
+were left untouched. Local history and snapshots live under AM_ROOT/studio, outside Git.
+
+Validation: 206 unittest tests, 11 skipped; synthetic snapshot/queue/version/scan regression coverage,
+mod/tweak validators, Python lint, JavaScript parsing and read-only local API checks. The current work
+has no new device/signing result. Earlier phone results below describe earlier versions only.
+
 A local web UI for the mod dev loop (`scripts/dev.py`, README "Dev loop for personal mods"): one page on the PC
 that lists the mods, searches a game's dump, adds switches (hooks) and no-JIT pins, builds, signs and installs on
 the phone, and streams the device log. Started 2026-10-22 (owner: "make a UI for it and add it as a new project";

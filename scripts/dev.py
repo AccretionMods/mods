@@ -327,9 +327,11 @@ _dump_cache = {}
 
 def dump_methods(mod):
     p = dump_path(mod)
-    if p not in _dump_cache:
-        _dump_cache[p] = methods(str(p))
-    return _dump_cache[p]
+    stat = p.stat()
+    stamp = (stat.st_mtime_ns, stat.st_size, stat.st_ino)
+    if p not in _dump_cache or _dump_cache[p][0] != stamp:
+        _dump_cache[p] = (stamp, methods(str(p)))
+    return _dump_cache[p][1]
 
 
 TYPE_KIND = re.compile(
@@ -2250,7 +2252,7 @@ def scan_rows(mod, area=None, find=None, flagged=False):
     game = meta.get("target_bundle_id")
     result = dump_scan.scan(dump_path(mod), load_tweaks(folder, meta),
                             learned=lambda name, ctype, cls: dev_learn.member_boost(store, name, ctype, game, cls))
-    rows = result["flagged"] if flagged else result["rows"]
+    rows = (result["flagged"] if flagged else result["rows"]) + result.get("inventory", [])
     if area:
         rows = [r for r in rows if r["area"].lower().startswith(area.lower())]
     if find:
@@ -2461,8 +2463,7 @@ def cmd_games(args):
         data = games_list("like", args.region, bundle=rest[0])
     else:
         data = games_list(what, args.region)
-    rows = data["games"] if args.all or what == "search" else [g for g in data["games"] if not g["online"]]
-    rows = rows[: args.limit]
+    rows = data["games"][: args.limit]
     if args.json:
         print(json.dumps(rows, indent=2, ensure_ascii=False))
         return 0
@@ -2476,7 +2477,7 @@ def cmd_games(args):
     if not rows:
         print("nothing found")
     if hidden > 0 and what != "search":
-        print(f"({hidden} more: online/multiplayer or past --limit; --all shows online ones)")
+        print(f"({hidden} more: raise --limit to see them)")
     return 0
 
 
@@ -2817,7 +2818,7 @@ def build_parser():
     s.add_argument("rest", nargs="*", help="search words, or the bundle ID for like / info")
     s.add_argument("--region", default="us")
     s.add_argument("--limit", type=int, default=50)
-    s.add_argument("--all", action="store_true", help="keep online / multiplayer games in the list")
+    s.add_argument("--all", action="store_true", help="compatibility flag; all game topics are included by default")
     s.add_argument("--games", action="store_true", help="search: games only")
     s.add_argument("--json", action="store_true", help="machine-readable output")
     s.set_defaults(fn=cmd_games)

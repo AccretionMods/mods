@@ -47,7 +47,22 @@ class Api(unittest.TestCase):
         )
         dump_dir = root / "am" / "work" / "dump-game-plus-1.0" / "out"
         dump_dir.mkdir(parents=True)
-        (dump_dir / "dump.cs").write_text(DUMP)
+        (dump_dir / "dump.cs").write_text(DUMP + """
+// Namespace:
+public class PurchaseState : MonoBehaviour // TypeDefIndex: 110
+{
+    public static PurchaseState instance; // 0x0
+    public bool FullGameUnlocked; // 0x20
+    public int Gems; // 0x24
+    // RVA: 0x2000 Offset: 0x2000 VA: 0x2000
+    public bool IsPurchased() { }
+}
+// Namespace:
+public class OnlineState : MonoBehaviour // TypeDefIndex: 111
+{
+    public int Score; // 0x20
+}
+""")
         (root / "am" / "dev").mkdir(parents=True)
         (root / "am" / "dev" / "game-plus.json").write_text(
             json.dumps({"dump_dir": str(dump_dir.parent)})
@@ -90,6 +105,10 @@ class Api(unittest.TestCase):
             return e.code, json.loads(e.read())
 
     def test_mods_and_detail(self):
+        status, studio = self.get("/api/studio")
+        self.assertEqual(status, 200)
+        self.assertEqual(studio["protocol"], 1)
+        self.assertIn("loaded", studio)
         status, data = self.get("/api/mods")
         self.assertEqual(status, 200)
         self.assertEqual([m["name"] for m in data["mods"]], ["game-plus"])
@@ -112,6 +131,51 @@ class Api(unittest.TestCase):
         status, data = self.get("/api/mods/game-plus/suggest")
         self.assertEqual(status, 200)
         self.assertIn("rows", data)
+
+    def test_scan_includes_all_topics_and_can_add_a_labelled_pin(self):
+        status, data = self.get("/api/mods/game-plus/scan")
+        self.assertEqual(status, 200, data)
+        rows = {f"{r['class']}.{r['member']}": r for r in data["rows"]}
+        for target in ("PurchaseState.FullGameUnlocked", "PurchaseState.Gems", "OnlineState.Score"):
+            self.assertIn(target, rows)
+            self.assertIn("score", rows[target])
+            self.assertIn("value", rows[target])
+        status, filtered = self.get("/api/mods/game-plus/scan?flagged=1")
+        self.assertEqual(status, 200, filtered)
+        self.assertTrue(filtered["rows"])
+        self.assertTrue(all(r.get("flag") for r in filtered["rows"]))
+        status, purchases = self.get("/api/mods/game-plus/scan?area=In-app%20purchases")
+        self.assertEqual(status, 200, purchases)
+        self.assertEqual({r["class"] for r in purchases["rows"]}, {"PurchaseState"})
+        self.assertIn("FullGameUnlocked", {r["member"] for r in purchases["rows"]})
+        status, text = self.get("/api/mods/game-plus/scan?text=1&find=FullGameUnlocked")
+        self.assertEqual(status, 200, text)
+        self.assertIn("FullGameUnlocked", text["text"])
+        status, added = self.post("/api/mods/game-plus/pin", {
+            "target": "PurchaseState.FullGameUnlocked", "value": "true",
+            "key": "fullGame", "title": "Full game",
+        })
+        try:
+            self.assertEqual(status, 200, added)
+            self.assertTrue(added["ok"])
+        finally:
+            self.post("/api/mods/game-plus/remove", {"what": "fullGame"})
+
+    def test_scan_purchase_method_can_be_added_as_a_hook(self):
+        status, data = self.get("/api/mods/game-plus/scan?area=In-app%20purchases")
+        self.assertEqual(status, 200, data)
+        row = next(r for r in data["rows"] if r["member"] == "IsPurchased")
+        m = row["method"]
+        self.assertEqual((m["kind"], m["args"]), ("bool", 0))
+        status, added = self.post("/api/mods/game-plus/add", {
+            "method": m["full_name"], "args": m["args"], "action": "return",
+            "value": "true", "key": "purchaseTest", "title": "Purchase test",
+        })
+        try:
+            self.assertEqual(status, 200, added)
+            self.assertTrue(added["ok"])
+        finally:
+            self.post("/api/mods/game-plus/remove", {"what": "purchaseTest"})
 
     def test_quick_commands_and_errors(self):
         status, data = self.post(
@@ -154,18 +218,50 @@ class Api(unittest.TestCase):
         status, data = self.get("/api/nothing")
         self.assertEqual(status, 404)
 
+    def test_snapshot_preview_and_restore_through_api(self):
+        status, saved = self.post("/api/mods/game-plus/snapshot", {"action": "create"})
+        self.assertEqual(status, 200, saved)
+        source = dev.mod_dir("game-plus") / "Tweak.x"
+        before = source.read_bytes() if source.exists() else None
+        source.write_text("temporary local edit", encoding="utf-8")
+        status, preview = self.post("/api/mods/game-plus/snapshot", {"action": "preview", "id": saved["id"]})
+        self.assertEqual(status, 200, preview)
+        self.assertTrue(any(f["changed"] for f in preview["files"]))
+        status, restored = self.post("/api/mods/game-plus/snapshot", {"action": "restore", "id": saved["id"], "expected": preview["expected"]})
+        self.assertEqual(status, 200, restored)
+        self.assertIn("recovery_id", restored)
+        self.assertEqual(source.read_bytes() if source.exists() else None, before)
+    def test_restart_waits_for_configuration_actions(self):
+        with server.action_scope():
+            status, state = self.get('/api/studio')
+            self.assertEqual(status, 200)
+            self.assertTrue(state['busy'])
+            status, response = self.post('/api/studio/restart', {})
+            self.assertEqual(status, 400, response)
+        self.assertFalse(server.RESTARTING.is_set())
+        server.RESTARTING.set()
+        try:
+            with self.assertRaises(dev.DevError):
+                with server.action_scope():
+                    pass
+            with self.assertRaises(dev.DevError):
+                server.start_job('check', ['game-plus'])
+        finally:
+            server.RESTARTING.clear()
+
     def test_jobs(self):
         status, job = self.post("/api/jobs", {"command": "check", "mod": "game-plus"})
         self.assertEqual(status, 200, job)
         for _ in range(100):
             status, job = self.get(f"/api/jobs/{job['id']}")
-            if job["status"] != "running":
+            if job["status"] not in ("queued", "running"):
                 break
             import time
 
             time.sleep(0.1)
         self.assertIn(job["status"], ("done", "failed"))
         self.assertTrue(any("hooks" in line for line in job["lines"]), job)
+
         status, _data = self.post("/api/jobs", {"command": "rm", "mod": "game-plus"})
         self.assertEqual(status, 400)
         # sign and install take a file: the mod name must not be put in front of it
@@ -236,7 +332,7 @@ class Api(unittest.TestCase):
         self.assertTrue(job["interactive"])
         for _ in range(100):
             status, job = self.get(f"/api/jobs/{job['id']}")
-            if job["status"] != "running":
+            if job["status"] not in ("queued", "running"):
                 break
             import time
 

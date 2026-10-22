@@ -217,9 +217,9 @@ class Scoring(unittest.TestCase):
         self.assertNotIn("Game.Combat.PlayerHealth..ctor", self.by_name)
         self.assertNotIn("System.String.IsNullOrEmpty", self.by_name)
 
-    def test_readme_rules_leave_out_purchases_and_online_play(self):
-        self.assertNotIn("Game.Shop.Store.get_Ammo", self.by_name)
-        self.assertNotIn("Game.Network.NetworkPlayer.TakeDamage", self.by_name)
+    def test_topic_labels_do_not_exclude_purchases_and_online_play(self):
+        self.assertIn("Game.Shop.Store.get_Ammo", self.by_name)
+        self.assertIn("Game.Network.NetworkPlayer.TakeDamage", self.by_name)
         self.assertEqual(
             [m.full_name for m in self.out["purchases"]],
             ["Game.Shop.Store.get_Ammo", "UnityEngine.Purchasing.PurchasingManager.TakeDamage"],
@@ -236,7 +236,9 @@ class Scoring(unittest.TestCase):
         self.assertEqual(best[0].method.name, "TakeDamage")
         # the numbers show() prints run down the categories in order, so pick() uses the same order
         ordered = find_cheats.in_display_order(self.candidates)
-        self.assertEqual([c.category for c in ordered], ["god_mode", "god_mode", "damage", "speed", "ammo"])
+        categories = [c.category for c in ordered]
+        self.assertEqual(categories, sorted(categories, key=list(find_cheats.CATEGORIES).index))
+        self.assertEqual(len(ordered), len(self.candidates))
 
     def test_write_hooks_keeps_others_and_replaces_same_method(self):
         path = os.path.join(self.tmp.name, "hooks.json")

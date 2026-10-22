@@ -110,7 +110,11 @@ class Scan(unittest.TestCase):
         _, rows, flagged = self.rows()
         self.assertEqual(flagged["SkillsManager.set_TokenBalance"]["flag"], "sold in the shop")
         self.assertEqual(flagged["AdvertHandler.TestMode"]["flag"], "ads")
-        self.assertNotIn("SkillsManager.set_TokenBalance", rows)
+        self.assertIn("SkillsManager.set_TokenBalance", rows)
+        self.assertIn("AdvertHandler.TestMode", rows)
+        self.assertIn("score", flagged["SkillsManager.set_TokenBalance"])
+        self.assertIn("value", flagged["SkillsManager.set_TokenBalance"])
+        self.assertEqual(rows["SkillsManager.set_TokenBalance"]["area"], "In-app purchases")
 
     def test_marks_what_the_mod_has_and_caches(self):
         tweaks = {"tweaks": [{"key": "pts", "pins": [{"object": "SkillsManager.instance", "setter": "set_SkillPoints"}]},
@@ -135,6 +139,62 @@ class Scan(unittest.TestCase):
 
 
 class Checks(unittest.TestCase):
+    def test_store_names_are_purchases_but_restore_is_not(self):
+        self.assertEqual(dump_scan.area_of("GameStore", "IsOpen")[0], "In-app purchases")
+        self.assertEqual(dump_scan.area_of("Shop", "BuyProduct")[0], "In-app purchases")
+        self.assertNotEqual(dump_scan.area_of("SaveManager", "RestoreBackup")[0], "In-app purchases")
+
+    def test_purchase_inventory_keeps_mod_targets_and_removes_compiler_noise(self):
+        with tempfile.TemporaryDirectory() as folder:
+            dump = Path(folder) / "dump.cs"
+            dump.write_text(DUMP + """
+// Image 3: UnityEngine.Purchasing.dll - 30
+// Namespace: UnityEngine.Purchasing
+public class Product // TypeDefIndex: 30
+{
+    public static string Receipt; // 0x0
+    public bool Owned; // 0x20
+    public const int ProductType = 1; // 0x0
+    public Action OnPurchased; // 0x28
+    // RVA: 0x1000 Offset: 0x1000 VA: 0x1000
+    public bool get_IsOwned() { }
+    // RVA: 0x1010 Offset: 0x1010 VA: 0x1010
+    public void Buy(string id) { }
+    // RVA: 0x1020 Offset: 0x1020 VA: 0x1020
+    public void .ctor() { }
+    // RVA: 0x1030 Offset: 0x1030 VA: 0x1030
+    public void Initialize() { }
+    // RVA: 0x1040 Offset: 0x1040 VA: 0x1040
+    public string GetReceipt() { }
+    // RVA: -1 Offset: -1 VA: -1
+    public bool HasNoCode() { }
+}
+// Namespace: UnityEngine.Purchasing
+private sealed class IAPManager.<>c // TypeDefIndex: 31
+{
+    public static IAPManager.<>c <>9; // 0x0
+    public Func<CartItem, bool> <>9__28_2; // 0x8
+    public bool Cached; // 0x10
+    // RVA: 0x1050 Offset: 0x1050 VA: 0x1050
+    public bool FilterItem(CartItem item) { }
+}
+""", encoding="utf-8")
+            result = dump_scan.scan(dump)
+            inventory = {(r["class"], r["member"]): r for r in result["inventory"]}
+            for member in ("Owned", "get_IsOwned", "Buy"):
+                row = inventory[("UnityEngine.Purchasing.Product", member)]
+                self.assertEqual(row["area"], "In-app purchases")
+                self.assertTrue(row["inspect_only"])
+                self.assertIn("signature", row)
+            self.assertTrue(all("<" not in r["class"] for r in inventory.values()))
+            for member in ("Receipt", "(type)", "ProductType", "OnPurchased", ".ctor", "Initialize", "GetReceipt", "HasNoCode"):
+                self.assertNotIn(("UnityEngine.Purchasing.Product", member), inventory)
+            method = inventory[("UnityEngine.Purchasing.Product", "get_IsOwned")]["method"]
+            self.assertEqual(method["full_name"], "UnityEngine.Purchasing.Product.get_IsOwned")
+            self.assertTrue(method["needs_jit"])
+            self.assertIn(("SaveData", "Coins"), inventory)
+            self.assertEqual(result["inventory"], dump_scan.scan(dump)["inventory"])
+
     def test_direction_multipliers_and_chances(self):
         sug = dump_scan._suggest
         self.assertEqual((sug("NEW_TROOPS_ATTACK_DELAY_MULTIPLIER", "float", False)["value"],

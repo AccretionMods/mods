@@ -1,4 +1,4 @@
-"""Find single-player cheat candidates in a Unity IL2CPP game and record the chosen ones in the mod's
+"""Find cheat candidates in a Unity IL2CPP game and record the chosen ones in the mod's
 hooks.json, the file scripts/intake_auto.py checks against every new version of the game.
 
 Usage:
@@ -7,7 +7,7 @@ Usage:
   python3 scripts/find_cheats.py <dump.cs> --mod NAME --auto   take the best one of each category
   python3 scripts/find_cheats.py <dump.cs> --json FILE         save every candidate
   python3 scripts/find_cheats.py <dump.cs> --mod NAME --auto --json FILE   both at once
-  python3 scripts/find_cheats.py <dump.cs> --left-out          also list what the rules left out
+  python3 scripts/find_cheats.py <dump.cs> --left-out          also list informational topic matches
 
 dump.cs is Il2CppDumper's listing of the game (scripts/il2cpp_dump.py says how to make it).
 
@@ -17,9 +17,7 @@ category wins; a class name alone (Update or .ctor in PlayerHealth) is no candid
 only a candidate when the category has something to do with its return type: skip the call (void), or
 return a constant (a number). The result is a starting point to read, not a list of working cheats.
 
-The rules in README.md decide what is never offered, whatever the score: anything named for purchases,
-subscriptions, premium currency or paid tiers, and anything named for networking, multiplayer, servers
-or leaderboards. A game whose combat lives in such classes is an online game, and not one for this repo.
+Purchase and online names are recorded as informational topic matches. They do not exclude candidates.
 
 Each hook written to hooks.json has the names intake_auto.py checks (namespace, class, method) plus
 assembly, args, return_type and signature for the Tweak.x hook, and the category, action and value
@@ -71,7 +69,7 @@ CATEGORIES = {
     },
 }
 
-# README rules: never what the developer sells, never online play. Matched in the namespace, class and method.
+# Informational topics matched in the namespace, class and method. No topic excludes a candidate.
 LEFT_OUT = {
     "purchases": ["Purchas", "IAP", "InApp", "Buy", "Shop", "Store", "Price", "Premium", "Subscri", "Vip", "Paywall", "Billing", "Receipt", "Gem", "Diamond"],
     "online play": ["Network", "Multiplayer", "Server", "Online", "Matchmak", "Lobby", "Leaderboard", "Photon", "Netcode", "Rpc", "PvP", "Clan", "Guild", "Ranked", "Socket", "Packet", "Sync"],
@@ -97,7 +95,7 @@ class Candidate:
 
 
 def left_out(method):
-    """The README rule a method falls under, or None."""
+    """The informational topic a method matches, or None (legacy function name)."""
     names = f"{method.namespace} {method.class_name} {method.name}".lower()
     for reason, words in LEFT_OUT.items():
         if any(w.lower() in names for w in words):
@@ -127,13 +125,12 @@ def candidate(method):
 
 
 def scan(path):
-    """(candidates best first, {reason: [methods left out]})"""
+    """(candidates best first, {topic: [matching methods]}); topics do not filter candidates."""
     found, out = [], {reason: [] for reason in LEFT_OUT}
     for m in methods(path):
         reason = left_out(m)
         if reason:
             out[reason].append(m)
-            continue
         c = candidate(m)
         if c:
             found.append(c)
@@ -156,7 +153,7 @@ def show(candidates, out, left_out_too=False):
         print("no candidates")
     skipped = ", ".join(f"{len(ms)} named for {reason}" for reason, ms in out.items() if ms)
     if skipped:
-        print(f"\nleft out by the rules in README.md: {skipped}" + ("" if left_out_too else " (--left-out lists them)"))
+        print(f"\nInformational topic matches (included when scored): {skipped}" + ("" if left_out_too else " (--left-out lists them)"))
     if left_out_too:
         for reason, ms in out.items():
             for m in ms:
@@ -221,7 +218,7 @@ def main(argv=None):
     parser.add_argument("--pick", action="store_true", help="choose candidates from the list")
     parser.add_argument("--auto", action="store_true", help="take the best candidate of each category")
     parser.add_argument("--json", metavar="FILE", help="save every candidate as JSON")
-    parser.add_argument("--left-out", action="store_true", help="also list what the rules left out")
+    parser.add_argument("--left-out", action="store_true", help="also list informational topic matches (legacy flag name)")
     args = parser.parse_args(argv)
     if (args.pick or args.auto) and not args.mod:
         parser.error("--pick and --auto need --mod NAME, the mod whose hooks.json to write")

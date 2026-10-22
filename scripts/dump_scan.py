@@ -5,8 +5,8 @@ every half second. So the scan looks, in the game's own assembly (Assembly-CShar
 - objects a pin can reach: a class with a static field of its own type (StatHandler.instance, Pet.p), or
   every live object of a MonoBehaviour class (Enemy[]);
 - on them, number and true/false fields (int, float, long, bool) and property setters with a getter;
-then sorts each into an area by its names, scores it, and flags what must not become a switch (what the game
-sells, ads, accounts, online play: the repo's mod rules). Rows are suggestions: the scan reads names and
+then sorts each into an area by its names, scores it, and adds informational topic labels (shop, ads,
+accounts and online play). Every topic remains a candidate. Rows are suggestions: the scan reads names and
 types, never what the code does, so a phone test (and the menu's status dot) decides.
 
 scan(dump) -> {"rows": [...], "flagged": [...], "classes": N}; cached as scan.json next to dump.cs.
@@ -17,7 +17,9 @@ import os
 import re
 from pathlib import Path
 
-VERSION = 6  # bump when the row format or the scoring changes (the cache is rebuilt)
+from il2cpp_dump import ADDRESS, FLOATS, INTEGERS, SIGNATURE, TYPE, TYPE_INDEX, Method, split_params
+
+VERSION = 12  # preserve static reference/getter paths and scalar backing fields for no-JIT analysis
 
 IMAGE = re.compile(r"^// Image \d+: (.+?)(?:\.dll)? - (\d+)\s*$")
 NAMESPACE = re.compile(r"^\s*// Namespace: ?(\S*)")
@@ -25,7 +27,7 @@ CLASS = re.compile(
     r"^(?:(?:public|private|protected|internal|static|sealed|abstract)\s+)*class\s+([A-Za-z_]\w*)(?=[\s:])"  # whole names: not "Enemy" from "Enemy.<>c"
     r"(?:\s*:\s*([\w.]+))?[^/]*// TypeDefIndex: (\d+)"
 )
-FIELD = re.compile(r"^\s+((?:(?:public|private|protected|internal|static|readonly)\s+)*)([\w.<>\[\], ]+?)\s+(\w+); // (0x[0-9A-Fa-f]+)")
+FIELD = re.compile(r"^\s+((?:(?:public|private|protected|internal|static|readonly)\s+)*)([\w.<>\[\], ]+?)\s+([\w<>]+); // (0x[0-9A-Fa-f]+)")
 METHOD = re.compile(r"^\s+(?:(?:public|private|protected|internal|virtual|override|static)\s+)*(\w+)\s+(get|set)_(\w+)\((\w*)[^)]*\)")
 
 NUMERIC = {"int": "int32_t", "float": "float", "long": "int64_t", "bool": "bool", "double": "double"}
@@ -43,9 +45,9 @@ AREAS = [  # first match wins; member names count more than class names
     ("Exploration", r"\bdays?\b|hour|night|encounter|travel|location|\bmap\b|speed|explor|distance|journey|"
                     r"weather|\btime\b"),
 ]  # matched against words: "SkillPoints" -> "skill points", so "ill" no longer hits "skill"
-# never switches: sold in the game's shop, ads, accounts, online, telemetry (README rules)
+# Informational labels only: no topic excludes a candidate.
 FLAGS = [
-    ("sold in the shop", r"caps|token|gem|coin|currency|purchas|iap|shop|price|cost|premium|vip|subscri|"
+    ("sold in the shop", r"caps|token|gem|coin|currency|purchas|iap|in_?app|full_?game|paywall|billing|receipt|entitlement|shop|storekit|storefront|payment|(?:^|[._ ])(?:store|buy)(?:$|[._ ])|price|cost|premium|vip|subscri|"
                          r"max_?bag|bag_?(size|capacity)|fuel|petrol|van(crate|warranty)|fast_?travel|revive|"
                          r"supply_?(crate|drop)|boost|daily_?reward|redeem|special_?offer|starter_?pack|"
                          r"(battle|season|survivor|premium)_?pass"),
@@ -77,6 +79,8 @@ def _words(name):
 
 
 def area_of(cls, member):
+    if flag_of(cls, member) == "sold in the shop":
+        return "In-app purchases", flag_of("", member) == "sold in the shop"
     words = _words(member)
     for area, rx in AREAS:
         if re.search(rx, words):
@@ -125,7 +129,7 @@ def parse(path):
                     if image.startswith("Assembly-CSharp") and full not in classes:
                         current = classes[full] = {
                             "base": m.group(2) or "", "statics": [], "fields": {}, "props": {}, "getters": set(),
-                            "holds": set(),
+                            "holds": set(), "references": {}, "object_getters": {},
                         }
                         current_name = m.group(1)
                 continue
@@ -140,9 +144,11 @@ def parse(path):
                 if "static" in mods:
                     if ftype == current_name:
                         current["statics"].append(fname)
+                    if ftype not in NUMERIC and "<" not in ftype and "[" not in ftype:
+                        current["references"][fname] = ftype
                 elif ftype in NUMERIC:
                     current["fields"][fname] = {"ctype": NUMERIC[ftype], "offset": offset,
-                                                "private": "public" not in mods}
+                                                "private": "public" not in mods, "readonly": "readonly" in mods}
                 else:
                     current["holds"].add(re.sub(r"[<\[].*", "", ftype).rsplit(".", 1)[-1])
                 continue
@@ -151,6 +157,8 @@ def parse(path):
                 rtype, kind, prop, arg = m.groups()
                 if kind == "get" and rtype in NUMERIC:
                     current["getters"].add(prop)
+                elif kind == "get" and not arg:
+                    current["object_getters"]["get_" + prop] = rtype
                 elif kind == "set" and arg in NUMERIC:
                     current["props"][prop] = NUMERIC[arg]
     return classes
@@ -196,7 +204,7 @@ def build(classes, existing=frozenset(), learned=None):
         for prop, ctype in info["props"].items():
             members.append((f"set_{prop}", prop, ctype, "setter", None, prop in info["getters"], False))
         for fname, f in info["fields"].items():
-            if fname.startswith("<"):
+            if fname.startswith("<") or f.get("readonly"):
                 continue  # compiler backing fields: the setter covers them
             members.append((fname, fname, f["ctype"], "field", f["offset"], False, f["private"]))
         for target, name, ctype, kind, offset, getter, private in members:
@@ -209,7 +217,6 @@ def build(classes, existing=frozenset(), learned=None):
             if reason:
                 row["flag"] = reason
                 flagged.append(row)
-                continue
             score = reach + (2 if kind == "setter" and getter else 1)
             score += 2 if by_member else (1 if area != "Other" else 0)
             if kind == "field" and (name + "Default") in info["fields"]:
@@ -261,7 +268,7 @@ def scan(dump, tweaks=None, learned=None):
     dump = Path(dump)
     cache = dump.with_name("scan.json")
     st = dump.stat()
-    stamp = {"version": VERSION, "size": st.st_size, "mtime": int(st.st_mtime)}
+    stamp = {"version": VERSION, "size": st.st_size, "mtime": st.st_mtime_ns}
     data = None
     if cache.is_file():
         try:
@@ -270,14 +277,98 @@ def scan(dump, tweaks=None, learned=None):
             data = None
     if not data or data.get("stamp") != stamp:
         classes = parse(dump)
-        data = {"stamp": stamp, "classes": len(classes),
+        data = {"stamp": stamp, "classes": len(classes), "inventory": purchase_inventory(dump),
                 "data": {k: dict(v, getters=sorted(v["getters"]), holds=sorted(v["holds"])) for k, v in classes.items()}}
         tmp = cache.with_name(cache.name + ".tmp")
         tmp.write_text(json.dumps(data), encoding="utf-8")
         os.replace(tmp, cache)
     classes = {k: dict(v, getters=set(v["getters"]), holds=set(v.get("holds", ()))) for k, v in data["data"].items()}
-    rows, flagged = build(classes, existing_targets(tweaks), learned)
-    return {"rows": rows, "flagged": flagged, "classes": data["classes"]}
+    existing = existing_targets(tweaks)
+    rows, flagged = build(classes, existing, learned)
+    pins = {(r["class"], r["member"]) for r in rows}
+    inventory = [dict(r, has=f"{r['class']}.{r['member']}" in existing)
+                 for r in data["inventory"] if (r["class"], r["member"]) not in pins]
+    return {"rows": rows, "flagged": flagged, "inventory": inventory, "classes": data["classes"]}
+
+
+def purchase_inventory(path):
+    """Mutable scalar Store/IAP fields and concrete methods supported by the hook tool.
+
+    These are inspection rows, not pin suggestions. Keep them separate so automatic pin generation
+    and the learner never treat an arbitrary method or a string field as a writable numeric value.
+    """
+    field = re.compile(r"^\s*(?:(?:public|private|protected|internal|static|readonly|const)\s+)*"
+                       r"([\w.<>\[\], ]+?)\s+([\w<>]+)(?:\s*=\s*[^;]+)?; // (0x[0-9A-Fa-f]+)")
+    images, rows = [], []
+    namespace = cls = assembly = ""
+    code = None
+    scalar = INTEGERS | FLOATS | {"bool"}
+    action = re.compile(r"buy|purchas|unlock|own|grant|reward|spend|consume|refund|restore|"
+                        r"premium|currency|coins?|gems?|subscri|entitle|payment|(?:^|_)ads?(?:_|$)|price|cost|"
+                        r"^(get_|set_|is_|has_|can_|allow|enable|disable)", re.IGNORECASE)
+    topics = re.compile(r"purchas|iap|in_?app|full_?game|paywall|billing|receipt|entitlement|shop|"
+                        r"storekit|storefront|payment|premium|vip|subscri|token_?(balance|currency)|"
+                        r"(?:^|[._ ])(?:store|buy|currency|coins?|gems?|diamonds?)(?:$|[._ ])")
+
+    def matches(member):
+        return topics.search(_split_words(f"{assembly}.{cls}.{member}")) is not None
+
+    def add(member, ctype, kind, signature, offset=None, method=None):
+        row = {"class": cls, "object": cls, "member": member, "name": member,
+                     "ctype": ctype, "kind": kind, "signature": signature.strip(),
+                     "assembly": assembly, "offset": offset, "area": "In-app purchases",
+                     "flag": "sold in the shop", "score": 0, "has": False, "inspect_only": True}
+        if method:
+            row["method"] = method
+        rows.append(row)
+
+    with open(path, encoding="utf-8", errors="replace") as source:
+        for line in source:
+            image = IMAGE.match(line)
+            if image:
+                images.append((int(image.group(2)), image.group(1)))
+                continue
+            ns = NAMESPACE.match(line)
+            if ns:
+                namespace, cls = ns.group(1), ""
+                code = None
+                continue
+            typ, index = TYPE.match(line), TYPE_INDEX.search(line)
+            if typ and index:
+                cls = f"{namespace}.{typ.group(1)}" if namespace else typ.group(1)
+                assembly = next((name for start, name in reversed(images) if start <= int(index.group(1))), "")
+                code = None
+                if "<" in cls:  # closures, delegates, async/iterator state machines and unsupported generics
+                    cls = ""
+                continue
+            if not cls:
+                continue
+            if line.lstrip().startswith("// RVA:"):
+                code = ADDRESS.match(line)  # -1 means abstract/no implementation; never reuse the previous RVA
+                continue
+            f = field.match(line)
+            sig = SIGNATURE.match(line.strip())
+            if f:
+                ctype, member, offset = f.groups()
+                if ctype in scalar and "<" not in member and not re.search(r"\b(const|readonly)\b", line) and matches(member):
+                    add(member, ctype, "field", line, offset)
+            elif sig:
+                ctype, member, params = sig.groups()
+                if (code and ctype in scalar | {"void"} and not member.startswith(".") and "<" not in member
+                        and member not in {"ToString", "GetHashCode", "Equals"}
+                        and (ctype != "void" or action.search(_split_words(member))) and matches(member)):
+                    m = Method(assembly, namespace, cls[len(namespace) + 1:] if namespace else cls,
+                               member, ctype, split_params(params), code.group(1),
+                               line.strip().split("{")[0].rstrip().rstrip(";"),
+                               int(code.group(2)) if code.group(2) else None)
+                    metadata = {"full_name": m.full_name, "class": m.class_name, "namespace": namespace,
+                                "method": member, "params": m.params, "args": m.args, "return_type": ctype,
+                                "kind": m.kind, "assembly": assembly, "rva": m.rva, "slot": m.slot,
+                                "needs_jit": m.needs_jit, "static": bool(re.search(r"\bstatic\b", m.signature)),
+                                "signature": m.signature}
+                    add(member, ctype, "method", m.signature, method=metadata)
+                code = None
+    return rows
 
 
 def as_text(rows, limit=60):

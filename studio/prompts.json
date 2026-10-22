@@ -1,6 +1,6 @@
 {
   "_about": "Mod Studio's prompt builder tasks. Edit or add tasks here; the page reloads this file. {name} fills in a fact about the selected mod (see studio/server.py mod_context): mod, title, version, target, app_version, dump_state, switches, works, fails, untested, hooks, log_errors, ask, extra, region. needs: what the task must have; a missing one shows a hint instead of a weak prompt.",
-  "limits": "Limits: single-player features only; never hook purchases, ads, accounts or online play (list them under FLAGS instead); don't commit, publish or push without asking.",
+  "limits": "Scope: all feature topics are available, including purchases/IAP, full-game unlocks, paid tiers, premium currency, ads, accounts and online play. Explain technical feasibility and side effects; don't commit, publish or push without asking.",
   "where": "Project: Accretion mods. Target: AccretionMods/mods, mods/{mod} ({title} {version}) for {target} {app_version}. Dump: {dump_state}. Switches: {switches}.",
   "tasks": [
     {
@@ -97,7 +97,7 @@
       "lines": [
         "Goal: tell me if {title} {version} is ready to publish, and what to fix first.{extra}",
         "{where}",
-        "Check: every switch marked works on {app_version} (fails: {fails}; untested: {untested}); am check {mod} clean; no hook touches purchases, ads or online play; mod.json title, description, version and tested_app_version right; the .ipa builds (am build {mod} --ipa) and installs.",
+        "Check: every switch marked works on {app_version} (fails: {fails}; untested: {untested}); am check {mod} clean; each hook's technical requirements and side effects documented; mod.json title, description, version and tested_app_version right; the .ipa builds (am build {mod} --ipa) and installs.",
         "Deliver: ready / not ready, then a short list of blockers and nice-to-haves. Read only: change no files; publishing is my call (scripts/upload_ipa.ps1).",
         "{limits}"
       ]

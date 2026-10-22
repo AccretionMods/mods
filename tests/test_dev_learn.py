@@ -105,7 +105,7 @@ class Suggest(unittest.TestCase):
             method("Boss", "DamagePlayer", params=("long dmg", "bool crit")),
             method("Boss", "DamagePlayerSlowly"),
             method("Hud", "Update"),  # a Unity callback: never suggested
-            method("Store", "BuyGems"),  # purchases: never suggested
+            method("Store", "BuyGems"),  # topic labels do not exclude learned methods
             method(
                 "Boss", "DamagePlayer", ret="int"
             ),  # another result kind: no exact pattern
@@ -116,7 +116,7 @@ class Suggest(unittest.TestCase):
         self.assertEqual(names[0], ("Boss.DamagePlayer", True))
         self.assertIn(("Boss.DamagePlayerSlowly", False), names)
         self.assertNotIn("Hud.Update", [n for n, _ in names])
-        self.assertNotIn("Store.BuyGems", [n for n, _ in names])
+        self.assertIn("Store.BuyGems", [n for n, _ in names])
         self.assertNotIn("Boss.Attack", [n for n, _ in names])
 
     def test_used_methods_and_failed_patterns_are_skipped(self):

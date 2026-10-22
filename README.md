@@ -14,10 +14,10 @@ Edit profile → "Your download links" → Accretion Mods.
 
 ## Rules
 
-- **Base apps:** free or open-source apps only. Never a paid app.
-- **Allowed:** tweaks (features, settings, UI, themes, ad removal) and cheats for single-player or offline play.
-- **Not allowed:** anything that unlocks what the developer sells (subscriptions, in-app purchases, premium currency, paid tiers), and cheats that affect multiplayer or online play.
-- Prefer open-source apps built from their own unsigned releases. A closed-source free app ships its developer's code, and they can file a DMCA takedown.
+- **Feature scope:** all tweak and cheat topics are available, including IAP, full-game unlocks,
+  subscriptions, premium currency, paid tiers, ads, accounts, and online or multiplayer features.
+- Scan topic labels are informational. Technical compatibility, signing requirements, private-file
+  handling, authentication and publication approval still apply.
 
 ## Layout
 
@@ -34,7 +34,7 @@ scripts/
   new_mod.sh          start a new mod from the template (reads the base .ipa, records its sha256)
   base.py             keep a base .ipa or tweak .deb in private storage, found by its sha256
   intake.py           upload everything in the intake folder privately; --unused lists stored files no mod uses
-  find_cheats.py      find single-player cheat candidates in a Unity game's dump.cs; writes the mod's hooks.json
+  find_cheats.py      find cheat candidates in a Unity game's dump.cs; writes the mod's hooks.json
   check_hooks.py      check a mod's hooks.json against a new version's dump.cs (names, return types, arg counts)
   embed_hooks.py      turn a mod's hooks.json into the C table the IL2CPP runtime reads (build.sh runs it)
   il2cpp_dump.py      read Il2CppDumper's dump.cs (used by find_cheats.py and check_hooks.py)
@@ -126,10 +126,8 @@ python3 scripts/find_cheats.py dump/dump.cs --mod my-game --pick # choose; write
 ```
 
 It scores methods by name (god mode, damage, cooldown, speed, ammo) and suggests what the hook does:
-skip the call, or return a constant. Candidates are leads to read in the dump, not working cheats. The
-rules above decide what is never offered: anything named for purchases, subscriptions, premium currency
-or paid tiers, and anything named for networking, multiplayer, servers or leaderboards. If the game's
-combat lives in such classes, it is an online game and not one for this repo.
+skip the call, or return a constant. Candidates are leads to read in the dump, not working cheats.
+Purchase and online topic matches are informational and do not exclude candidates.
 
 `hooks.json` records each hook's namespace, class, method, argument count and return type, and is what
 the inbox auto-pipeline checks against every new version of the game. When a new version arrives, dump
@@ -186,8 +184,8 @@ run, log, update to a newer base, with the job output streamed into the page), F
 shows App Store games as cards (top free, paid and grossing, new free and paid, or "like the games we
 mod": ranked by the themes and genres they share with our mods' games, from `scripts/games.py` over
 Apple's public RSS, Lookup and Search APIs, cached half an hour), marks the ones we already mod and the
-ones with a decrypted copy waiting, flags online or multiplayer games (hidden by default: no online
-cheats), and has Get .ipa, New mod (or Open mod) and Like this on each card. Enter in its box searches the
+ones with a decrypted copy waiting, labels online or multiplayer games (shown by default), and has
+Get .ipa, New mod (or Open mod) and Like this on each card. Enter in its box searches the
 whole App Store (a name or a bundle ID); `am games` gives the same lists in a console (below). Console
 runs any `dev.py` command typed as `am ...` (dump, `find` with any regex, fields, add, pin, build, sign, run,
 log, update, games, fetch…), with buttons that fill in the selected mod, ↑/↓ history, an answer box under a
@@ -255,7 +253,7 @@ function that makes it plain `am`). With no command it prints the help. Three mo
   (`C:\AccretionMods\dev\patterns.json`, filled by every `add` and by `am learn <mod>` for an existing
   mod's `hooks.json`). `am mark my-game-plus noDamage --works` (or `--fails`) records the phone result on
   the switch and on the pattern, so what worked ranks higher next time and what failed drops out. Methods
-  named for purchases or online play are never suggested (README rules), nor are Unity callbacks.
+  are suggested regardless of topic; Unity callbacks and constructors remain excluded from pattern matching.
 
 #### A new game (`am start`, `am report`)
 
@@ -265,6 +263,23 @@ a dump, the scan's candidate counts. `am start <bundle-id | file.ipa>` does a ne
 decrypted copy (am fetch) if none is here, the report (it stops when the game can't be modded), the mod
 folder and its dump (am new), then the best no-JIT candidates. In Studio: Start a mod and Report on a
 Games card; Start ends on the new mod's Scan tab.
+
+Studio reuses its registered local instance and shows **Load update** when the source changes. Updates
+wait for active jobs and configuration changes to finish. Scan filters distinguish Pin, Hook, No JIT,
+investigation and test status; related fields/getters/setters expand into exact signature variants.
+Cached scans page through all matching groups. **Review no-JIT alternatives** identifies compatible
+property pins and explicit timed calls where the runtime supports them; these require testing and do
+not replace direct interception automatically. Results from another game version appear as stale.
+
+Files includes configuration snapshots, diff preview and restore with a recovery snapshot. Job history
+survives restarts with redacted output; interrupted jobs remain interrupted. Conflicting mod mutations
+and device operations queue. Runtime history/snapshots stay under AM_ROOT/studio outside the repo.
+
+Scan's **In-app purchases** area keeps Store/IAP mod targets: pin-compatible values, mutable numeric or
+boolean fields, and concrete methods supported by the hook tool. Generated classes and delegate caches,
+type-only rows, constructors, constants and metadata are hidden. **Add** creates a pin; **Hook** uses a
+method with its JIT requirement shown; **Inspect** shows signatures and fields needing an object path.
+**Show next 300** loads more matches. Names suggest candidates; phone tests establish their effect.
 
 While the game runs, the mod's menu logs each switch's state (`[AccretionMods] status <key> ok|off|waiting:
 ...`), on change and every 20 s. Studio's Switches tab shows them from its log and run jobs ("on the phone:
@@ -276,7 +291,7 @@ The Games tab's lists, for a console or a script (`--json` prints the rows the p
 `/api/games`):
 
 ```sh
-am games                          # like the games we mod (online / multiplayer left out; --all keeps them)
+am games                          # like the games we mod, including online / multiplayer
 am games top-free                 # also top-paid, top-grossing, new-free, new-paid; --region jp, --limit 20
 am games search 9 kings           # the App Store's own search; a bundle ID looks that app up; --games: games only
 am games like com.playdigious.9kings    # games like that one

@@ -43,6 +43,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+from urllib.request import urlopen
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
@@ -53,9 +54,16 @@ import dev_learn
 import games
 import gen_tweaks
 import ipa_fetch
+import jobs_state
+import scan_view
+import workspace
 
 LOCK = threading.Lock()  # dev.py writes files and caches; one quick command at a time
 JOBS = {}
+COORDINATOR = jobs_state.Coordinator()
+SESSION_LOCK = threading.RLock()
+RESTARTING = threading.Event()
+ACTIVE_ACTIONS = 0
 JOB_COMMANDS = {
     "dump",
     "build",
@@ -75,29 +83,126 @@ JOB_COMMANDS = {
     "share",
 }
 QUICK = {"add", "pin", "call", "tweak", "remove", "gen", "mark"}
+LOADED_REVISION = workspace.source_revision(ROOT)
 MOD_NAME = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+
+
+def busy():
+    return ACTIVE_ACTIONS > 0 or any(
+        j.status in {"queued", "running", "stopping"} for j in list(JOBS.values())
+    )
+
+
+@contextlib.contextmanager
+def action_scope():
+    global ACTIVE_ACTIONS
+    with SESSION_LOCK:
+        if RESTARTING.is_set():
+            raise dev.DevError(
+                "Studio is restarting; reconnect before changing configuration"
+            )
+        ACTIVE_ACTIONS += 1
+    try:
+        yield
+    finally:
+        with SESSION_LOCK:
+            ACTIVE_ACTIONS -= 1
+
+
+def job_resources(command, argv):
+    resources = []
+    if command in {"sign", "install", "run", "log", "test", "push"}:
+        resources.append("device")
+    if command in {"new", "fetch", "start"}:
+        resources.append("intake")
+    if (
+        argv
+        and MOD_NAME.fullmatch(argv[0])
+        and command not in {"games", "fetch", "sign", "install"}
+    ):
+        resources.append("mod:" + argv[0])
+    if command == "claude" and argv != ["(read only)"]:
+        resources += ["device", "intake"] + [
+            "mod:" + p.parent.name for p in (ROOT / "mods").glob("*/mod.json")
+        ]
+    return sorted(set(resources))
 
 
 class Job:
     def __init__(self, command, argv, interactive=False, cmd=None, parse=None):
         self.id = f"{int(time.time() * 1000):x}{len(JOBS):x}"
-        self.interactive = interactive  # console jobs take typed answers (pick, plumesign's 2FA code)
+        self.interactive = (
+            interactive  # console jobs take typed answers (pick, plumesign's 2FA code)
+        )
         self.cmd = cmd  # a whole command line instead of dev.py (the Claude Code runs)
-        self.parse = parse  # turns each output line into the lines shown (Claude's stream-json)
+        self.parse = (
+            parse  # turns each output line into the lines shown (Claude's stream-json)
+        )
         self.command = command
         self.argv = argv
         self.lines = []
-        self.status = "running"
+        self.status = "queued"
         self.code = None
         self.started = time.time()
         self.proc = None
+        self.cancelled = threading.Event()
+        self.resources = job_resources(command, argv)
+        self.history = jobs_state.History(dev.am_root() / "studio")
+        self.last_saved = 0
+        self.private_inputs = []
+
+    def persist(self):
+        try:
+            self.history.save(self.view())
+            self.last_saved = time.monotonic()
+        except (OSError, ValueError):
+            pass  # A full or unwritable history disk must not stop a running build.
 
     def run(self):
-        cmd = self.cmd or [
-            sys.executable,
-            str(HERE.parent / "scripts" / "dev.py"),
-            self.command,
-        ] + self.argv
+        if not COORDINATOR.acquire(self.resources, self.cancelled):
+            self.status = "stopped"
+            self.persist()
+            return
+        try:
+            if self.cancelled.is_set():
+                self.status = "stopped"
+                return
+            self.status = "running"
+            self.persist()
+            if (
+                self.argv
+                and "mod:" + self.argv[0] in self.resources
+                and self.command in {"build", "run", "dump", "update", "new"}
+            ):
+                folder = ROOT / "mods" / self.argv[0]
+                if folder.is_dir():
+                    workspace.snapshot_create(
+                        dev.am_root() / "studio",
+                        self.argv[0],
+                        folder,
+                        "before " + self.command,
+                    )
+            self._execute()
+        except Exception as error:  # noqa: BLE001 - report a worker failure and always release its resources
+            self.lines.append(jobs_state.redact(f"Job failed: {error}"))
+            self.status, self.code = "failed", -1
+        finally:
+            COORDINATOR.release(self.resources)
+            self.persist()
+
+    def _execute(self):
+        if self.cancelled.is_set():
+            self.status = "stopped"
+            return
+        cmd = (
+            self.cmd
+            or [
+                sys.executable,
+                str(HERE.parent / "scripts" / "dev.py"),
+                self.command,
+            ]
+            + self.argv
+        )
         env = dict(os.environ, PYTHONUTF8="1", PYTHONUNBUFFERED="1", AM_REPO=str(ROOT))
         # a server started outside a login shell may lack uv and pymobiledevice3 on PATH
         local_bin = str(Path.home() / ".local" / "bin")
@@ -121,7 +226,14 @@ class Job:
             return
         for line in self.proc.stdout:
             line = line.rstrip("\n")
-            self.lines.extend(self.parse(line) if self.parse else [line])
+            for value in self.private_inputs:
+                line = line.replace(value, "[redacted input]")
+            self.lines.extend(
+                jobs_state.redact(part)
+                for part in (self.parse(line) if self.parse else [line])
+            )
+            if time.monotonic() - self.last_saved > 1:
+                self.persist()
         self.code = self.proc.wait()
         self.status = (
             "done"
@@ -131,13 +243,24 @@ class Job:
 
     def send(self, text):
         """A typed answer for a console job's prompt."""
-        if not (self.interactive and self.proc and self.proc.poll() is None and self.proc.stdin):
+        if not (
+            self.interactive
+            and self.proc
+            and self.proc.poll() is None
+            and self.proc.stdin
+        ):
             raise dev.DevError("this job is not waiting for input")
-        self.lines.append(f"> {text}")
+        self.lines.append("> [input sent]")
+        if len(text) >= 4:
+            self.private_inputs = (self.private_inputs + [text])[-20:]
         self.proc.stdin.write(text + "\n")
         self.proc.stdin.flush()
 
     def stop(self):
+        self.cancelled.set()
+        if self.status == "queued":
+            self.status = "stopped"
+            self.persist()
         if self.proc and self.proc.poll() is None:
             self.status = "stopping"
             self.proc.kill()
@@ -151,29 +274,74 @@ class Job:
             "code": self.code,
             "started": self.started,
             "interactive": self.interactive,
+            "resources": self.resources,
             "lines": self.lines[since:],
             "next": len(self.lines),
         }
 
 
+class RecoveredJob:
+    """An archived record is display-only; it never owns or recreates a subprocess."""
+
+    def __init__(self, record):
+        self.record = record
+        self.id, self.command, self.argv = (
+            record["id"],
+            record["command"],
+            record["args"],
+        )
+        self.status, self.started, self.lines = (
+            record["status"],
+            record["started"],
+            record["lines"],
+        )
+
+    def view(self, since=0):
+        return dict(
+            self.record, lines=self.lines[max(0, since) :], next=len(self.lines)
+        )
+
+    def send(self, _text):
+        raise dev.DevError("Archived jobs cannot accept input or resume")
+
+    def stop(self):
+        raise dev.DevError("This job is already archived")
+
+
 def start_job(command, argv, interactive=False):
-    if command not in JOB_COMMANDS and not (interactive and command in console_commands()):
+    if command not in JOB_COMMANDS and not (
+        interactive and command in console_commands()
+    ):
         raise dev.DevError(f"{command} is not a job command")
     for a in argv:
         if not isinstance(a, str) or "\n" in a:
             raise dev.DevError("bad argument")
-    job = Job(command, argv, interactive)
-    JOBS[job.id] = job
+    with SESSION_LOCK:
+        if RESTARTING.is_set():
+            raise dev.DevError("Studio is restarting; reconnect before starting a job")
+        job = Job(command, argv, interactive)
+        JOBS[job.id] = job
+    job.persist()
     threading.Thread(target=job.run, daemon=True).start()
     return job
 
 
 # Claude Code runs from the prompt builder. dev.py through uv: python on this PC can be the Store stub.
 DEV = "uv run --no-project --python 3.12 scripts/dev.py"
-READ_ONLY_DEV = ("status", "find", "fields", "scan", "report", "suggest", "check", "games", "help")
+READ_ONLY_DEV = (
+    "status",
+    "find",
+    "fields",
+    "scan",
+    "report",
+    "suggest",
+    "check",
+    "games",
+    "help",
+)
 CLAUDE_NOTE = (
     "This is a headless run started from Mod Studio's prompt builder in the AccretionMods/mods repo. "
-    "Project: Accretion (record it with: echo \"[[project: Accretion]]\"); don't ask which project. "
+    'Project: Accretion (record it with: echo "[[project: Accretion]]"); don\'t ask which project. '
     f"Run the mod commands written as `am <command>` as `{DEV} <command>`. "
     "Nobody can answer questions during this run: when a choice is the owner's, stop and list the options. "
     "You already run in the repo: one command per Bash call, no cd, no && or ; chains, no pipes (| head): "
@@ -186,7 +354,9 @@ CLAUDE_NOTE = (
 
 
 def claude_exe():
-    found = shutil.which("claude") or shutil.which("claude", path=str(Path.home() / ".local" / "bin"))
+    found = shutil.which("claude") or shutil.which(
+        "claude", path=str(Path.home() / ".local" / "bin")
+    )
     if not found:
         raise dev.DevError("Claude Code (claude) is not installed or not on PATH")
     return found
@@ -196,18 +366,42 @@ def claude_command(prompt, read_only):
     """The claude -p command line for a builder prompt. Read-only: reading tools and the read-only dev.py
     commands only, no edits. Otherwise: edits accepted, any dev.py command, no other shell commands."""
     if read_only:
-        allowed = ["Read", "Grep", "Glob"] + [f"Bash({DEV} {c}:*)" for c in READ_ONLY_DEV]
-        mode = ["--permission-mode", "default", "--disallowedTools", "Edit", "Write", "NotebookEdit"]
+        allowed = ["Read", "Grep", "Glob"] + [
+            f"Bash({DEV} {c}:*)" for c in READ_ONLY_DEV
+        ]
+        mode = [
+            "--permission-mode",
+            "default",
+            "--disallowedTools",
+            "Edit",
+            "Write",
+            "NotebookEdit",
+        ]
     else:
-        allowed = ["Read", "Grep", "Glob", "Edit", "Write", f"Bash({DEV}:*)", 'Bash(echo "[[project:*)']
+        allowed = [
+            "Read",
+            "Grep",
+            "Glob",
+            "Edit",
+            "Write",
+            f"Bash({DEV}:*)",
+            'Bash(echo "[[project:*)',
+        ]
         mode = ["--permission-mode", "acceptEdits"]
     if read_only:
         allowed.append('Bash(echo "[[project:*)')
     return [
-        claude_exe(), "-p", prompt,
-        "--output-format", "stream-json", "--verbose",
-        "--append-system-prompt", CLAUDE_NOTE,
-        "--allowedTools", *allowed, *mode,
+        claude_exe(),
+        "-p",
+        prompt,
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--append-system-prompt",
+        CLAUDE_NOTE,
+        "--allowedTools",
+        *allowed,
+        *mode,
     ]
 
 
@@ -225,13 +419,22 @@ def claude_lines(raw):
                 out += part["text"].rstrip().split("\n")
             elif part.get("type") == "tool_use":
                 args = part.get("input") or {}
-                what = args.get("command") or args.get("file_path") or args.get("pattern") or ""
+                what = (
+                    args.get("command")
+                    or args.get("file_path")
+                    or args.get("pattern")
+                    or ""
+                )
                 out.append(f"  » {part.get('name')} {str(what)[:160]}")
         return out
     if kind == "user":
         out = []
         for part in (ev.get("message") or {}).get("content") or []:
-            if isinstance(part, dict) and part.get("type") == "tool_result" and part.get("is_error"):
+            if (
+                isinstance(part, dict)
+                and part.get("type") == "tool_result"
+                and part.get("is_error")
+            ):
                 text = part.get("content")
                 text = text if isinstance(text, str) else json.dumps(text)[:300]
                 out.append(f"  ! {text.strip()[:300]}")
@@ -239,8 +442,11 @@ def claude_lines(raw):
     if kind == "result":
         cost = ev.get("total_cost_usd")
         secs = (ev.get("duration_ms") or 0) / 1000
-        return ["", f"== Claude finished: {ev.get('subtype', '')}, {ev.get('num_turns', '?')} turns, {secs:.0f} s"
-                + (f", ${cost:.2f}" if isinstance(cost, (int, float)) else "")]
+        return [
+            "",
+            f"== Claude finished: {ev.get('subtype', '')}, {ev.get('num_turns', '?')} turns, {secs:.0f} s"
+            + (f", ${cost:.2f}" if isinstance(cost, (int, float)) else ""),
+        ]
     if kind == "system" and ev.get("subtype") == "init":
         return [f"== Claude Code ({ev.get('model', '')}) in {ev.get('cwd', '')}"]
     return []
@@ -252,9 +458,17 @@ def start_claude(prompt, read_only):
         raise dev.DevError("the prompt is empty")
     if len(prompt) > 20000:
         raise dev.DevError("the prompt is too long (20,000 characters at most)")
-    job = Job("claude", ["(read only)" if read_only else "(may change files)"], cmd=claude_command(prompt, read_only),
-              parse=claude_lines)
-    JOBS[job.id] = job
+    with SESSION_LOCK:
+        if RESTARTING.is_set():
+            raise dev.DevError("Studio is restarting; reconnect before starting jobs")
+        job = Job(
+            "claude",
+            ["(read only)" if read_only else "(may change files)"],
+            cmd=claude_command(prompt, read_only),
+            parse=claude_lines,
+        )
+        JOBS[job.id] = job
+    job.persist()
     threading.Thread(target=job.run, daemon=True).start()
     return job
 
@@ -273,7 +487,14 @@ def split_line(line):
         words = list(lex)
     except ValueError as e:
         raise dev.DevError(f"console: {e}") from e
-    while words and words[0].lower() in ("am", "dev.py", "python", "py", "scripts\\am.ps1", "scripts/dev.py"):
+    while words and words[0].lower() in (
+        "am",
+        "dev.py",
+        "python",
+        "py",
+        "scripts\\am.ps1",
+        "scripts/dev.py",
+    ):
         words.pop(0)
     return words
 
@@ -284,9 +505,15 @@ def console(line):
     if not words:
         raise dev.DevError("console: type a command, or help")
     if words[0] in ("help", "-h", "--help"):
-        return start_job("--help", [], True) if len(words) == 1 else start_job(words[1], ["--help"], True)
+        return (
+            start_job("--help", [], True)
+            if len(words) == 1
+            else start_job(words[1], ["--help"], True)
+        )
     if words[0] not in console_commands():
-        raise dev.DevError(f"console: no command {words[0]!r}; commands: {', '.join(console_commands())}")
+        raise dev.DevError(
+            f"console: no command {words[0]!r}; commands: {', '.join(console_commands())}"
+        )
     return start_job(words[0], words[1:], True)
 
 
@@ -341,6 +568,10 @@ def mod_detail(name):
         else None
     )
     data["hooks_json"] = dev.load_hooks(folder)["hooks"]
+    for tweak in (data["tweaks_json"] or {}).get("tweaks", []):
+        tweak["verification_state"] = scan_view.verification_state(
+            tweak.get("verified"), data["app_version"]
+        )
     try:
         data["newer_bases"] = [
             {"path": str(p), "version": v} for p, v in dev.newer_bases(meta)
@@ -350,7 +581,9 @@ def mod_detail(name):
     return data
 
 
-LOG_ERROR = re.compile(r"error|exception|crash|fault|fail|not found|null|abort|terminat", re.IGNORECASE)
+LOG_ERROR = re.compile(
+    r"error|exception|crash|fault|fail|not found|null|abort|terminat", re.IGNORECASE
+)
 
 
 LIVE_STATUS = re.compile(r"\[AccretionMods\] status (\w+) (ok|off|waiting: (.*))$")
@@ -368,7 +601,10 @@ def live_status(name):
             m = LIVE_STATUS.search(line.rstrip())
             if m:
                 state = "waiting" if m.group(2).startswith("waiting") else m.group(2)
-                states[m.group(1)] = {"state": state, "reason": (m.group(3) or "").strip()}
+                states[m.group(1)] = {
+                    "state": state,
+                    "reason": (m.group(3) or "").strip(),
+                }
     return {"switches": states, "watching": watching}
 
 
@@ -378,17 +614,28 @@ def mod_context(name):
     d = mod_detail(name)
     state = dev.load_state(name)
     tweaks = (d.get("tweaks_json") or {}).get("tweaks", [])
-    result = {t["key"]: (t.get("verified") or {}).get("result") for t in tweaks}
-    works = [k for k, r in result.items() if r == "works"]
-    fails = [k for k, r in result.items() if r == "fails"]
-    untested = [k for k, r in result.items() if not r]
+    works = [t["key"] for t in tweaks if t["verification_state"] == "works"]
+    fails = [t["key"] for t in tweaks if t["verification_state"] == "fails"]
+    untested = [
+        t["key"] for t in tweaks if t["verification_state"] in ("untested", "stale")
+    ]
     errors, seen_at = [], None
     for job in sorted(JOBS.values(), key=lambda j: j.started, reverse=True):
-        if job.command in ("log", "run") and job.argv[:1] == [name] and job.status != "running":
-            errors = [line.strip() for line in job.lines if LOG_ERROR.search(line)][-12:]
+        if (
+            job.command in ("log", "run")
+            and job.argv[:1] == [name]
+            and job.status != "running"
+        ):
+            errors = [line.strip() for line in job.lines if LOG_ERROR.search(line)][
+                -12:
+            ]
             seen_at = job.started
             break
-    switches = f"{len(tweaks)} ({len(works)} work, {len(fails)} fail, {len(untested)} not checked)" if tweaks else "none yet"
+    switches = (
+        f"{len(tweaks)} ({len(works)} work, {len(fails)} fail, {len(untested)} not checked)"
+        if tweaks
+        else "none yet"
+    )
     return {
         "mod": name,
         "title": d["title"],
@@ -397,13 +644,17 @@ def mod_context(name):
         "app_version": d["app_version"] or "?",
         "personal": d["personal"],
         "dump": d["dump"],
-        "dump_state": f"made ({state.get('dump_dir')})" if d["dump"] else f"not made yet (am dump {name})",
+        "dump_state": f"made ({state.get('dump_dir')})"
+        if d["dump"]
+        else f"not made yet (am dump {name})",
         "hooks": f"{d['hooks']} hooks, {d['hooks_jit']} need JIT",
         "switches": switches,
         "works": ", ".join(works) or "none",
         "fails": ", ".join(fails) or "none",
         "untested": ", ".join(untested) or "none",
-        "log_errors": ("\n" + "\n".join("  " + e for e in errors)) if errors else "none seen (run Log or Run in Studio first)",
+        "log_errors": ("\n" + "\n".join("  " + e for e in errors))
+        if errors
+        else "none seen (run Log or Run in Studio first)",
         "log_seen": bool(seen_at),
         "newer_bases": d["newer_bases"],
         "last_ipa": d["last_ipa"],
@@ -432,11 +683,18 @@ def method_row(m):
 def find(name, query, limit, class_name=None):
     found = dev.dump_methods(name)
     if class_name:
-        rows = [m for m in found if m.class_name == class_name]
+        rows = [
+            m
+            for m in found
+            if m.class_name == class_name or m.full_name.rsplit(".", 1)[0] == class_name
+        ]
     else:
         rx = re.compile(query, re.IGNORECASE)
         rows = [m for m in found if rx.search(m.full_name)]
-    return {"count": len(rows), "methods": [method_row(m) for m in rows[:limit]]}
+    return {
+        "count": len(rows),
+        "methods": scan_view.review_methods(dev, name, rows[:limit], method_row),
+    }
 
 
 def fields(name, class_name):
@@ -451,8 +709,18 @@ def fields(name, class_name):
 def field_search(name, query, limit):
     """Fields whose Namespace.Class.field matches, across every class (am find --fields): which class holds a value."""
     rx = re.compile(query or ".", re.IGNORECASE)
-    rows = [r for r in dev.field_rows(name) if "<" not in r[0] and not r[3].startswith("<>") and rx.search(f"{r[0]}.{r[3]}")]
-    return {"count": len(rows), "fields": [{"class": c, "static": st, "type": t, "name": n} for c, st, t, n in rows[:limit]]}
+    rows = [
+        r
+        for r in dev.field_rows(name)
+        if "<" not in r[0] and not r[3].startswith("<>") and rx.search(f"{r[0]}.{r[3]}")
+    ]
+    return {
+        "count": len(rows),
+        "fields": [
+            {"class": c, "static": st, "type": t, "name": n}
+            for c, st, t, n in rows[:limit]
+        ],
+    }
 
 
 def suggest(name, limit):
@@ -552,7 +820,20 @@ def quick(name, command, body):
         "mark": dev.cmd_mark,
     }[command]
     dev._dump_cache.clear() if command == "gen" else None
-    code, text = capture(fn, ns)
+
+    def change():
+        workspace.snapshot_create(
+            dev.am_root() / "studio", name, dev.mod_dir(name), "before " + command
+        )
+        return fn(ns)
+
+    cancelled = threading.Event()
+    with action_scope():
+        COORDINATOR.acquire(["mod:" + name], cancelled)
+        try:
+            code, text = capture(change)
+        finally:
+            COORDINATOR.release(["mod:" + name])
     return {"ok": code == 0, "output": text}
 
 
@@ -596,6 +877,11 @@ class Handler(BaseHTTPRequestHandler):
         """The console runs commands on this PC: only this PC may use it, even with --host 0.0.0.0."""
         if self.client_address[0] not in ("127.0.0.1", "::1", "::ffff:127.0.0.1"):
             raise dev.DevError("the console only answers this PC (127.0.0.1)")
+        host = self.headers.get("Host", "")
+        if urlparse("http://" + host).hostname not in {"localhost", "127.0.0.1", "::1"}:
+            raise dev.DevError("Use Studio's localhost address")
+        if self.headers.get("Origin") and self.headers["Origin"] != "http://" + host:
+            raise dev.DevError("This action must come from the Studio page")
 
     def mod_name(self, part):
         if (
@@ -631,6 +917,19 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         q = {k: v[-1] for k, v in parse_qs(url.query).items()}
         parts = [p for p in url.path.split("/") if p]
+        if parts == ["api", "studio"]:
+            current = workspace.source_revision(ROOT)
+            return self.send_json(
+                {
+                    "protocol": 1,
+                    "root": str(ROOT),
+                    "pid": os.getpid(),
+                    "loaded": LOADED_REVISION,
+                    "current": current,
+                    "stale": current != LOADED_REVISION,
+                    "busy": busy(),
+                }
+            )
         if not parts:
             return self.send_file(HERE / "index.html", "text/html; charset=utf-8")
         if parts[0] != "api":
@@ -643,20 +942,31 @@ class Handler(BaseHTTPRequestHandler):
         if parts[1:] == ["bases"]:
             return self.send_json(bases())
         if parts[1:] == ["prompts"]:
-            return self.send_json(json.loads((HERE / "prompts.json").read_text(encoding="utf-8")))
+            return self.send_json(
+                json.loads((HERE / "prompts.json").read_text(encoding="utf-8"))
+            )
         if parts[1:] == ["console", "commands"]:
             return self.send_json({"commands": console_commands()})
         if parts[1:] == ["games"]:
             return self.send_json(
-                dev.games_list(q.get("list", "top-free"), q.get("region", "us"), q.get("q"), q.get("bundle"))
+                dev.games_list(
+                    q.get("list", "top-free"),
+                    q.get("region", "us"),
+                    q.get("q"),
+                    q.get("bundle"),
+                )
             )
         if parts[1:] == ["games", "info"]:
-            return self.send_json(dev.games_info(q.get("bundle", ""), q.get("region", "us")))
+            return self.send_json(
+                dev.games_info(q.get("bundle", ""), q.get("region", "us"))
+            )
         if parts[1:] == ["fetch", "account"]:
             return self.send_json(fetch_client().account())
         if parts[1:] == ["fetch", "search"]:
             rows = fetch_client().search(
-                q.get("q", "").strip(), q.get("region", "us"), q.get("platform", "iphone")
+                q.get("q", "").strip(),
+                q.get("region", "us"),
+                q.get("platform", "iphone"),
             )
             return self.send_json({"results": rows[:30]})
         if parts[1:2] == ["jobs"]:
@@ -690,17 +1000,44 @@ class Handler(BaseHTTPRequestHandler):
                     )
                 if rest == ["fields"]:
                     return self.send_json(fields(name, q.get("class", "")))
+                if rest == ["snapshots"]:
+                    self.local_only()
+                    return self.send_json(
+                        {
+                            "snapshots": workspace.snapshot_list(
+                                dev.am_root() / "studio", name
+                            )
+                        }
+                    )
                 if rest == ["fieldsearch"]:
-                    return self.send_json(field_search(name, q.get("q", "."), int(q.get("limit", 60))))
+                    return self.send_json(
+                        field_search(name, q.get("q", "."), int(q.get("limit", 60)))
+                    )
                 if rest == ["scan"]:
-                    result, rows = dev.scan_rows(name, q.get("area") or None, q.get("find") or None, q.get("flagged") == "1")
-                    if q.get("text") == "1":  # for the Claude prompt: not yet in the mod, best first
+                    result, rows = scan_view.query(dev, name, q)
+                    if (
+                        q.get("text") == "1"
+                    ):  # for the Claude prompt: not yet in the mod, best first
                         fresh = [r for r in rows if not r["has"]]
-                        return self.send_json({"text": dev.dump_scan.as_text(fresh, int(q.get("limit", 60)))})
-                    return self.send_json({
-                        "classes": result["classes"], "total": len(result["rows"]), "flagged": len(result["flagged"]),
-                        "rows": rows[: int(q.get("limit", 300))],
-                    })
+                        return self.send_json(
+                            {
+                                "text": dev.dump_scan.as_text(
+                                    fresh, int(q.get("limit", 60))
+                                )
+                            }
+                        )
+                    return self.send_json(
+                        {
+                            "classes": result["classes"],
+                            "total": len(result["rows"])
+                            + len(result.get("inventory", [])),
+                            "flagged": len(result["flagged"])
+                            + len(result.get("inventory", [])),
+                            **scan_view.page(
+                                rows, q.get("offset", 0), q.get("limit", 300)
+                            ),
+                        }
+                    )
                 if rest == ["live"]:
                     return self.send_json(live_status(name))
                 if rest == ["context"]:
@@ -713,9 +1050,59 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         parts = [p for p in url.path.split("/") if p]
         body = self.body_json()
+        if len(parts) == 4 and parts[:2] == ["api", "mods"] and parts[3] == "snapshot":
+            self.local_only()
+            name = self.mod_name(parts[2])
+            with action_scope():
+                COORDINATOR.acquire(["mod:" + name], threading.Event())
+                try:
+                    with LOCK:
+                        try:
+                            arguments = (
+                                dev.am_root() / "studio",
+                                name,
+                                dev.mod_dir(name),
+                            )
+                            action = body.get("action", "create")
+                            if action == "create":
+                                result = workspace.snapshot_create(
+                                    *arguments, str(body.get("label", "manual"))
+                                )
+                            elif action == "preview":
+                                result = workspace.snapshot_preview(
+                                    *arguments, body.get("id")
+                                )
+                            elif action == "restore":
+                                result = workspace.snapshot_restore(
+                                    *arguments, body.get("id"), body.get("expected")
+                                )
+                                dev._dump_cache.clear()
+                            else:
+                                raise ValueError("Unknown snapshot action")
+                        except (ValueError, OSError) as error:
+                            raise dev.DevError(str(error)) from error
+                finally:
+                    COORDINATOR.release(["mod:" + name])
+            return self.send_json(result)
+        if parts in (["api", "studio", "restart"], ["api", "studio", "stop"]):
+            self.local_only()
+            with SESSION_LOCK:
+                if busy():
+                    raise dev.DevError(
+                        "Finish or stop active jobs and configuration changes before restarting Studio"
+                    )
+                RESTARTING.set()
+                self.server.restart_requested = parts[-1] == "restart"
+            self.send_json({"ok": True})
+            threading.Thread(target=self.server.shutdown, daemon=True).start()
+            return
         if parts == ["api", "claude"]:
             self.local_only()
-            return self.send_json(start_claude(str(body.get("prompt", "")), bool(body.get("read_only", True))).view())
+            return self.send_json(
+                start_claude(
+                    str(body.get("prompt", "")), bool(body.get("read_only", True))
+                ).view()
+            )
         if parts == ["api", "console"]:
             self.local_only()
             return self.send_json(console(str(body.get("line", ""))).view())
@@ -736,7 +1123,9 @@ class Handler(BaseHTTPRequestHandler):
             job = start_job(command, argv)
             return self.send_json(job.view())
         if parts == ["api", "fetch", "login"]:
-            user = fetch_client().login(str(body.get("email", "")), str(body.get("password", "")))
+            user = fetch_client().login(
+                str(body.get("email", "")), str(body.get("password", ""))
+            )
             return self.send_json({"user": user})
         if parts == ["api", "fetch", "logout"]:
             fetch_client().logout()
@@ -769,7 +1158,29 @@ def main(argv=None):
     )
     p.add_argument("--no-open", action="store_true")
     args = p.parse_args(argv)
+    registry = dev.am_root() / "studio" / "instance.json"
+    if registry.is_file():
+        try:
+            instance = json.loads(registry.read_text(encoding="utf-8"))
+            port = int(instance["port"])
+            if not 1 <= port <= 65535:
+                raise ValueError("bad port")
+            with urlopen(f"http://127.0.0.1:{port}/api/studio", timeout=2) as response:
+                running = json.load(response)
+            if running.get("protocol") == 1 and running.get("root") == str(ROOT):
+                url = f"http://127.0.0.1:{port}/"
+                print(f"Mod Studio is already running at {url}")
+                if not args.no_open:
+                    webbrowser.open(url)
+                return 0
+        except (OSError, ValueError, KeyError):
+            pass
     server = ThreadingHTTPServer((args.host, args.port), Handler)
+    for record in jobs_state.History(dev.am_root() / "studio").load():
+        JOBS[record["id"]] = RecoveredJob(record)
+    workspace.atomic_json(
+        registry, {"port": args.port, "pid": os.getpid(), "root": str(ROOT)}
+    )
     url = f"http://{'localhost' if args.host in ('127.0.0.1', '0.0.0.0') else args.host}:{args.port}/"
     print(f"Mod Studio at {url}  (Ctrl+C stops)")
     if args.host == "0.0.0.0":
@@ -782,6 +1193,19 @@ def main(argv=None):
         server.serve_forever()
     except KeyboardInterrupt:
         pass
+    server.server_close()
+    # Remove only our own registration, without touching other applications or legacy servers.
+    if registry.is_file() and json.loads(registry.read_text())["pid"] == os.getpid():
+        registry.unlink()
+    if getattr(server, "restart_requested", False):
+        os.execv(
+            sys.executable,
+            [
+                sys.executable,
+                str(HERE / "server.py"),
+                *(argv if argv is not None else sys.argv[1:]),
+            ],
+        )
     return 0
 
 
