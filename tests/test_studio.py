@@ -168,6 +168,18 @@ class Api(unittest.TestCase):
         self.assertTrue(any("hooks" in line for line in job["lines"]), job)
         status, _data = self.post("/api/jobs", {"command": "rm", "mod": "game-plus"})
         self.assertEqual(status, 400)
+        # sign and install take a file: the mod name must not be put in front of it
+        status, job = self.post(
+            "/api/jobs",
+            {
+                "command": "sign",
+                "mod": "game-plus",
+                "args": ["C:/no/such.ipa", "--install"],
+            },
+        )
+        self.assertEqual(status, 200, job)
+        self.assertEqual(job["args"], ["C:/no/such.ipa", "--install"])
+        self.post(f"/api/jobs/{job['id']}/stop", {})
 
 
 if __name__ == "__main__":

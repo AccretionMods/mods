@@ -20,8 +20,19 @@ chose a local web app in this repo over a desktop app, a Claude panel or an iOS 
   the page landed in tweaks.json and the generated code), Suggest (36 rows from 58 learned patterns), Build & Phone
   (check-hooks job streamed into the console), Files; phone width (375 px) with no horizontal scroll; dark/light.
 - `tests/test_studio.py`: the API on a synthetic mod and dump (quick commands, errors, a streamed job).
-- Not tried from the page yet: dump, build, sign + install, run, log, update, New mod (they run the same dev.py
-  commands the CLI already exercised; the page only starts them and shows the output).
+- Phone run from the page (2026-10-22, iPhone on USB, Wanderer example as `mods/wanderer-dev`, a scratch copy of
+  `C:\AccretionMods\dev\wanderer-dev-example`): Build .ipa (dylib 141 KB + 81.6 MB ipa streamed into the console),
+  Sign + install (Apple ID session reused, installed as `...wandererdev.2XN3V474V3`, listed on the phone), Log with
+  "open the app first" (hook report, `watch:` lines, `pin keepStats applied`, `catalogue: 145 items`). Three bugs
+  found and fixed on the way: `send_error` crashed the quiet `log_message` (HTTPStatus as first arg); sign/install
+  jobs got the mod name prepended where the file path goes; a server started outside a login shell had no `uv` or
+  `pymobiledevice3` on PATH (dev.py now looks in `~/.local/bin` and uv's tool folder; the job env adds `~/.local/bin`).
+  Seen in the log afterwards: health 100 -> 90 that stayed for two watch lines; the owner was tapping switches on
+  the phone during the capture (keepStats off at that moment), so nothing to chase. Clicking the "open the app first" label with a
+  tap near the Log button did not toggle it; setting the checkbox directly did.
+- Not tried from the page yet: dump, run, update, New mod.
+- The built-in browser launches the server from `.claude/launch.json` (local, not committed: it holds the user's uv
+  path); the configured port 8765 was busy (an older `am ui`), so the preview ran on 8766.
 - The Sonnet worker could not write the page (context thrash, as before in this repo); the page is hand-written.
 
 ## Open
