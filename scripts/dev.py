@@ -736,14 +736,7 @@ def cmd_pin(args):
         raise DevError("not written:\n  " + "\n  ".join(problems))
     write_json(folder / "tweaks.json", tweaks)
     store = dev_learn.load(patterns_path())
-    entry = {
-        "class": cls,
-        "method": member,
-        "namespace": "",
-        "return_type": "void",
-        "args": 1,
-    }
-    dev_learn.record(store, entry, "pin", value, tweak, meta["target_bundle_id"])
+    dev_learn.record_pin(store, pin.get("class") or cls, member, ctype_, pin, tweak, meta["target_bundle_id"])
     dev_learn.save(patterns_path(), store)
     print(f"==> pin: {what}")
     print(
@@ -1799,6 +1792,12 @@ def cmd_test(args):
         push_live(args.mod, found[0])  # no test block: the app turns the test switches off and restores values
     ok = sum(1 for v in results.values() if v == "reached")
     print(f"==> {ok} of {len(results)} reached the game; all test switches are off again")
+    store = dev_learn.load(patterns_path())
+    for t in tweaks["tweaks"]:
+        if t["key"] in results and results[t["key"]] != "no report":
+            dev_learn.record_tweak_pins(store, t, meta["target_bundle_id"],
+                                        "reached" if results[t["key"]] == "reached" else "unreached")
+    dev_learn.save(patterns_path(), store)
     record = am_root() / "dev" / f"{args.mod}-tests.json"
     record.parent.mkdir(parents=True, exist_ok=True)
     past = json.loads(record.read_text(encoding="utf-8")) if record.is_file() else {}
@@ -2063,6 +2062,19 @@ def cmd_pick(args):
 
 def cmd_suggest(args):
     folder = mod_dir(args.mod)
+    # switches first: candidates the scan matched to pins that worked (or reached the game) in other games
+    _result, scanned = scan_rows(args.mod)
+    proven = [r for r in scanned if r.get("learned") and not r["has"]][: args.limit]
+    if proven:
+        print("Switches that worked elsewhere (no JIT):")
+        for r in proven:
+            lr = r["learned"]
+            when = f" --when {r['when']}" if r["when"] != "always" else ""
+            print(f"  {r['object']} {r['member']}  ({r['ctype']})  like \"{lr['title']}\" in {lr['class']}: "
+                  f"{lr['works']} works, {lr['fails']} fails, {lr['reached']} reached")
+            print(f"      am pin {args.mod} {r['class']}.{r['member']} --object \"{r['object']}\" --value {r['value']}{when} "
+                  f"--title \"{lr['title']}\"")
+        print()
     store = dev_learn.load(patterns_path())
     if not store["patterns"]:
         print(
@@ -2104,7 +2116,7 @@ def cmd_mark(args):
     store = dev_learn.load(patterns_path())
     touched = dev_learn.mark(
         store, tweak, load_hooks(folder)["hooks"], meta["target_bundle_id"], works
-    )
+    ) + dev_learn.record_tweak_pins(store, tweak, meta["target_bundle_id"], "works" if works else "fails")
     tweak["verified"] = {
         "result": "works" if works else "fails",
         "date": dev_learn.date.today().isoformat(),
@@ -2113,7 +2125,7 @@ def cmd_mark(args):
     write_json(folder / "tweaks.json", tweaks)
     dev_learn.save(patterns_path(), store)
     print(
-        f"==> {args.key}: {'works' if works else 'fails'} on {meta.get('tested_app_version')}; patterns updated: {', '.join(touched) or 'none (no hooks)'}"
+        f"==> {args.key}: {'works' if works else 'fails'} on {meta.get('tested_app_version')}; patterns updated: {', '.join(touched) or 'none (no hooks or pins)'}"
     )
     return 0
 
@@ -2129,9 +2141,14 @@ def cmd_learn(args):
     )
     store = dev_learn.load(patterns_path())
     n = dev_learn.learn(store, hooks, meta["target_bundle_id"], tweaks)
+    pins = 0
+    for t in (tweaks or {}).get("tweaks", []):
+        result = (t.get("verified") or {}).get("result")
+        pins += len(dev_learn.record_tweak_pins(store, t, meta["target_bundle_id"], result))
     dev_learn.save(patterns_path(), store)
     print(
-        f"==> learned {n} hooks from {args.mod}; {len(store['patterns'])} patterns in {patterns_path()}"
+        f"==> learned {n} hooks and {pins} pins from {args.mod}; {len(store['patterns'])} method patterns, "
+        f"{len(dev_learn.members(store))} member patterns in {patterns_path()}"
     )
     return 0
 
@@ -2220,7 +2237,10 @@ def games_info(bundle, region="us"):
 def scan_rows(mod, area=None, find=None, flagged=False):
     folder = mod_dir(mod)
     meta = read_json(folder / "mod.json")
-    result = dump_scan.scan(dump_path(mod), load_tweaks(folder, meta))
+    store = dev_learn.load(patterns_path())
+    game = meta.get("target_bundle_id")
+    result = dump_scan.scan(dump_path(mod), load_tweaks(folder, meta),
+                            learned=lambda name, ctype, cls: dev_learn.member_boost(store, name, ctype, game, cls))
     rows = result["flagged"] if flagged else result["rows"]
     if area:
         rows = [r for r in rows if r["area"].lower().startswith(area.lower())]
@@ -2387,7 +2407,12 @@ def cmd_scan(args):
     print(f"{len(result['rows'])} candidates in {result['classes']} game classes; {len(result['flagged'])} flagged")
     for r in rows:
         tag = f"FLAG: {r['flag']}" if r.get("flag") else ("in the mod" if r["has"] else f"score {r['score']}")
-        print(f"  {r['area']:<16} {r['object'] + ' ' + r['member']:<58} {r['ctype']:<8} {tag}")
+        hints = [h for h, on in (("lower is better", r.get("direction") == "lower"), ("kept in the save", r.get("saved"))) if on]
+        print(f"  {r['area']:<16} {r['object'] + ' ' + r['member']:<58} {r['ctype']:<8} {tag}"
+              + (f"  ({', '.join(hints)})" if hints else ""))
+        if r.get("learned"):
+            lr = r["learned"]
+            print(f"      learned: like \"{lr['title']}\" ({lr['works']} works, {lr['fails']} fails, {lr['reached']} reached elsewhere)")
         if not r.get("flag") and not r["has"]:
             when = f" --when {r['when']}" if r["when"] != "always" else ""
             obj = f' --object "{r["object"]}"'

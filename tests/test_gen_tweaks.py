@@ -687,6 +687,11 @@ class Pins(unittest.TestCase):
         refill = {"object": "A.i", "field": "hp", "ctype": "float", "value": {"field": "max"}}
         self.assertFalse(gen_tweaks.restorable(refill))
 
+    def test_a_pin_the_game_keeps_undoing_turns_red(self):
+        _h, m = gen_tweaks.render(PIN_TWEAKS, HOOKS, "game-plus")
+        self.assertIn("if (s_rads_0_wrote_ok && *p != s_rads_0_wrote) { if (++s_rads_0_fights >= 6) fought =", m)
+        self.assertIn("if (fought) { reached = false; why = fought; }", m)
+
     def test_slider_note_and_pause(self):
         _h, m = gen_tweaks.render(PIN_TWEAKS, HOOKS, "game-plus")
         self.assertIn('if ((am_dmg != 1.0f)) { if (s_dmg_0_set) AMNoteValue("dmg", (double)s_dmg_0_base); return; }', m)

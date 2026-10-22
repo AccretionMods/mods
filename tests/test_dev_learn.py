@@ -148,6 +148,52 @@ class Suggest(unittest.TestCase):
             dev_learn.title_for(m, {"title": "Enemy.Thing"}), "Attack Success Rate"
         )
 
+    def test_one_row_per_method_signature(self):
+        store = {"patterns": {}}
+        dev_learn.record(store, ENTRY, "skip", None, TWEAK, "game.a", "works")
+        found = [method(c, "DamagePlayer", params=("int a", "int b")) for c in ("Boss", "Orc", "Wolf")]
+        rows = dev_learn.suggest(store, found)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][2]["others"], 2)
+
+
+class Members(unittest.TestCase):
+    """Pins are learned by the words of what they write, with whose value it is, and by their results."""
+
+    PIN = {"object": "SkillsManager.instance", "field": "SkillPoints", "ctype": "int32_t", "value": 99, "when": "lower"}
+    SKILL = {"key": "sp", "title": "Unlimited skill points", "kind": "switch", "pins": [PIN]}
+
+    def test_names_fold_to_the_same_words(self):
+        key = dev_learn.member_key
+        self.assertEqual(key("_skillPoints", "int32_t"), key("set_SkillPoints", "int32_t"))
+        self.assertEqual(key("<Currency>k__BackingField", "int32_t"), key("m_Currency", "int32_t"))
+        self.assertNotEqual(key("CanStun", "bool"), key("CanStun", "int32_t"))
+        # whose value: an enemy's damage is not the companion's
+        self.assertEqual(key("BaseDamage", "int64_t", "Enemy"), key("EnemyDamage", "int64_t", "Player"))
+        self.assertNotEqual(key("Damage", "int64_t", "FightCompanion"), key("Damage", "int64_t", "Enemy"))
+
+    def test_results_rank_and_a_game_never_confirms_itself(self):
+        store = {"patterns": {}, "members": {}}
+        dev_learn.record_tweak_pins(store, self.SKILL, "game.a", "works")
+        bonus, use = dev_learn.member_boost(store, "_skillPoints", "int32_t", "game.b", "SkillsSave")
+        self.assertGreater(bonus, 0)
+        self.assertEqual((use["title"], use["value"], use["works"]), ("Unlimited skill points", 99, 1))
+        self.assertEqual(dev_learn.member_boost(store, "_skillPoints", "int32_t", "game.a"), (0, None))
+        # a test result never replaces the play result
+        dev_learn.record_tweak_pins(store, self.SKILL, "game.a", "unreached")
+        self.assertEqual(dev_learn.member_boost(store, "SkillPoints", "int32_t", "game.b")[1]["works"], 1)
+        # failing more than working: no suggestion
+        for game in ("game.c", "game.d"):
+            dev_learn.record_tweak_pins(store, self.SKILL, game, "fails")
+        self.assertEqual(dev_learn.member_boost(store, "SkillPoints", "int32_t", "game.b"), (0, None))
+
+    def test_version_1_pins_move_out_of_the_method_patterns(self):
+        store = {"version": 1, "patterns": {"accuracy|void": {"action": "pin", "method": "Accuracy", "uses": []},
+                                            "attack|void": {"action": "arg", "method": "Attack", "uses": []}}}
+        self.assertEqual(dev_learn.migrate(store), 1)
+        self.assertEqual(list(store["patterns"]), ["attack|void"])
+        self.assertEqual(store["version"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()
