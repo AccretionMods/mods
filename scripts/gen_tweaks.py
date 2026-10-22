@@ -448,6 +448,12 @@ def render_pin(pin, var, kind, key, index):
     what = pin.get("field") or pin.get("setter") or pin.get("call")
     lines = [f"    {{  // pin {index}: {pin['object']} {what}"]
     objects, closers, cls = pin_objects(pin)
+    # the menu's status dot (AMMenuStatus): tried this tick, found the object, reached (read or wrote) it
+    holder = pin["object"][:-2] if pin["object"].endswith("[]") else pin["object"].split(".")[0]
+    missing = c_string(f"no {holder} in the game right now")
+    unreachable = c_string(f"{cls}.{what} could not be read or written")
+    status_start = f"            tried = true; if (!why) why = {missing};"
+    status_found = f"            found = true; why = {unreachable};"
     if pin.get("call"):
         every = pin.get("every", 0)
         if every:
@@ -455,7 +461,9 @@ def render_pin(pin, var, kind, key, index):
                 f"        static CFAbsoluteTime {state}_at; CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();"
             )
             lines.append(f"        if (now - {state}_at >= {float(every)!r}) {{ {state}_at = now;")
+        lines.append(status_start)
         lines += objects
+        lines.append(status_found)
         pairs = list(zip(pin.get("args", []), pin.get("arg_ctypes", [])))
         decl = "; ".join(
             f"{c} a{i} = {c_value(a, c)}" for i, (a, c) in enumerate(pairs)
@@ -465,14 +473,16 @@ def render_pin(pin, var, kind, key, index):
             f"            {decl + '; ' if decl else ''}void *argv[{max(len(pairs), 1)}] = {{{argv}}};"
         )
         lines.append(
-            f"            if (AMIl2cppCall(obj, {c_string(cls)}, {c_string(pin['call'])}, {len(pairs)}, argv, NULL)) applied = true;"
+            f"            if (AMIl2cppCall(obj, {c_string(cls)}, {c_string(pin['call'])}, {len(pairs)}, argv, NULL)) applied = reached = true;"
         )
         lines += closers
         if every:
             lines.append("        }")
         lines.append("    }")
         return lines
+    lines.append(status_start)
     lines += objects
+    lines.append(status_found)
     ctype_ = pin["ctype"]
     when = pin.get("when", "always")
     cmp_ = {"always": None, "lower": "<", "higher": ">"}[when]
@@ -486,6 +496,7 @@ def render_pin(pin, var, kind, key, index):
             f"            {ctype_} *p = AMIl2cppField(obj, {c_string(cls)}, {c_string(pin['field'])});"
         )
         lines.append(f"            if (!p) goto {state}_next;")
+        lines.append("            reached = true;")
         if pin.get("op") == "multiply":
             lines.append(
                 f"            static {ctype_} {state}_base, {state}_set; if (*p != {state}_set) {state}_base = *p;"
@@ -504,7 +515,7 @@ def render_pin(pin, var, kind, key, index):
         if cmp_ is None and pin["value"] != "peak":
             lines.append(f"            {ctype_} v = {value}; void *argv[1] = {{&v}};")
             lines.append(
-                f"            if (AMIl2cppCall(obj, {c_string(cls)}, {c_string(setter)}, 1, argv, NULL)) applied = true;"
+                f"            if (AMIl2cppCall(obj, {c_string(cls)}, {c_string(setter)}, 1, argv, NULL)) applied = reached = true;"
             )
         else:
             if not getter:
@@ -515,6 +526,7 @@ def render_pin(pin, var, kind, key, index):
                 f"            void *boxed = NULL; {ctype_} *cur = AMIl2cppCall(obj, {c_string(cls)}, {c_string(getter)}, 0, NULL, &boxed) ? AMIl2cppUnbox(boxed) : NULL;"
             )
             lines.append(f"            if (!cur) goto {state}_next;")
+            lines.append("            reached = true;")
             if pin["value"] == "peak":
                 lines.append(
                     f"            if (*cur > {state}_peak) {state}_peak = *cur;"
@@ -684,7 +696,7 @@ def render(tweaks, hooks, mod_name):
                     if kind == "switch"
                     else f"({var} != {c_value(t.get('default', t['min']), 'float')})"
                 )
-                body = []
+                body = [f"    if ({on}) AMMenuStatus({c_string(t['key'])}, true, NULL);"]
                 orig_call = f"orig_{name}({', '.join(call_args)})"
                 if action == "skip":
                     body.append(f"    if ({on}) return;")
@@ -732,12 +744,16 @@ def render(tweaks, hooks, mod_name):
         )
         m.append(f"static void am_pin_{t['key']}(void) {{")
         m.append(f"    if (!{on}) return;")
-        m.append("    static bool logged; bool applied = false;")
+        m.append(
+            "    static bool logged; bool applied = false, tried = false, found = false, reached = false; const char *why = NULL;"
+        )
         for i, pin in enumerate(t["pins"]):
             m += render_pin(pin, var, kind, t["key"], i)
         m.append(
             f'    if (applied && !logged) {{ logged = true; AMIl2cppLog(@"pin {t["key"]} applied"); }}'
         )
+        m.append(f"    if (tried) AMMenuStatus({c_string(t['key'])}, reached, why);")
+        m.append("    (void)found;")
         m.append("}")
         m.append("")
         pinned.append(t["key"])
@@ -746,6 +762,13 @@ def render(tweaks, hooks, mod_name):
     m.append("void AMTweaksTick(void) {")
     for key in pinned:
         m.append(f"    am_pin_{key}();")
+    for t in tweaks["tweaks"]:
+        if (t.get("hooks") and not t.get("pins") and t.get("kind", "switch") == "switch"
+                and t.get("jit_label", True)):
+            m.append(
+                f"    if (am_{t['key']}) AMMenuStatus({c_string(t['key'])}, AMIl2cppHasJIT(), "
+                f"\"needs JIT, and this phone has none\");"
+            )
     if tweaks.get("watch"):
         m.append("    am_watch();")
     m.append("}")

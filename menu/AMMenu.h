@@ -41,4 +41,14 @@ NS_ASSUME_NONNULL_BEGIN
 
 @end
 
+// Live status of a switch while it is on: ok when the cheat reached the game this tick (found its object and
+// read or wrote it, or a JIT hook ran), else why not ("no Enemy in the game right now", "needs JIT").
+// The menu shows a glowing dot by each switch that is on, green working and red not, the reason under its
+// title, and one dot on the floating button (red when any switch that is on is failing). A switch with no
+// report for 15 s shows red. Cheap and thread-safe: call it every tick, or from a hook.
+#ifdef __cplusplus
+extern "C"
+#endif
+void AMMenuStatus(const char *key, bool ok, const char *_Nullable reason);
+
 NS_ASSUME_NONNULL_END

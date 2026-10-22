@@ -529,6 +529,26 @@ class Pins(unittest.TestCase):
     def test_valid(self):
         self.assertEqual(gen_tweaks.problems(PIN_TWEAKS, HOOKS), [])
 
+    def test_status_for_the_menu_dot(self):
+        _, m = gen_tweaks.render(PIN_TWEAKS, HOOKS, "game-plus")
+        # every pinned switch reports each tick: reached its object, or why not
+        self.assertIn('if (tried) AMMenuStatus("keepStats", reached, why);', m)
+        self.assertIn('why = "no StatHandler in the game right now"', m)
+        self.assertIn('why = "StatHandler.set_Hunger could not be read or written"', m)
+        self.assertIn('if (tried) AMMenuStatus("lock", reached, why);', m)
+        _, m = gen_tweaks.render(TWEAKS, HOOKS, "game-plus")
+        # a hook that runs with its switch on says so; a hook-only switch needs JIT
+        self.assertIn('if (am_noDamage) AMMenuStatus("noDamage", true, NULL);', m)
+        self.assertIn(
+            'if (am_noDamage) AMMenuStatus("noDamage", AMIl2cppHasJIT(), "needs JIT, and this phone has none");', m
+        )
+        own = json.loads(json.dumps(TWEAKS))
+        for t in own["tweaks"]:
+            if t["key"] == "noDamage":
+                t["jit_label"] = False  # the mod has its own no-JIT code and reports itself
+        _, m = gen_tweaks.render(own, HOOKS, "game-plus")
+        self.assertNotIn('AMMenuStatus("noDamage", AMIl2cppHasJIT()', m)
+
     def pin(self, pin, kind="switch"):
         return gen_tweaks.pin_problems(pin, kind)
 
