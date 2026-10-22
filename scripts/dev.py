@@ -1260,7 +1260,7 @@ def launch_app(bundle):
 
 def cmd_run(args):
     """The whole loop: build the .ipa, sign and install it, open it, read the log."""
-    folder = mod_dir(args.mod)
+    mod_dir(args.mod)  # fails early on an unknown mod
     code = cmd_build(
         argparse.Namespace(mod=args.mod, ipa=True, bump=args.bump, base=args.base)
     )
