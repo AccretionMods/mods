@@ -471,9 +471,10 @@ AIDER_EDIT_NOTE = (
 
 
 # Codex (GPT): OpenAI's CLI (npm @openai/codex), signed in with the owner's ChatGPT account like the Codex app.
-# codex exec runs headless in the repo like Claude Code: read only in its read-only sandbox, otherwise in
-# workspace-write (edits in the repo, am commands that stay on this PC; no network, so signing and installing stay
-# Studio's Run). The prompt goes as one argument to node, not through codex.cmd (cmd.exe cuts at 8191 chars).
+# codex exec runs headless in the repo like Claude Code: read only in its read-only sandbox; for a task that
+# changes files, full access (the owner's choice, 2026-10-22: the whole loop start to finish, signing and
+# installing on the phone included), so it can run any command on this PC with the network. Studio asks before
+# every such run. The prompt goes as one argument to node, not through codex.cmd (cmd.exe cuts at 8191 chars).
 def codex_command(prompt, read_only):
     node = shutil.which("node")
     script = Path(os.environ.get("APPDATA", "")) / "npm" / "node_modules" / "@openai" / "codex" / "bin" / "codex.js"
@@ -484,9 +485,12 @@ def codex_command(prompt, read_only):
     else:
         raise dev.DevError("Codex CLI is not installed (npm install -g @openai/codex, then codex login)")
     note = CLAUDE_NOTE + (" Read only: change no files." if read_only else
-                          " Signing and installing need the network your sandbox lacks: leave those to the owner's Run.")
-    return [*head, "exec", "--sandbox", "read-only" if read_only else "workspace-write", "--skip-git-repo-check",
-            "--ephemeral", "-C", str(ROOT), note + "\n\n" + prompt]
+                          " You have full access for the whole loop: edit the mod, am gen, then am run <mod> --bump "
+                          "(builds, signs, installs on the USB phone, opens the game and streams the log), and read "
+                          "the log's status lines to see which switches work. Stay in this repo and the mod workflow: "
+                          "no git push, no publishing, no deleting outside the mod, no other installs.")
+    mode = ["--sandbox", "read-only"] if read_only else ["--dangerously-bypass-approvals-and-sandbox"]
+    return [*head, "exec", *mode, "--skip-git-repo-check", "--ephemeral", "-C", str(ROOT), note + "\n\n" + prompt]
 
 
 def aider_exe():

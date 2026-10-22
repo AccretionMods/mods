@@ -947,7 +947,7 @@ const App = {
       if (engine === "aider" && !readOnly) {
         if (!confirm(`aider (free model) will edit mods/${this.mod}: tweaks.json, hooks.json, mod.json and Tweak.x are sent with the prompt to the free OpenRouter model. Studio snapshots them first (Files tab restores). aider runs no commands: the am commands it proposes appear as buttons in Jobs. Run it?`)) return;
       } else if (!readOnly && engine === "codex") {
-        if (!confirm("This task may change files: Codex (GPT) edits this repo and runs am commands in its workspace sandbox (no network: signing and installing stay your Run). Run it?")) return;
+        if (!confirm("Full access: Codex (GPT) runs this task start to finish with no sandbox: it edits the repo, runs any command on this PC with the network, and builds, signs and installs on the phone (am run). It is told not to push, publish, delete outside the mod or install other software, but nothing enforces that. Run it?")) return;
       } else if (!readOnly && !confirm("This task may change files: Claude Code can edit this repo and run any am command (build, sign, install on the phone). It cannot push, publish or run other shell commands. Run it?")) return;
       try { const j = await this.api("/api/claude", { prompt: out.value, read_only: readOnly, engine, mod: this.mod }); this.showJob(j); this.poll(j.id); this.byId("jobsPanel").scrollIntoView({ behavior: "smooth", block: "nearest" }); this.toast(`${this.engineName(engine)} is working: its answer streams into Jobs`, "ok"); }
       catch (e) { this.toast(e.message, "bad"); }
@@ -971,7 +971,7 @@ const App = {
       const viaCodex = this.engine() === "codex";
       runBtn.textContent = viaAider ? (t.read_only ? "Ask aider (read only)" : "Run with aider…") : viaCodex ? (t.read_only ? "Run with Codex (read only)" : "Run with Codex…") : t.read_only ? "Run with Claude Code (read only)" : "Run with Claude Code…";
       runNote.textContent = viaCodex
-        ? (t.read_only ? "Codex (GPT) reads the repo and runs read-only am commands in a read-only sandbox." : "Asks first: Codex edits the repo and runs am commands in its sandbox (no network).")
+        ? (t.read_only ? "Codex (GPT) reads the repo and runs read-only am commands in a read-only sandbox." : "Asks first: full access, start to finish: Codex edits, builds, signs and installs on the phone (no sandbox).")
         : viaAider
         ? (t.read_only ? "aider answers from the prompt alone with the free model: no files, no commands, nothing else leaves this PC." : "Asks first: aider edits this mod's files (snapshot first); its am commands become buttons in Jobs.")
         : t.read_only ? "Claude reads the repo and runs read-only am commands; it changes nothing." : "Asks first: Claude may edit files and run am commands (no push, no publish).";
