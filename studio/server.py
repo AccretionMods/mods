@@ -452,7 +452,52 @@ def claude_lines(raw):
     return []
 
 
-def start_claude(prompt, read_only):
+# Other models: aider with the model in ~/.aider.conf.yml (the free OpenRouter Nemotron, ~/AI-MODELS.md). It
+# answers only: ask mode, no edits, no commits, no git, no repo map, so nothing but the prompt leaves this PC. It
+# runs no commands either, so it works from what the prompt carries (the scan list, the mod's facts).
+ENGINES = ("claude", "aider")
+AIDER_NOTE = (
+    "\n\nYou are answering from this text only: you cannot run commands or read files, so do not ask to. "
+    "Where the task says to check something with am find or am fields, say what to check instead."
+)
+
+
+def aider_exe():
+    found = shutil.which("aider") or shutil.which(
+        "aider", path=str(Path.home() / ".local" / "bin")
+    )
+    if not found:
+        raise dev.DevError("aider is not installed or not on PATH (uv tool install aider-chat)")
+    return found
+
+
+def aider_command(prompt):
+    return [
+        aider_exe(),
+        "--chat-mode",
+        "ask",
+        "--message",
+        prompt + AIDER_NOTE,
+        "--map-tokens",
+        "0",
+        "--no-git",
+        "--no-auto-commits",
+        "--yes-always",
+        "--no-pretty",
+        "--no-stream",
+        "--no-fancy-input",
+        "--no-check-update",
+        "--no-show-release-notes",
+        "--no-detect-urls",
+        "--no-analytics",
+    ]
+
+
+def start_claude(prompt, read_only, engine="claude"):
+    if engine not in ENGINES:
+        raise dev.DevError(f"unknown model engine {engine!r}; use one of: {', '.join(ENGINES)}")
+    if engine == "aider" and not read_only:
+        raise dev.DevError("aider only answers here: run tasks that change files with Claude Code")
     prompt = (prompt or "").strip()
     if len(prompt) < 10:
         raise dev.DevError("the prompt is empty")
@@ -461,12 +506,15 @@ def start_claude(prompt, read_only):
     with SESSION_LOCK:
         if RESTARTING.is_set():
             raise dev.DevError("Studio is restarting; reconnect before starting jobs")
-        job = Job(
-            "claude",
-            ["(read only)" if read_only else "(may change files)"],
-            cmd=claude_command(prompt, read_only),
-            parse=claude_lines,
-        )
+        if engine == "aider":
+            job = Job("aider", ["(read only)"], cmd=aider_command(prompt))
+        else:
+            job = Job(
+                "claude",
+                ["(read only)" if read_only else "(may change files)"],
+                cmd=claude_command(prompt, read_only),
+                parse=claude_lines,
+            )
         JOBS[job.id] = job
     job.persist()
     threading.Thread(target=job.run, daemon=True).start()
@@ -1100,7 +1148,9 @@ class Handler(BaseHTTPRequestHandler):
             self.local_only()
             return self.send_json(
                 start_claude(
-                    str(body.get("prompt", "")), bool(body.get("read_only", True))
+                    str(body.get("prompt", "")),
+                    bool(body.get("read_only", True)),
+                    str(body.get("engine", "claude")),
                 ).view()
             )
         if parts == ["api", "console"]:
