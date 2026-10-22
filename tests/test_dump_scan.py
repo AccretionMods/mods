@@ -114,6 +114,7 @@ class Scan(unittest.TestCase):
         self.assertIn("AdvertHandler.TestMode", rows)
         self.assertIn("score", flagged["SkillsManager.set_TokenBalance"])
         self.assertIn("value", flagged["SkillsManager.set_TokenBalance"])
+        self.assertEqual(rows["SkillsManager.set_TokenBalance"]["area"], "In-app purchases")
 
     def test_marks_what_the_mod_has_and_caches(self):
         tweaks = {"tweaks": [{"key": "pts", "pins": [{"object": "SkillsManager.instance", "setter": "set_SkillPoints"}]},

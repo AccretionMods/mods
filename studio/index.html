@@ -702,7 +702,7 @@ const App = {
     const box = this.byId("tab-scan");
     if (box.dataset.mod === this.mod && box.childElementCount) return;
     box.dataset.mod = this.mod; box.replaceChildren();
-    const area = this.el("select", {}, [["", "All areas"], ["Survival", "Survival"], ["Combat", "Combat"], ["Pet", "Pet & companion"], ["Items", "Items & crafting"], ["Progress", "Progress"], ["Exploration", "Exploration"], ["Other", "Other"]].map(o => this.el("option", { value: o[0], text: o[1] })));
+    const area = this.el("select", {}, [["", "All areas"], ["In-app purchases", "In-app purchases"], ["Survival", "Survival"], ["Combat", "Combat"], ["Pet", "Pet & companion"], ["Items", "Items & crafting"], ["Progress", "Progress"], ["Exploration", "Exploration"], ["Other", "Other"]].map(o => this.el("option", { value: o[0], text: o[1] })));
     const find = this.el("input", { placeholder: "filter: regex on Class.member", class: "mono", style: "flex:1;min-width:180px" });
     const flagged = this.el("input", { type: "checkbox" });
     const hideHas = this.el("input", { type: "checkbox" }); hideHas.checked = true;

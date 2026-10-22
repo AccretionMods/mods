@@ -17,7 +17,7 @@ import os
 import re
 from pathlib import Path
 
-VERSION = 7  # topic labels no longer exclude candidates; rebuild older caches
+VERSION = 8  # dedicated purchase area and broader purchase-name detection
 
 IMAGE = re.compile(r"^// Image \d+: (.+?)(?:\.dll)? - (\d+)\s*$")
 NAMESPACE = re.compile(r"^\s*// Namespace: ?(\S*)")
@@ -45,7 +45,7 @@ AREAS = [  # first match wins; member names count more than class names
 ]  # matched against words: "SkillPoints" -> "skill points", so "ill" no longer hits "skill"
 # Informational labels only: no topic excludes a candidate.
 FLAGS = [
-    ("sold in the shop", r"caps|token|gem|coin|currency|purchas|iap|shop|price|cost|premium|vip|subscri|"
+    ("sold in the shop", r"caps|token|gem|coin|currency|purchas|iap|in_?app|full_?game|paywall|billing|receipt|entitlement|shop|price|cost|premium|vip|subscri|"
                          r"max_?bag|bag_?(size|capacity)|fuel|petrol|van(crate|warranty)|fast_?travel|revive|"
                          r"supply_?(crate|drop)|boost|daily_?reward|redeem|special_?offer|starter_?pack|"
                          r"(battle|season|survivor|premium)_?pass"),
@@ -77,6 +77,8 @@ def _words(name):
 
 
 def area_of(cls, member):
+    if flag_of(cls, member) == "sold in the shop":
+        return "In-app purchases", flag_of("", member) == "sold in the shop"
     words = _words(member)
     for area, rx in AREAS:
         if re.search(rx, words):

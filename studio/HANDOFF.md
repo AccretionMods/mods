@@ -6,6 +6,7 @@ this lives in the AccretionMods/mods repo, so nothing personal, no secrets, neut
 Topic restrictions removed locally (2026-10-22): prompt builder and scan ranking allow all feature topics,
 including IAP and full-game unlocks. Scan and learned suggestions include shop/ads/accounts/online candidates;
 labels are informational, Add opens the regular pin form, and Games includes online games by default.
+Scan's area filter includes In-app purchases for purchase, currency, subscription, entitlement and full-game names.
 Technical validation, local-only execution, private-file handling and publication approval remain in place.
 Verified: 181 unit tests (11 skipped), Studio API adds a synthetic full-game pin, JavaScript parses and
 UI logic opens labelled pins directly and includes online games despite the old saved default filter.
