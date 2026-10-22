@@ -11,6 +11,11 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
     if (Test-Path "$env:USERPROFILE\.local\bin\uv.exe") { $env:Path = "$env:USERPROFILE\.local\bin;$env:Path" }
     else { Write-Host "uv is not on PATH (https://docs.astral.sh/uv/). Or run: py -3 $PSScriptRoot\dev.py $args"; exit 1 }
 }
+if ($args.Count -ge 1 -and $args[0] -eq 'ui') {
+    # Mod Studio: the local web page for this loop (studio/server.py)
+    & uv run --no-project --python 3.12 "$PSScriptRoot\..\studio\server.py" @($args | Select-Object -Skip 1)
+    exit $LASTEXITCODE
+}
 if ($args.Count -eq 0) {
     & uv run --no-project --python 3.12 "$PSScriptRoot\dev.py" --help
     exit $LASTEXITCODE

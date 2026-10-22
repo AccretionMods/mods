@@ -55,7 +55,7 @@ import zipfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-ROOT = HERE.parent
+ROOT = Path(os.environ["AM_REPO"]) if os.environ.get("AM_REPO") else HERE.parent  # AM_REPO: the tests point it at a temp repo
 sys.path.insert(0, str(HERE))
 
 import dev_learn
