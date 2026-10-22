@@ -11,7 +11,7 @@ static NSString *AMKey(NSString *key) {
 typedef struct {
     char key[48];
     bool ok;
-    char reason[96];
+    char reason[160];
     CFAbsoluteTime at;
 } AMStatusEntry;
 static AMStatusEntry sStatus[96];
@@ -41,17 +41,17 @@ void AMMenuStatus(const char *key, bool ok, const char *reason) {
 // Whether a switch's cheat is working now, and the line shown under its title.
 static BOOL AMStatusFor(NSString *key, NSString **line) {
     BOOL ok = NO;
-    NSString *text = @"No report from the mod yet (is the game loaded?)";
+    NSString *text = @"Waiting for the game to load";
     os_unfair_lock_lock(&sStatusLock);
     for (int i = 0; i < sStatusCount; i++) {
         if (strcmp(sStatus[i].key, key.UTF8String)) continue;
         if (CFAbsoluteTimeGetCurrent() - sStatus[i].at > AMStatusStale) {
-            text = @"No report for 15 s: not applying";
+            text = @"Stopped: no report for 15 s";
         } else if (sStatus[i].ok) {
             ok = YES;
             text = @"Working";
         } else {
-            text = [NSString stringWithFormat:@"Not working: %s", sStatus[i].reason];
+            text = @(sStatus[i].reason);
         }
         break;
     }
@@ -126,6 +126,7 @@ static UIColor *AMNeon(BOOL ok) {
 @property (nonatomic, copy) NSString *symbol;
 @property (nonatomic, copy) NSArray<NSDictionary<NSString *, NSString *> *> *(^entries)(void);
 @property (nonatomic, copy) void (^onPick)(NSInteger);
+@property (nonatomic, copy) NSString *section;  // the menu group it belongs to ("" before any addSection)
 @end
 
 @implementation AMItem
@@ -188,6 +189,8 @@ static UIColor *AMNeon(BOOL ok) {
 
 @interface AMPanel : UITableViewController
 @property (nonatomic, strong) NSArray<AMItem *> *items;
+@property (nonatomic, strong) NSArray<NSString *> *sectionTitles;           // in the order first added
+@property (nonatomic, strong) NSArray<NSArray<NSNumber *> *> *sectionRows;  // indexes into items
 @property (nonatomic, strong, nullable) NSTimer *statusTimer;
 @property (nonatomic, copy, nullable) void (^onClose)(void);  // the whole menu went away (Done or swipe down)
 @end
@@ -198,8 +201,39 @@ static UIColor *AMNeon(BOOL ok) {
     if ((self = [super initWithStyle:UITableViewStyleInsetGrouped])) {
         _items = items;
         self.title = title;
+        NSMutableArray<NSString *> *titles = [NSMutableArray new];
+        NSMutableDictionary<NSString *, NSMutableArray<NSNumber *> *> *rows = [NSMutableDictionary new];
+        [items enumerateObjectsUsingBlock:^(AMItem *item, NSUInteger i, BOOL *stop) {
+            NSString *t = item.section ?: @"";
+            if (!rows[t]) { rows[t] = [NSMutableArray new]; [titles addObject:t]; }
+            [rows[t] addObject:@(i)];
+        }];
+        _sectionTitles = titles;
+        NSMutableArray *ordered = [NSMutableArray new];
+        for (NSString *t in titles) [ordered addObject:rows[t]];
+        _sectionRows = ordered;
     }
     return self;
+}
+
+- (NSInteger)flatIndexAt:(NSIndexPath *)path {
+    return self.sectionRows[path.section][path.row].integerValue;
+}
+
+- (NSIndexPath *)pathOfFlat:(NSInteger)flat {
+    for (NSUInteger s = 0; s < self.sectionRows.count; s++) {
+        NSUInteger r = [self.sectionRows[s] indexOfObject:@(flat)];
+        if (r != NSNotFound) return [NSIndexPath indexPathForRow:r inSection:s];
+    }
+    return [NSIndexPath indexPathForRow:0 inSection:0];
+}
+
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
+    return self.sectionTitles.count;
+}
+
+- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
+    return self.sectionTitles[section].length ? self.sectionTitles[section] : nil;
 }
 
 - (void)viewDidLoad {
@@ -215,19 +249,22 @@ static UIColor *AMNeon(BOOL ok) {
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    return self.items.count;
+    return self.sectionRows[section].count;
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
-    return @"Made by Accretion. Settings are saved on this device. A switch that is on shows a dot: green when its cheat is reaching the game, red when it is not, with the reason. The ring around the menu button sums them up: green all working, yellow some, red none.";
+    if (section != (NSInteger)self.sectionTitles.count - 1) return nil;
+    return @"Made by Accretion. Settings are saved on this device. A switch that is on shows a dot: green when its cheat is working, red when it is not, with what to do. The ring around the menu button sums them up: green all working, yellow some, red none.";
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
-    AMItem *item = self.items[indexPath.row];
+    NSInteger flat = [self flatIndexAt:indexPath];
+    AMItem *item = self.items[flat];
     BOOL isSwitch = !item.isList && !item.isSlider;
     UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:isSwitch ? UITableViewCellStyleSubtitle : UITableViewCellStyleValue1 reuseIdentifier:nil];
     cell.selectionStyle = UITableViewCellSelectionStyleNone;
     cell.textLabel.text = item.title;
+    cell.textLabel.numberOfLines = 0;  // whole titles, on two lines when they need it
     NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
 
     if (item.isList) {
@@ -239,14 +276,14 @@ static UIColor *AMNeon(BOOL ok) {
         s.minimumValue = item.min;
         s.maximumValue = item.max;
         s.value = [d floatForKey:AMKey(item.key)];
-        s.tag = indexPath.row;
+        s.tag = flat;
         [s addTarget:self action:@selector(sliderChanged:) forControlEvents:UIControlEventValueChanged];
         cell.accessoryView = s;
         cell.detailTextLabel.text = [NSString stringWithFormat:@"%.1f", s.value];
     } else {
         UISwitch *s = [UISwitch new];
         s.on = [d boolForKey:AMKey(item.key)];
-        s.tag = indexPath.row;
+        s.tag = flat;
         [s addTarget:self action:@selector(switchChanged:) forControlEvents:UIControlEventValueChanged];
         cell.accessoryView = s;
         // room for the status dot, drawn on top of an empty image so the title lines up with or without it
@@ -270,17 +307,26 @@ static UIColor *AMNeon(BOOL ok) {
     NSString *line = nil;
     BOOL ok = AMStatusFor(item.key, &line);
     dot.ok = ok;
-    cell.detailTextLabel.text = line;
-    cell.detailTextLabel.textColor = ok ? [UIColor colorWithRed:0.10 green:0.70 blue:0.20 alpha:1] : UIColor.systemRedColor;
+    dot.accessibilityValue = line;
+    // the green dot says "working" on its own; a line only when something needs doing
+    cell.detailTextLabel.text = ok ? nil : line;
+    cell.detailTextLabel.textColor = UIColor.systemRedColor;
     cell.detailTextLabel.numberOfLines = 0;
 }
 
 - (void)refreshStatus {
+    BOOL resize = NO;
     for (NSIndexPath *path in self.tableView.indexPathsForVisibleRows) {
-        AMItem *item = self.items[path.row];
+        AMItem *item = self.items[[self flatIndexAt:path]];
         if (item.isList || item.isSlider) continue;
         UITableViewCell *cell = [self.tableView cellForRowAtIndexPath:path];
-        if (cell) [self showStatusOf:item inCell:cell];
+        if (!cell) continue;
+        BOOL had = cell.detailTextLabel.text.length > 0;
+        [self showStatusOf:item inCell:cell];
+        if (had != (cell.detailTextLabel.text.length > 0)) resize = YES;
+    }
+    if (resize) {
+        [UIView performWithoutAnimation:^{ [self.tableView beginUpdates]; [self.tableView endUpdates]; }];
     }
 }
 
@@ -304,7 +350,7 @@ static UIColor *AMNeon(BOOL ok) {
 }
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
-    AMItem *item = self.items[indexPath.row];
+    AMItem *item = self.items[[self flatIndexAt:indexPath]];
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
     if (item.isList) [self.navigationController pushViewController:[[AMListPanel alloc] initWithItem:item] animated:YES];
 }
@@ -313,7 +359,7 @@ static UIColor *AMNeon(BOOL ok) {
     AMItem *item = self.items[s.tag];
     [NSUserDefaults.standardUserDefaults setBool:s.on forKey:AMKey(item.key)];
     if (item.onSwitch) item.onSwitch(s.on);
-    UITableViewCell *cell = [self.tableView cellForRowAtIndexPath:[NSIndexPath indexPathForRow:s.tag inSection:0]];
+    UITableViewCell *cell = [self.tableView cellForRowAtIndexPath:[self pathOfFlat:s.tag]];
     if (cell) {
         [self showStatusOf:item inCell:cell];
         [self.tableView beginUpdates];  // the status line appears or goes: let the row resize
@@ -324,7 +370,7 @@ static UIColor *AMNeon(BOOL ok) {
 - (void)sliderChanged:(UISlider *)s {
     AMItem *item = self.items[s.tag];
     [NSUserDefaults.standardUserDefaults setFloat:s.value forKey:AMKey(item.key)];
-    UITableViewCell *cell = [self.tableView cellForRowAtIndexPath:[NSIndexPath indexPathForRow:s.tag inSection:0]];
+    UITableViewCell *cell = [self.tableView cellForRowAtIndexPath:[self pathOfFlat:s.tag]];
     cell.detailTextLabel.text = [NSString stringWithFormat:@"%.1f", s.value];
     if (item.onSlider) item.onSlider(s.value);
 }
@@ -338,7 +384,13 @@ typedef NS_ENUM(NSInteger, AMRingState) { AMRingNone, AMRingGood, AMRingSome, AM
 @interface AMButton : UIButton
 @property (nonatomic, strong) CAShapeLayer *ring;
 @property (nonatomic) AMRingState ringState;
+@property (nonatomic) BOOL menuOpen;  // hidden while the menu is open
+@property (nonatomic, strong, nullable) NSTimer *idleTimer;
+- (void)wake;
+- (void)restorePosition;
 @end
+
+static NSString *const AMButtonSpot = @"AM__buttonSpot";  // where the button was left, as fractions of the screen
 
 @implementation AMButton
 
@@ -352,6 +404,7 @@ typedef NS_ENUM(NSInteger, AMRingState) { AMRingNone, AMRingGood, AMRingSome, AM
         [self setImage:icon forState:UIControlStateNormal];
         self.tintColor = UIColor.whiteColor;
         [self addGestureRecognizer:[[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(drag:)]];
+        [self addTarget:self action:@selector(wake) forControlEvents:UIControlEventTouchDown];
         // the status ring just outside the button: green all working, yellow some, red none (AMMenu updateBadge)
         _ring = [CAShapeLayer layer];
         _ring.path = [UIBezierPath bezierPathWithOvalInRect:CGRectInset(self.bounds, -3, -3)].CGPath;
@@ -396,14 +449,54 @@ typedef NS_ENUM(NSInteger, AMRingState) { AMRingNone, AMRingGood, AMRingSome, AM
     }
 }
 
+- (CGRect)allowedArea {
+    UIView *parent = self.superview;
+    CGFloat r = self.bounds.size.width / 2 + 6;  // the ring and its glow stay on screen
+    return CGRectInset(UIEdgeInsetsInsetRect(parent.bounds, parent.safeAreaInsets), r, r);
+}
+
 - (void)drag:(UIPanGestureRecognizer *)pan {
     UIView *parent = self.superview;
     CGPoint t = [pan translationInView:parent];
-    CGRect b = UIEdgeInsetsInsetRect(parent.bounds, parent.safeAreaInsets);
-    CGFloat r = self.bounds.size.width / 2;
-    self.center = CGPointMake(MIN(MAX(self.center.x + t.x, CGRectGetMinX(b) + r), CGRectGetMaxX(b) - r),
-                              MIN(MAX(self.center.y + t.y, CGRectGetMinY(b) + r), CGRectGetMaxY(b) - r));
+    CGRect a = [self allowedArea];
+    self.center = CGPointMake(MIN(MAX(self.center.x + t.x, CGRectGetMinX(a)), CGRectGetMaxX(a)),
+                              MIN(MAX(self.center.y + t.y, CGRectGetMinY(a)), CGRectGetMaxY(a)));
     [pan setTranslation:CGPointZero inView:parent];
+    if (pan.state == UIGestureRecognizerStateBegan) [self wake];
+    if (pan.state != UIGestureRecognizerStateEnded && pan.state != UIGestureRecognizerStateCancelled) return;
+    // snap to the nearer side edge, and remember the spot for the next launch
+    CGPoint end = CGPointMake(self.center.x < CGRectGetMidX(a) ? CGRectGetMinX(a) : CGRectGetMaxX(a), self.center.y);
+    void (^move)(void) = ^{ self.center = end; };
+    if (UIAccessibilityIsReduceMotionEnabled()) move();
+    else [UIView animateWithDuration:0.35 delay:0 usingSpringWithDamping:0.75 initialSpringVelocity:0.5 options:0 animations:move completion:nil];
+    CGSize size = parent.bounds.size;
+    if (size.width > 0 && size.height > 0) {
+        [NSUserDefaults.standardUserDefaults setObject:NSStringFromCGPoint(CGPointMake(end.x / size.width, end.y / size.height)) forKey:AMButtonSpot];
+    }
+    [self wake];
+}
+
+- (void)restorePosition {
+    NSString *saved = [NSUserDefaults.standardUserDefaults stringForKey:AMButtonSpot];
+    if (!saved || !self.superview) return;
+    CGPoint f = CGPointFromString(saved);
+    CGSize size = self.superview.bounds.size;
+    CGRect a = [self allowedArea];
+    self.center = CGPointMake(MIN(MAX(f.x * size.width, CGRectGetMinX(a)), CGRectGetMaxX(a)),
+                              MIN(MAX(f.y * size.height, CGRectGetMinY(a)), CGRectGetMaxY(a)));
+}
+
+// Full strength on touch, then half after 3 s so it hides less of the game. The ring keeps its colour.
+- (void)wake {
+    if (self.menuOpen) return;
+    self.alpha = 1;
+    [self.idleTimer invalidate];
+    __weak typeof(self) weak = self;
+    self.idleTimer = [NSTimer scheduledTimerWithTimeInterval:3 repeats:NO block:^(NSTimer *t) {
+        AMButton *me = weak;
+        if (!me || me.menuOpen) return;
+        [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : 0.4 animations:^{ me.alpha = 0.5; }];
+    }];
 }
 
 @end
@@ -415,6 +508,7 @@ typedef NS_ENUM(NSInteger, AMRingState) { AMRingNone, AMRingGood, AMRingSome, AM
     NSHashTable<UIWindow *> *_windows;
     NSHashTable<AMButton *> *_buttons;
     NSTimer *_badgeTimer;
+    NSString *_section;
     BOOL _installed;
 }
 
@@ -443,12 +537,17 @@ typedef NS_ENUM(NSInteger, AMRingState) { AMRingNone, AMRingGood, AMRingSome, AM
     return [NSUserDefaults.standardUserDefaults floatForKey:AMKey(key)];
 }
 
+- (void)addSection:(NSString *)title {
+    _section = [title copy];
+}
+
 - (void)addSwitch:(NSString *)key title:(NSString *)title defaultValue:(BOOL)value onChange:(void (^)(BOOL))block {
     [NSUserDefaults.standardUserDefaults registerDefaults:@{AMKey(key): @(value)}];
     AMItem *item = [AMItem new];
     item.key = key;
     item.title = title;
     item.onSwitch = block;
+    item.section = _section ?: @"";
     [_items addObject:item];
 }
 
@@ -461,6 +560,7 @@ typedef NS_ENUM(NSInteger, AMRingState) { AMRingNone, AMRingGood, AMRingSome, AM
     item.min = min;
     item.max = max;
     item.onSlider = block;
+    item.section = _section ?: @"";
     [_items addObject:item];
 }
 
@@ -471,6 +571,7 @@ typedef NS_ENUM(NSInteger, AMRingState) { AMRingNone, AMRingGood, AMRingSome, AM
     item.symbol = symbol;
     item.entries = entries;
     item.onPick = block;
+    item.section = _section ?: @"";
     [_items addObject:item];
 }
 
@@ -493,6 +594,8 @@ typedef NS_ENUM(NSInteger, AMRingState) { AMRingNone, AMRingGood, AMRingSome, AM
     AMButton *button = [AMButton new];
     [button addTarget:self action:@selector(open:) forControlEvents:UIControlEventTouchUpInside];
     [window addSubview:button];
+    [button restorePosition];
+    [button wake];
     [_buttons addObject:button];
     if (!_badgeTimer) {
         __weak typeof(self) weak = self;
@@ -518,6 +621,7 @@ typedef NS_ENUM(NSInteger, AMRingState) { AMRingNone, AMRingGood, AMRingSome, AM
 }
 
 - (void)open:(UIButton *)sender {
+    [[[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight] impactOccurred];
     UIViewController *top = sender.window.rootViewController;
     while (top.presentedViewController) top = top.presentedViewController;
     if (!top) return;
@@ -533,7 +637,10 @@ typedef NS_ENUM(NSInteger, AMRingState) { AMRingNone, AMRingGood, AMRingSome, AM
 - (void)setButtonsHidden:(BOOL)hidden {
     for (AMButton *button in _buttons) {
         button.userInteractionEnabled = !hidden;
+        button.menuOpen = hidden;
+        [button.idleTimer invalidate];
         [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : 0.2 animations:^{ button.alpha = hidden ? 0 : 1; }];
+        if (!hidden) [button wake];
     }
 }
 
