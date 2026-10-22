@@ -47,8 +47,22 @@ typedef const uint16_t *string_chars_t(void *str);
 typedef int32_t string_length_t(void *str);
 typedef void *string_new_t(const char *utf8);
 
+static void *lookupClass(const char *name);
+
+// Classes are looked up once per name (a ticker asks for the same few every half second).
 void *AMIl2cppClass(const char *name) {
+    static NSMutableDictionary<NSString *, NSValue *> *cache;
     if (!name || !*name) return NULL;
+    if (!cache) cache = [NSMutableDictionary new];
+    NSString *key = @(name);
+    NSValue *hit = cache[key];
+    if (hit) return hit.pointerValue;
+    void *klass = lookupClass(name);
+    if (klass) cache[key] = [NSValue valueWithPointer:klass];
+    return klass;
+}
+
+static void *lookupClass(const char *name) {
     domain_get_t *domain_get = IL2CPP(domain_get);
     domain_assembly_open_t *assembly_open = IL2CPP(domain_assembly_open);
     assembly_get_image_t *get_image = IL2CPP(assembly_get_image);
@@ -100,13 +114,23 @@ static void *field(const char *cls, const char *name) {
     return f;
 }
 
+#define FIELD_ATTRIBUTE_STATIC 0x10
+typedef int field_get_flags_t(void *field);
+
+static bool fieldIsStatic(void *f) {
+    field_get_flags_t *flags = IL2CPP(field_get_flags);
+    return flags ? (flags(f) & FIELD_ATTRIBUTE_STATIC) != 0 : true;  // without the export, trust the caller
+}
+
 void *AMIl2cppStaticObject(const char *cls, const char *name) {
     void *f = field(cls, name);
     field_static_get_value_t *get = IL2CPP(field_static_get_value);
     if (!f || !get) return NULL;
-    void *value = NULL;
-    get(f, &value);
-    return value;
+    if (!fieldIsStatic(f)) { logOnce([NSString stringWithFormat:@"%s.%s is not a static field", cls, name]); return NULL; }
+    // the value is copied with the field's own size: room for a struct, not just a pointer
+    char value[64] = {0};
+    get(f, value);
+    return *(void **)value;
 }
 
 void *AMIl2cppField(void *obj, const char *cls, const char *name) {
@@ -114,23 +138,35 @@ void *AMIl2cppField(void *obj, const char *cls, const char *name) {
     field_get_offset_t *offset = IL2CPP(field_get_offset);
     if (!f || !offset) return NULL;
     size_t at = offset(f);
+    bool isStatic = fieldIsStatic(f);
+    if (obj && isStatic) { logOnce([NSString stringWithFormat:@"%s.%s is static: pass NULL as the object", cls, name]); return NULL; }
+    if (!obj && !isStatic) return NULL;  // an instance field with no object (the singleton is not there yet)
     if (obj) return (char *)obj + at;
-    // a static field: its offset is inside the class's static data; il2cpp_class_get_static_field_data is
-    // not exported everywhere, so read through the value instead
-    static char scratch[16];
+    // a static field: its offset is inside the class's static data (writable through
+    // il2cpp_class_get_static_field_data where the game exports it); otherwise a copy of the value is
+    // returned, and a write to it changes nothing in the game
+    typedef void *class_get_static_field_data_t(void *klass);
+    class_get_static_field_data_t *static_data = IL2CPP(class_get_static_field_data);
+    void *klass = AMIl2cppClass(cls);
+    if (static_data && klass) {
+        void *base = static_data(klass);
+        if (base) return (char *)base + at;
+    }
+    static char scratch[64];
     field_static_get_value_t *get = IL2CPP(field_static_get_value);
     if (!get) return NULL;
     memset(scratch, 0, sizeof scratch);
     get(f, scratch);
+    logOnce([NSString stringWithFormat:@"static %s.%s read as a copy (writes won't stick)", cls, name]);
     return scratch;
 }
 
-static void *unityObjectMethod(const char *name, int argc) {
+static void *unityObjectMethod(const char *name, int argc, bool quiet) {
     void *object = AMIl2cppClass("UnityEngine.CoreModule:UnityEngine.Object");
     class_get_method_from_name_t *from_name = IL2CPP(class_get_method_from_name);
     if (!object || !from_name) return NULL;
     void *m = from_name(object, name, argc);
-    if (!m) logOnce([NSString stringWithFormat:@"UnityEngine.Object.%s/%d not found", name, argc]);
+    if (!m && !quiet) logOnce([NSString stringWithFormat:@"UnityEngine.Object.%s/%d not found", name, argc]);
     return m;
 }
 
@@ -154,20 +190,35 @@ static void *invoke(void *method, void *obj, void **argv, const char *what) {
     return result;
 }
 
+// Unity 2023+ has FindFirstObjectByType / FindObjectsByType(Type, FindObjectsInactive, FindObjectsSortMode);
+// older engines only FindObjectOfType / FindObjectsOfType(Type). Both are tried, newest first.
 void *AMIl2cppFindObject(const char *cls) {
-    void *find = unityObjectMethod("FindFirstObjectByType", 1), *type = typeObject(cls);
-    if (!find || !type) return NULL;
+    void *type = typeObject(cls);
+    if (!type) return NULL;
     void *args[1] = {type};
-    return invoke(find, NULL, args, "FindFirstObjectByType");
+    void *find = unityObjectMethod("FindFirstObjectByType", 1, true);
+    if (find) return invoke(find, NULL, args, "FindFirstObjectByType");
+    find = unityObjectMethod("FindObjectOfType", 1, false);
+    return find ? invoke(find, NULL, args, "FindObjectOfType") : NULL;
 }
 
 void *AMIl2cppFindObjects(const char *cls, int32_t *count) {
     if (count) *count = 0;
-    void *find = unityObjectMethod("FindObjectsByType", 3), *type = typeObject(cls);
-    if (!find || !type) return NULL;
+    void *type = typeObject(cls);
+    if (!type) return NULL;
     int32_t include = 0, sortNone = 0;  // FindObjectsInactive.Exclude, FindObjectsSortMode.None
-    void *args[3] = {type, &include, &sortNone};
-    void *array = invoke(find, NULL, args, "FindObjectsByType");
+    void *array = NULL;
+    void *find = unityObjectMethod("FindObjectsByType", 3, true);
+    if (find) {
+        void *args[3] = {type, &include, &sortNone};
+        array = invoke(find, NULL, args, "FindObjectsByType");
+    } else if ((find = unityObjectMethod("FindObjectsByType", 2, true))) {
+        void *args[2] = {type, &sortNone};
+        array = invoke(find, NULL, args, "FindObjectsByType");
+    } else if ((find = unityObjectMethod("FindObjectsOfType", 1, false))) {
+        void *args[1] = {type};
+        array = invoke(find, NULL, args, "FindObjectsOfType");
+    }
     if (array && count) *count = AMIl2cppArrayCount(array);
     return array;
 }
@@ -218,6 +269,7 @@ void *AMIl2cppNewString(const char *utf8) {
 void AMIl2cppEvery(double seconds, void (^block)(void)) {
     static NSMutableArray *timers;
     if (!timers) timers = [NSMutableArray new];
+    if (!(seconds >= 0.05)) seconds = 0.05;  // never a hot loop (also catches NaN)
     dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
     dispatch_source_set_timer(timer, DISPATCH_TIME_NOW, (uint64_t)(seconds * NSEC_PER_SEC), (uint64_t)(0.1 * NSEC_PER_SEC));
     dispatch_source_set_event_handler(timer, block);

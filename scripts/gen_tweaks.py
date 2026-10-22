@@ -123,14 +123,19 @@ def parse_signature(entry):
     enums = set(entry.get("enums", []))
     args = []
     for i, p in enumerate(split_params(params)):
-        words = p.replace("ref ", "").replace("out ", "").replace("in ", "").split()
+        p = p.split("=", 1)[0].strip()  # "int level = -1": the default is the caller's business
+        by_ref = bool(re.match(r"^(ref|out)\s", p))
+        words = re.sub(r"^(?:(?:ref|out|in|params|this)\s+)+", "", p).split()
         if len(words) < 2:
             raise TweaksError(f"can't read parameter {i} of {hook_name(entry)}: {p!r}")
-        cs_type, pname = words[-2], words[-1].split("=")[0]
+        cs_type, pname = words[-2], words[-1]
         pname = re.sub(r"\W", "_", pname) or f"a{i}"
-        if pname in ("self", "mi", "method", "default", "class", "new", "this"):
+        if pname in ("self", "mi", "method", "default", "class", "new", "this", "value", "v", "p", "obj"):
             pname = f"a{i}"
-        args.append((ctype(cs_type, enums), pname, cs_type))
+        c = ctype(cs_type, enums)
+        if cs_type.endswith("?"):
+            raise TweaksError(f"{hook_name(entry)}: parameter {pname} is a Nullable ({cs_type}), passed by value; hook it as custom")
+        args.append((c + " *" if by_ref else c, pname, cs_type))
     overrides = entry.get("ctypes")
     if overrides:
         if len(overrides) != len(args):
@@ -222,11 +227,12 @@ def problems(tweaks, hooks):
                     f"{hwhere}: {hk['method']} is not in hooks.json (scripts/dev.py add <mod> {hk['method']})"
                 )
                 continue
-            if hk["method"] in used and action != "custom":
+            full = hook_name(entry)
+            if full in used and action != "custom":
                 out.append(
-                    f"{hwhere}: {hk['method']} is already hooked by tweak {used[hk['method']]}; one method, one tweak"
+                    f"{hwhere}: {hk['method']} is already hooked by tweak {used[full]}; one method, one tweak"
                 )
-            used.setdefault(hk["method"], key)
+            used.setdefault(full, key)
             if action == "custom":
                 continue
             try:
@@ -264,7 +270,335 @@ def problems(tweaks, hooks):
                     )
                 if "value" not in hk:
                     out.append(f'{hwhere}: arg needs "value"')
+        for j, pin in enumerate(t.get("pins", [])):
+            out += [f"{where} pin {j}: {p}" for p in pin_problems(pin, kind)]
+    if "watch" in tweaks:
+        out += watch_problems(tweaks["watch"], tweaks.get("watch_every", 10))
     return out
+
+
+PIN_WHEN = ("always", "lower", "higher")
+OBJECT_SPEC = re.compile(r"^[A-Za-z_][\w.]*(\[\])?$")
+NAME = re.compile(r"^[A-Za-z_<][\w<>]*$")
+
+
+def value_problems(value, ctype_, kind, what="value"):
+    """A pin value: a number or bool, "slider", "peak" (highest value seen), {"getter": "get_X"} or
+    {"field": "Y"} read from the same object each tick."""
+    if value == "slider":
+        return (
+            [] if kind == "slider" else [f'"{what}": "slider" only on a slider tweak']
+        )
+    if value == "peak":
+        return (
+            []
+            if ctype_ in NUMERIC
+            else [f'"{what}": "peak" needs a numeric field or setter']
+        )
+    if isinstance(value, dict):
+        keys = set(value)
+        if keys not in ({"getter"}, {"field"}):
+            return [f'"{what}" as an object needs exactly one of "getter" or "field"']
+        name = next(iter(value.values()))
+        return (
+            []
+            if isinstance(name, str) and NAME.match(name)
+            else [f'"{what}": bad name {name!r}']
+        )
+    if isinstance(value, (bool, int, float)):
+        return []
+    return [
+        f'needs a "{what}" (number, bool, "slider", "peak", {{"getter": ...}} or {{"field": ...}})'
+    ]
+
+
+def pin_problems(pin, kind):
+    """A pin runs every tick on the live object(s) of a class: the no-JIT path.
+    {"object": "StatHandler.instance" | "Enemy" | "Enemy[]",   static field, first live object, every live object
+     "via": "get_playerStats", "class": "PlayerStats",         optional: a 0-arg getter giving the real target
+     "field": "Hunger" | "setter": "set_Hunger" | "call": "GiveRandomItem",
+     "ctype": "int32_t", "value": 100 | true | "slider" | "peak" | {"getter": "get_HealthMax"} | {"field": "Max"},
+     "when": "always" | "lower" | "higher", "threshold": 50,   write only when the current value is lower/higher
+     "op": "set" | "multiply",                                  multiply: field = base * value, base tracked
+     "args": [-1], "arg_ctypes": ["int32_t"], "every": 10}     call: arguments and seconds between calls"""
+    out = []
+    if not isinstance(pin, dict):
+        return ["must be an object"]
+    obj = pin.get("object")
+    if not isinstance(obj, str) or not OBJECT_SPEC.match(obj):
+        out.append(
+            '"object" must be "Class.staticField", "Class" (first live object) or "Class[]" (every live object)'
+        )
+    for key in ("via", "class"):
+        if key in pin and not (
+            isinstance(pin[key], str) and NAME.match(pin[key].replace(".", ""))
+        ):
+            out.append(f'"{key}" must be a name')
+    targets = [k for k in ("field", "setter", "call") if pin.get(k)]
+    if len(targets) != 1:
+        out.append('needs exactly one of "field", "setter" or "call"')
+        return out
+    target = targets[0]
+    if target == "call":
+        args = pin.get("args", [])
+        ctypes_ = pin.get("arg_ctypes", [])
+        if (
+            not isinstance(args, list)
+            or not isinstance(ctypes_, list)
+            or len(args) != len(ctypes_)
+        ):
+            out.append('"call" needs "args" and "arg_ctypes" lists of the same length')
+        else:
+            for a, c in zip(args, ctypes_):
+                if c not in NUMERIC and c != "bool":
+                    out.append(f'"arg_ctypes": {c} is not a C number type or bool')
+                elif not isinstance(a, (int, float, bool)):
+                    out.append(f'"args": {a!r} is not a number or bool')
+        every = pin.get("every", 0)
+        if not isinstance(every, (int, float)) or every < 0:
+            out.append('"every" must be seconds (0: every tick)')
+        return out
+    ctype_ = pin.get("ctype")
+    if ctype_ not in NUMERIC and ctype_ != "bool":
+        out.append(
+            '"ctype" must be a C number type or bool (dev.py pin reads it from the dump)'
+        )
+        return out
+    out += value_problems(pin.get("value"), ctype_, kind)
+    when = pin.get("when", "always")
+    if when not in PIN_WHEN:
+        out.append(f'"when" must be one of {", ".join(PIN_WHEN)}')
+    if when != "always" and ctype_ == "bool":
+        out.append('"when" lower/higher needs a numeric field or setter')
+    if "threshold" in pin and not isinstance(pin["threshold"], (int, float)):
+        out.append('"threshold" must be a number')
+    op = pin.get("op", "set")
+    if op not in ("set", "multiply"):
+        out.append('"op" must be set or multiply')
+    if op == "multiply" and (target != "field" or ctype_ not in NUMERIC):
+        out.append('"op": "multiply" works on a numeric field')
+    if op == "multiply" and isinstance(obj, str) and obj.endswith("[]"):
+        out.append('"op": "multiply" tracks one base value, so it needs a single object (not Class[])')
+    return out
+
+
+def pin_objects(pin):
+    """C lines that bind `obj` to each target object and open a block per object: (lines, closers, class)."""
+    obj = pin["object"]
+    every = obj.endswith("[]")
+    obj = obj[:-2] if every else obj
+    if pin.get("static_field"):
+        cls, static = obj, pin["static_field"]
+    else:
+        cls, _, static = obj.rpartition(".") if ("." in obj and not every) else ("", "", "")
+        if not cls:
+            cls, static = obj, ""
+    lines = []
+    if every:
+        lines.append(
+            f"        int32_t n = 0; void *arr = AMIl2cppFindObjects({c_string(cls)}, &n);"
+        )
+        lines.append(
+            "        for (int32_t i = 0; i < n; i++) { void *obj = AMIl2cppArrayAt(arr, i); if (!obj) continue;"
+        )
+    elif static:
+        lines.append(
+            f"        void *obj = AMIl2cppStaticObject({c_string(cls)}, {c_string(static)}); if (obj) {{"
+        )
+    else:
+        lines.append(
+            f"        void *obj = AMIl2cppFindObject({c_string(cls)}); if (obj) {{"
+        )
+    target_cls = cls
+    closers = ["        }"]
+    if pin.get("via"):
+        lines.append(
+            f"            void *via = NULL; obj = AMIl2cppCall(obj, {c_string(cls)}, {c_string(pin['via'])}, 0, NULL, &via) ? via : NULL; if (obj) {{"
+        )
+        target_cls = pin.get("class") or cls
+        closers = ["            }", "        }"]
+    elif pin.get("class"):
+        target_cls = pin["class"]
+    return lines, closers, target_cls
+
+
+def pin_value(pin, var, ctype_, cls, state):
+    """(setup lines, C expression) for the value a pin writes."""
+    value = pin["value"]
+    if value == "slider":
+        return [], f"({ctype_}){var}"
+    if value == "peak":
+        return [], f"{state}_peak"
+    if isinstance(value, dict) and "getter" in value:
+        return [
+            f"            void *vb = NULL; {ctype_} *vp = AMIl2cppCall(obj, {c_string(cls)}, {c_string(value['getter'])}, 0, NULL, &vb) ? AMIl2cppUnbox(vb) : NULL;",
+            f"            if (!vp) goto {state}_next;",
+        ], "(*vp)"
+    if isinstance(value, dict):
+        return [
+            f"            {ctype_} *vp = AMIl2cppField(obj, {c_string(cls)}, {c_string(value['field'])});",
+            f"            if (!vp) goto {state}_next;",
+        ], "(*vp)"
+    return [], c_value(value, ctype_)
+
+
+def render_pin(pin, var, kind, key, index):
+    """C lines (inside am_pin_<key>) that apply one pin to its object(s) once."""
+    state = f"s_{key}_{index}"
+    what = pin.get("field") or pin.get("setter") or pin.get("call")
+    lines = [f"    {{  // pin {index}: {pin['object']} {what}"]
+    objects, closers, cls = pin_objects(pin)
+    if pin.get("call"):
+        every = pin.get("every", 0)
+        if every:
+            lines.append(
+                f"        static CFAbsoluteTime {state}_at; CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();"
+            )
+            lines.append(f"        if (now - {state}_at >= {float(every)!r}) {{ {state}_at = now;")
+        lines += objects
+        pairs = list(zip(pin.get("args", []), pin.get("arg_ctypes", [])))
+        decl = "; ".join(
+            f"{c} a{i} = {c_value(a, c)}" for i, (a, c) in enumerate(pairs)
+        )
+        argv = ", ".join(f"&a{i}" for i in range(len(pairs))) or "NULL"
+        lines.append(
+            f"            {decl + '; ' if decl else ''}void *argv[{max(len(pairs), 1)}] = {{{argv}}};"
+        )
+        lines.append(
+            f"            if (AMIl2cppCall(obj, {c_string(cls)}, {c_string(pin['call'])}, {len(pairs)}, argv, NULL)) applied = true;"
+        )
+        lines += closers
+        if every:
+            lines.append("        }")
+        lines.append("    }")
+        return lines
+    lines += objects
+    ctype_ = pin["ctype"]
+    when = pin.get("when", "always")
+    cmp_ = {"always": None, "lower": "<", "higher": ">"}[when]
+    setup, value = pin_value(pin, var, ctype_, cls, state)
+    if pin["value"] == "peak":
+        lines.insert(1, f"    static {ctype_} {state}_peak;")
+    lines += setup
+    limit = c_value(pin["threshold"], ctype_) if "threshold" in pin else value
+    if pin.get("field"):
+        lines.append(
+            f"            {ctype_} *p = AMIl2cppField(obj, {c_string(cls)}, {c_string(pin['field'])});"
+        )
+        lines.append(f"            if (!p) goto {state}_next;")
+        if pin.get("op") == "multiply":
+            lines.append(
+                f"            static {ctype_} {state}_base, {state}_set; if (*p != {state}_set) {state}_base = *p;"
+            )
+            lines.append(
+                f"            {ctype_} want = ({ctype_})({state}_base * {value}); if (want > 0 && *p != want) {{ *p = want; applied = true; }} {state}_set = want;"
+            )
+        else:
+            if pin["value"] == "peak":
+                lines.append(f"            if (*p > {state}_peak) {state}_peak = *p;")
+            cond = "true" if cmp_ is None else f"*p {cmp_} {limit}"
+            lines.append(f"            if ({cond}) {{ *p = {value}; applied = true; }}")
+    else:
+        setter = pin["setter"]
+        getter = "get_" + setter[4:] if setter.startswith("set_") else None
+        if cmp_ is None and pin["value"] != "peak":
+            lines.append(f"            {ctype_} v = {value}; void *argv[1] = {{&v}};")
+            lines.append(
+                f"            if (AMIl2cppCall(obj, {c_string(cls)}, {c_string(setter)}, 1, argv, NULL)) applied = true;"
+            )
+        else:
+            if not getter:
+                raise TweaksError(
+                    f"pin {key}/{index}: when/peak on a setter needs a set_ name (its get_ is read)"
+                )
+            lines.append(
+                f"            void *boxed = NULL; {ctype_} *cur = AMIl2cppCall(obj, {c_string(cls)}, {c_string(getter)}, 0, NULL, &boxed) ? AMIl2cppUnbox(boxed) : NULL;"
+            )
+            lines.append(f"            if (!cur) goto {state}_next;")
+            if pin["value"] == "peak":
+                lines.append(
+                    f"            if (*cur > {state}_peak) {state}_peak = *cur;"
+                )
+            cond = "true" if cmp_ is None else f"*cur {cmp_} {limit}"
+            lines.append(
+                f"            if ({cond}) {{ {ctype_} v = {value}; void *argv[1] = {{&v}}; if (AMIl2cppCall(obj, {c_string(cls)}, {c_string(setter)}, 1, argv, NULL)) applied = true; }}"
+            )
+    if any(f"goto {state}_next" in line for line in lines):
+        lines.append(f"            {state}_next:;")
+    lines += closers
+    lines.append("    }")
+    return lines
+
+
+def watch_problems(watch, every):
+    out = []
+    if not isinstance(every, (int, float)) or every <= 0:
+        out.append('"watch_every" must be seconds')
+    if not isinstance(watch, list):
+        return out + ['"watch" must be a list']
+    for i, w in enumerate(watch):
+        if (
+            not isinstance(w, dict)
+            or not isinstance(w.get("object"), str)
+            or not OBJECT_SPEC.match(w["object"])
+            or w["object"].endswith("[]")
+        ):
+            out.append(f'watch {i}: "object" must be "Class.staticField" or "Class"')
+            continue
+        if bool(w.get("getter")) == bool(w.get("field")):
+            out.append(f'watch {i}: needs exactly one of "getter" or "field"')
+        if w.get("ctype") not in NUMERIC and w.get("ctype") != "bool":
+            out.append(f'watch {i}: "ctype" must be a C number type or bool')
+    return out
+
+
+def render_watch(watch, every):
+    """static void am_watch(void): one log line with every watched value, every N seconds."""
+    fmt, args, body = [], [], []
+    for i, w in enumerate(watch):
+        objects, closers, cls = pin_objects(
+            {"object": w["object"], "via": w.get("via"), "class": w.get("class")}
+        )
+        name = (w.get("name") or (w.get("getter") or w.get("field")).replace("get_", "")).replace("%", "%%")
+        ctype_ = w["ctype"]
+        if ctype_ in ("int32_t", "int16_t", "int8_t", "uint8_t", "uint16_t", "bool"):
+            spec, cast = "%d", "(int)"
+        elif ctype_ == "int64_t":
+            spec, cast = "%lld", "(long long)"
+        elif ctype_ in ("uint64_t", "uint32_t"):
+            spec, cast = "%llu", "(unsigned long long)"
+        else:
+            spec, cast = "%.1f", "(double)"
+        body.append(f'    NSString *w{i} = @"?";')
+        body.append("    {")
+        body += objects
+        if w.get("getter"):
+            body.append(
+                f"            void *b = NULL; {ctype_} *v = AMIl2cppCall(obj, {c_string(cls)}, {c_string(w['getter'])}, 0, NULL, &b) ? AMIl2cppUnbox(b) : NULL;"
+            )
+        else:
+            body.append(
+                f"            {ctype_} *v = AMIl2cppField(obj, {c_string(cls)}, {c_string(w['field'])});"
+            )
+        body.append(
+            f'            if (v) w{i} = [NSString stringWithFormat:@"{spec}", {cast}*v];'
+        )
+        body += closers
+        body.append("    }")
+        fmt.append(f"{name} %@")
+        args.append(f"w{i}")
+    lines = [
+        "static void am_watch(void) {",
+        "    static CFAbsoluteTime at; CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();",
+        f"    if (now - at < {float(every)!r}) return; at = now;",
+    ]
+    lines += body
+    lines.append(
+        f"    AMIl2cppLog(@{c_string('watch: ' + ' '.join(fmt))}, {', '.join(args)});"
+    )
+    lines.append("}")
+    lines.append("")
+    return lines
 
 
 def render(tweaks, hooks, mod_name):
@@ -296,6 +630,7 @@ def render(tweaks, hooks, mod_name):
         '#import "AMTweaks.gen.h"',
         '#import "menu/AMMenu.h"',
         '#import "runtime/AMIl2cpp.h"',
+        '#import "runtime/AMIl2cppData.h"',
         "",
         f"NSString *const AMTweaksTitle = @{c_string(title)};",
         f"NSString *const AMTweaksLogTag = @{c_string(tag)};",
@@ -359,8 +694,8 @@ def render(tweaks, hooks, mod_name):
                     body.append(f"    return {orig_call};")
                 elif action == "multiply":
                     factor = var if kind == "slider" else c_value(hk["value"], "float")
-                    body.append(f"    {ret} value = {orig_call};")
-                    body.append(f"    return {on} ? ({ret})(value * {factor}) : value;")
+                    body.append(f"    {ret} am_result = {orig_call};")
+                    body.append(f"    return {on} ? ({ret})(am_result * {factor}) : am_result;")
                 elif action == "arg":
                     c, n, _ = args[hk["index"]]
                     body.append(f"    if ({on}) {n} = {c_value(hk['value'], c)};")
@@ -376,16 +711,51 @@ def render(tweaks, hooks, mod_name):
         "// Adds every tweak to AMMenu.shared, loads the saved values and registers the hooks with the runtime.",
         "// Call it in %ctor, then AMIl2cppStart() and [AMMenu.shared install].",
         "void AMTweaksRegister(void);",
+        "// Applies every tweak's pins (field writes and setter calls on live objects: the no-JIT path) once.",
+        "// Call it from a ticker on the main thread, like AMIl2cppEvery(0.5, ^{ AMTweaksTick(); }).",
+        "void AMTweaksTick(void);",
         "",
         "#ifdef __cplusplus",
         "}",
         "#endif",
     ]
+    pinned = []
+    for t in tweaks["tweaks"]:
+        if not t.get("pins"):
+            continue
+        kind = t.get("kind", "switch")
+        var = f"am_{t['key']}"
+        on = (
+            var
+            if kind == "switch"
+            else f"({var} != {c_value(t.get('default', t['min']), 'float')})"
+        )
+        m.append(f"static void am_pin_{t['key']}(void) {{")
+        m.append(f"    if (!{on}) return;")
+        m.append("    static bool logged; bool applied = false;")
+        for i, pin in enumerate(t["pins"]):
+            m += render_pin(pin, var, kind, t["key"], i)
+        m.append(
+            f'    if (applied && !logged) {{ logged = true; AMIl2cppLog(@"pin {t["key"]} applied"); }}'
+        )
+        m.append("}")
+        m.append("")
+        pinned.append(t["key"])
+    if tweaks.get("watch"):
+        m += render_watch(tweaks["watch"], tweaks.get("watch_every", 10))
+    m.append("void AMTweaksTick(void) {")
+    for key in pinned:
+        m.append(f"    am_pin_{key}();")
+    if tweaks.get("watch"):
+        m.append("    am_watch();")
+    m.append("}")
+    m.append("")
     m += [
         "void AMTweaksRegister(void) {",
         "    AMMenu *menu = AMMenu.shared;",
         "    menu.title = AMTweaksTitle;",
         '    NSString *jit = AMIl2cppHasJIT() ? @"" : @" (JIT)";',
+        "    (void)jit;",
     ]
     for t in tweaks["tweaks"]:
         kind = t.get("kind", "switch")
@@ -395,7 +765,13 @@ def render(tweaks, hooks, mod_name):
             bool(by_name[hk["method"]].get("needs_jit")) for hk in t.get("hooks", [])
         ]
         label = f"@{c_string(t['title'])}"
-        if needs_jit and all(needs_jit) and t.get("jit_label", True):
+        # a tweak with pins works without JIT whatever its hooks need
+        if (
+            needs_jit
+            and all(needs_jit)
+            and not t.get("pins")
+            and t.get("jit_label", True)
+        ):
             label = f"[{label} stringByAppendingString:jit]"
         if kind == "slider":
             default = c_value(t.get("default", t["min"]), "float")

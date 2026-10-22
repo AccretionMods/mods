@@ -286,7 +286,7 @@ class Render(unittest.TestCase):
 
     def test_multiply_by_slider_when_not_default(self):
         self.assertIn(
-            "(am_damage != 1.0f) ? (int64_t)(value * am_damage) : value", self.m
+            "(am_damage != 1.0f) ? (int64_t)(am_result * am_damage) : am_result", self.m
         )
 
     def test_arg_on_static_method_has_no_self(self):
@@ -384,3 +384,271 @@ class DevHelpers(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+PIN_TWEAKS = {
+    "title": "Game+",
+    "watch_every": 10,
+    "watch": [
+        {
+            "object": "StatHandler.instance",
+            "getter": "get_Hunger",
+            "ctype": "int32_t",
+            "name": "hunger",
+        }
+    ],
+    "tweaks": [
+        {
+            "key": "keepStats",
+            "title": "Stats never drop",
+            "kind": "switch",
+            "hooks": [],
+            "pins": [
+                {
+                    "object": "StatHandler.instance",
+                    "setter": "set_Hunger",
+                    "ctype": "int32_t",
+                    "value": 100,
+                    "when": "lower",
+                },
+                {
+                    "object": "StatHandler.instance",
+                    "setter": "set_Health",
+                    "ctype": "float",
+                    "value": {"getter": "get_HealthMax"},
+                    "when": "lower",
+                },
+            ],
+        },
+        {
+            "key": "lock",
+            "title": "Lockpicks never break",
+            "kind": "switch",
+            "hooks": [],
+            "pins": [
+                {
+                    "object": "Lock",
+                    "setter": "set_LockPickHealth",
+                    "ctype": "float",
+                    "value": "peak",
+                    "when": "lower",
+                },
+            ],
+        },
+        {
+            "key": "miss",
+            "title": "Enemies miss",
+            "kind": "switch",
+            "hooks": [],
+            "pins": [
+                {
+                    "object": "Enemy[]",
+                    "field": "EnemyDamage",
+                    "ctype": "int64_t",
+                    "value": 0,
+                },
+                {
+                    "object": "Enemy[]",
+                    "field": "HasHealthPotion",
+                    "ctype": "bool",
+                    "value": False,
+                },
+            ],
+        },
+        {
+            "key": "dmg",
+            "title": "Damage ×",
+            "kind": "slider",
+            "min": 1,
+            "max": 20,
+            "default": 1,
+            "hooks": [],
+            "pins": [
+                {
+                    "object": "PlayerCompanion.instance",
+                    "class": "FightCompanion",
+                    "field": "Damage",
+                    "ctype": "int64_t",
+                    "op": "multiply",
+                    "value": "slider",
+                },
+            ],
+        },
+        {
+            "key": "rads",
+            "title": "No rads",
+            "kind": "switch",
+            "hooks": [],
+            "pins": [
+                {
+                    "object": "StatHandler.instance",
+                    "via": "get_playerStats",
+                    "class": "PlayerStats",
+                    "field": "Rads",
+                    "ctype": "int32_t",
+                    "value": 0,
+                },
+            ],
+        },
+        {
+            "key": "give",
+            "title": "Give items",
+            "kind": "switch",
+            "hooks": [],
+            "pins": [
+                {
+                    "object": "InventoryData.instance",
+                    "call": "GiveRandomItem",
+                    "args": [-1],
+                    "arg_ctypes": ["int32_t"],
+                    "every": 10,
+                },
+            ],
+        },
+        {
+            "key": "sp",
+            "title": "Skill points",
+            "kind": "switch",
+            "hooks": [],
+            "pins": [
+                {
+                    "object": "SkillsManager.instance",
+                    "setter": "set_SkillPoints",
+                    "ctype": "int32_t",
+                    "value": 99,
+                    "when": "lower",
+                    "threshold": 50,
+                },
+            ],
+        },
+    ],
+}
+
+
+class Pins(unittest.TestCase):
+    def test_valid(self):
+        self.assertEqual(gen_tweaks.problems(PIN_TWEAKS, HOOKS), [])
+
+    def pin(self, pin, kind="switch"):
+        return gen_tweaks.pin_problems(pin, kind)
+
+    def test_problems(self):
+        self.assertTrue(
+            self.pin(
+                {
+                    "object": "A",
+                    "field": "x",
+                    "setter": "set_x",
+                    "ctype": "int32_t",
+                    "value": 1,
+                }
+            )
+        )
+        self.assertTrue(
+            self.pin({"object": "A", "field": "x", "ctype": "void *", "value": 1})
+        )
+        self.assertTrue(
+            self.pin(
+                {"object": "A", "field": "x", "ctype": "int32_t", "value": "slider"}
+            )
+        )  # not a slider
+        self.assertTrue(
+            self.pin(
+                {
+                    "object": "A",
+                    "field": "x",
+                    "ctype": "bool",
+                    "value": True,
+                    "when": "lower",
+                }
+            )
+        )
+        self.assertTrue(
+            self.pin(
+                {
+                    "object": "A",
+                    "field": "x",
+                    "ctype": "int32_t",
+                    "value": {"getter": "g", "field": "f"},
+                }
+            )
+        )
+        self.assertTrue(
+            self.pin({"object": "A", "call": "Do", "args": [1], "arg_ctypes": []})
+        )
+        self.assertTrue(
+            self.pin(
+                {
+                    "object": "A",
+                    "setter": "set_x",
+                    "ctype": "int32_t",
+                    "value": 1,
+                    "op": "multiply",
+                }
+            )
+        )
+        self.assertEqual(
+            self.pin(
+                {"object": "A", "field": "x", "ctype": "int32_t", "value": "slider"},
+                "slider",
+            ),
+            [],
+        )
+
+    def test_render(self):
+        _h, m = gen_tweaks.render(PIN_TWEAKS, HOOKS, "game-plus")
+        self.assertIn('AMIl2cppStaticObject("StatHandler", "instance")', m)
+        self.assertIn(
+            'AMIl2cppCall(obj, "StatHandler", "get_Hunger", 0, NULL, &boxed)', m
+        )
+        self.assertIn("if (*cur < 100) { int32_t v = 100;", m)
+        self.assertIn(
+            'AMIl2cppCall(obj, "StatHandler", "get_HealthMax", 0, NULL, &vb)', m
+        )  # value from a getter
+        self.assertIn("static float s_lock_0_peak;", m)
+        self.assertIn('AMIl2cppFindObjects("Enemy", &n)', m)
+        self.assertIn('int64_t *p = AMIl2cppField(obj, "Enemy", "EnemyDamage");', m)
+        self.assertIn("if (true) { *p = false; applied = true; }", m)
+        self.assertIn(
+            'AMIl2cppField(obj, "FightCompanion", "Damage")', m
+        )  # class override
+        self.assertIn("s_dmg_0_base * (int64_t)am_dmg", m)
+        self.assertIn(
+            'AMIl2cppCall(obj, "StatHandler", "get_playerStats", 0, NULL, &via)', m
+        )
+        self.assertIn('AMIl2cppField(obj, "PlayerStats", "Rads")', m)
+        self.assertIn("if (now - s_give_0_at >= 10.0)", m)
+        self.assertIn(
+            'AMIl2cppCall(obj, "InventoryData", "GiveRandomItem", 1, argv, NULL)', m
+        )
+        self.assertIn("if (*cur < 50) { int32_t v = 99;", m)  # threshold
+        self.assertIn("static void am_watch(void)", m)
+        self.assertIn('AMIl2cppLog(@"watch: hunger %@", w0);', m)
+        self.assertIn("void AMTweaksTick(void) {\n    am_pin_keepStats();", m)
+        self.assertIn("    am_watch();\n}", m)
+        self.assertIn("void AMTweaksTick(void);", _h)
+        # labels are unique per pin, so several pins in one switch compile
+        self.assertEqual(m.count("s_keepStats_0_next:;"), 1)
+        self.assertEqual(m.count("s_keepStats_1_next:;"), 1)
+
+    def test_pins_drop_the_jit_label(self):
+        data = {
+            "title": "T",
+            "tweaks": [
+                {
+                    "key": "a",
+                    "title": "A",
+                    "hooks": [{"method": "Enemy.DamagePlayer", "action": "skip"}],
+                    "pins": [
+                        {
+                            "object": "Enemy[]",
+                            "field": "EnemyDamage",
+                            "ctype": "int64_t",
+                            "value": 0,
+                        }
+                    ],
+                }
+            ],
+        }
+        _h, m = gen_tweaks.render(data, HOOKS, "x")
+        self.assertIn('title:@"A"', m)
