@@ -540,6 +540,7 @@ class Pins(unittest.TestCase):
         _, mh = gen_tweaks.render(hinted, HOOKS, "game-plus")
         self.assertIn('why = "Open a lock to see it work"', mh)
         self.assertIn('if (tried) AMMenuStatus("lock", reached, why);', m)
+        self.assertIn("StatHandler.set_Hunger didn't take the value", m)  # read back after a setter
         _, m = gen_tweaks.render(TWEAKS, HOOKS, "game-plus")
         # a hook that runs with its switch on says so; a hook-only switch needs JIT
         self.assertIn('if (am_noDamage) AMMenuStatus("noDamage", true, NULL);', m)

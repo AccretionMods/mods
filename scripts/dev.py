@@ -837,6 +837,84 @@ def cmd_gen(args):
     return 0
 
 
+def pin_problems_in_dump(mod):
+    """Every pin of a mod against its dump, before a build: [(level, key, message)], level "error" or "warn".
+    Errors: an object, field, setter, getter, via or call the dump doesn't have. Warnings: a field type that
+    differs from the pin's, a via that returns another class, and a pin that reads a getter the mod also
+    hooks (without JIT the read can return the hook's value, as skill points did: use the field via the
+    object that stores it instead)."""
+    folder = mod_dir(mod)
+    meta = read_json(folder / "mod.json")
+    tweaks = load_tweaks(folder, meta)
+    dump_scan.scan(dump_path(mod), tweaks)  # builds or refreshes scan.json, whose class data is read below
+    data = json.loads((dump_path(mod).with_name("scan.json")).read_text(encoding="utf-8"))["data"]
+    methods = {}
+    for m in dump_methods(mod):
+        methods.setdefault((m.class_name.split(".")[-1], m.name), []).append(m)
+    hooked = {".".join(gen_tweaks.hook_name(h).split(".")[-2:]) for h in load_hooks(folder)["hooks"]}
+    out = []
+
+    def has_method(cls, name, argc=None):
+        found = methods.get((cls, name), [])
+        return [m for m in found if argc is None or len(m.params) == argc]
+
+    def getter(key, cls, name, why):
+        if not has_method(cls, name, 0):
+            out.append(("error", key, f"{cls}.{name}() not in the dump ({why})"))
+        elif f"{cls}.{name}" in hooked:
+            out.append(("warn", key, f"reads {cls}.{name}, which this mod also hooks: without JIT the read can "
+                                     "return the hook's value; pin the field that stores it (--via) instead"))
+
+    for t in tweaks.get("tweaks", []):
+        for p in t.get("pins", []):
+            key = t["key"]
+            obj = p["object"]
+            cls = obj[:-2] if obj.endswith("[]") else obj.split(".")[0]
+            info = data.get(cls)
+            if info is None and not methods.get((cls, ".ctor")) and not any(k[0] == cls for k in methods):
+                out.append(("error", key, f"no class {cls} in the dump"))
+                continue
+            if "." in obj and not obj.endswith("[]") and info is not None:
+                static = obj.split(".", 1)[1]
+                if static not in info.get("statics", []):
+                    out.append(("warn", key, f"{obj}: not a static field of {cls}'s own type in the dump"))
+            target = p.get("class") or cls
+            if p.get("via"):
+                vias = has_method(cls, p["via"], 0)
+                if not vias:
+                    out.append(("error", key, f"via {cls}.{p['via']}() not in the dump"))
+                elif p.get("class") and vias[0].return_type.split(".")[-1] != p["class"]:
+                    out.append(("warn", key, f"via {cls}.{p['via']}() returns {vias[0].return_type}, not {p['class']}"))
+                if f"{cls}.{p['via']}" in hooked:
+                    out.append(("warn", key, f"via {cls}.{p['via']} is hooked by this mod"))
+            tinfo = data.get(target) or {}
+            if p.get("field"):
+                f = (tinfo.get("fields") or {}).get(p["field"])
+                if f is None:
+                    out.append(("error", key, f"{target}.{p['field']} is not a number or bool field in the dump"))
+                elif f["ctype"] != p.get("ctype"):
+                    out.append(("warn", key, f"{target}.{p['field']} is {f['ctype']} in the dump, the pin says {p.get('ctype')}"))
+            elif p.get("setter"):
+                if not has_method(target, p["setter"], 1):
+                    out.append(("error", key, f"{target}.{p['setter']}(value) not in the dump"))
+                if p.get("when", "always") != "always" or p.get("value") == "peak":
+                    getter(key, target, "get_" + p["setter"][4:], "read before writing")
+            elif p.get("call"):
+                if not has_method(target, p["call"], len(p.get("args", []))):
+                    out.append(("error", key, f"{target}.{p['call']} with {len(p.get('args', []))} arguments not in the dump"))
+            v = p.get("value")
+            if isinstance(v, dict) and v.get("getter"):
+                getter(key, target, v["getter"], "the value to write")
+            elif isinstance(v, dict) and v.get("field") and v["field"] not in (tinfo.get("fields") or {}):
+                out.append(("error", key, f"{target}.{v['field']} (the value) is not a number field in the dump"))
+    return out
+
+
+def print_pin_problems(problems):
+    for level, key, msg in problems:
+        print(f"  {'ERROR' if level == 'error' else 'warn ':5} pin {key}: {msg}")
+
+
 def cmd_check(args):
     import check_hooks
 
@@ -850,7 +928,11 @@ def cmd_check(args):
     print(
         f"{counts['ok']} ok, {counts['changed']} changed, {counts['missing']} missing of {len(results)} hooks"
     )
-    return 1 if counts["changed"] or counts["missing"] else 0
+    problems = pin_problems_in_dump(args.mod)
+    print_pin_problems(problems)
+    errors = sum(1 for p in problems if p[0] == "error")
+    print(f"pins: {errors} errors, {len(problems) - errors} warnings")
+    return 1 if counts["changed"] or counts["missing"] or errors else 0
 
 
 # ---------------------------------------------------------------- new
@@ -1062,6 +1144,16 @@ def run_in_wsl(script, cwd=None):
 
 def cmd_build(args):
     folder = mod_dir(args.mod)
+    # every pin against the dump first: an error here would only show as a red dot on the phone, 2 minutes later
+    try:
+        problems = pin_problems_in_dump(args.mod)
+    except DevError:
+        problems = []  # no dump yet: nothing to check against
+    if problems:
+        print("==> pin check against the dump:")
+        print_pin_problems(problems)
+    if any(p[0] == "error" for p in problems) and not getattr(args, "no_check", False):
+        raise DevError("pins that can't work (above): fix them, or build anyway with --no-check")
     if args.bump:
         bump_version(folder)
     meta = read_json(folder / "mod.json")
@@ -2247,6 +2339,7 @@ def build_parser():
     s.add_argument("--ipa", action="store_true")
     s.add_argument("--bump", action="store_true")
     s.add_argument("--base")
+    s.add_argument("--no-check", action="store_true", help="build even when a pin fails the dump check")
     s.set_defaults(fn=cmd_build)
 
     s = sub.add_parser("sign")

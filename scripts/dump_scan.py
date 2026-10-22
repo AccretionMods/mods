@@ -17,12 +17,12 @@ import os
 import re
 from pathlib import Path
 
-VERSION = 3  # bump when the row format or the scoring changes (the cache is rebuilt)
+VERSION = 4  # bump when the row format or the scoring changes (the cache is rebuilt)
 
 IMAGE = re.compile(r"^// Image \d+: (.+?)(?:\.dll)? - (\d+)\s*$")
 NAMESPACE = re.compile(r"^\s*// Namespace: ?(\S*)")
 CLASS = re.compile(
-    r"^(?:(?:public|private|protected|internal|static|sealed|abstract)\s+)*class\s+([A-Za-z_]\w*)"
+    r"^(?:(?:public|private|protected|internal|static|sealed|abstract)\s+)*class\s+([A-Za-z_]\w*)(?=[\s:])"  # whole names: not "Enemy" from "Enemy.<>c"
     r"(?:\s*:\s*([\w.]+))?[^/]*// TypeDefIndex: (\d+)"
 )
 FIELD = re.compile(r"^\s+((?:(?:public|private|protected|internal|static|readonly)\s+)*)([\w.<>\[\], ]+?)\s+(\w+); // (0x[0-9A-Fa-f]+)")

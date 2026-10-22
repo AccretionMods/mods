@@ -172,7 +172,10 @@ CLAUDE_NOTE = (
     "This is a headless run started from Mod Studio's prompt builder in the AccretionMods/mods repo. "
     "Project: Accretion (record it with: echo \"[[project: Accretion]]\"); don't ask which project. "
     f"Run the mod commands written as `am <command>` as `{DEV} <command>`. "
-    "Nobody can answer questions during this run: when a choice is the owner's, stop and list the options."
+    "Nobody can answer questions during this run: when a choice is the owner's, stop and list the options. "
+    "You already run in the repo: one command per Bash call, no cd, no && or ; chains, no pipes (| head): "
+    "anything else is refused and wastes a turn. Shorten output with the commands' own options "
+    "(am find --limit N, am scan --limit N, am fields <mod> <Class>), or use the Grep/Read tools on the dump."
 )
 
 

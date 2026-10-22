@@ -40,6 +40,13 @@ public class SkillsManager : MonoBehaviour // TypeDefIndex: 11
 }
 
 // Namespace:
+[CompilerGenerated]
+private sealed class Enemy.<>c // TypeDefIndex: 12
+{
+\tpublic static readonly Enemy.<>c <>9; // 0x0
+}
+
+// Namespace:
 public class Enemy : MonoBehaviour // TypeDefIndex: 12
 {
 \tpublic long EnemyDamage; // 0x60
@@ -87,7 +94,7 @@ class Scan(unittest.TestCase):
         self.assertNotIn("Camera.fieldOfView", rows)
         self.assertNotIn("SaveData.Coins", rows)  # not a MonoBehaviour and no singleton: a pin can't reach it
         self.assertEqual(rows["SkillsManager.Accuracy"]["object"], "SkillsManager.instance")
-        self.assertEqual(rows["Enemy.EnemyDamage"]["object"], "Enemy[]")
+        self.assertEqual(rows["Enemy.EnemyDamage"]["object"], "Enemy[]")  # not lost to "Enemy.<>c" before it
         self.assertNotIn("SkillsManager.SkillPointsText", rows)  # not a number or a bool
 
     def test_scores_areas_and_suggestions(self):
