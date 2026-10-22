@@ -728,6 +728,7 @@ const App = {
     const out = this.byId("jobout-" + j.id);
     if (j.lines && j.lines.length) { out.textContent += (out.textContent ? "\n" : "") + j.lines.join("\n"); out.scrollTop = out.scrollHeight; }
     if (j.command === "autobuild") this.autobuildProgress(j, det, out.textContent);
+    if (j.command === "store") this.stepProgress(j, det, out.textContent);
     if (["claude", "aider", "codex"].includes(j.command) && j.status !== "running" && !this.byId("jobcmds-" + j.id)) {
       const text = (this.byId("jobout-" + j.id) || {}).textContent || "";
       const cmds = [...new Set(text.split("\n").map(l => l.trim().replace(/^[`$>\s]+|`+$/g, "")).filter(l => /^am (pin|call|add|tweak|remove|gen|mark|build|update|new|dump|check|scan|find|fields) \S+/.test(l)))];
@@ -746,6 +747,26 @@ const App = {
         this.byId("job-" + j.id).append(list);
       }
     }
+  },
+  // a job's step from its "==> n/N what" lines (publishing from the Store tab)
+  stepProgress(j, det, text) {
+    let label = "Starting", pct = 0;
+    for (const line of text.split("\n")) {
+      const m = line.match(/^==> (\d+)\/(\d+) (.*)/);
+      if (m) { pct = 100 * (m[1] - 1) / m[2]; label = `Step ${m[1]} of ${m[2]} · ${m[3]}`; }
+      else if (/^==> done/.test(line)) { pct = 100; label = line.slice(4); }
+    }
+    const running = ["queued", "running", "stopping"].includes(j.status);
+    if (j.status === "done") pct = 100;
+    let box = this.byId("jobprog-" + j.id);
+    if (!box) {
+      box = this.el("div", { class: "jobprog", id: "jobprog-" + j.id }, this.el("div", { class: "jobprog-t" }), this.el("div", { class: "jobprog-bar" }, this.el("i")));
+      det.querySelector("summary").after(box);
+    }
+    box.firstChild.textContent = running ? `${label} · ${Math.round(pct)}%` : j.status === "done" ? label : `Stopped (${j.status}) · ${label}`;
+    box.lastChild.firstChild.style.width = Math.round(pct) + "%";
+    box.classList.toggle("bad", !running && j.status !== "done");
+    box.classList.toggle("going", running);
   },
   // the auto-build's step from its own output lines: "==> n/5", "--- batch k/N", "--- switch i/N", "$ am <step>"
   autobuildProgress(j, det, text) {
@@ -1116,6 +1137,19 @@ const App = {
       setTimeout(poll, 3000);
     } catch (e) { this.toast(e.message, "bad"); }
   },
+  // publish this PC's version of a mod, or take it out of the store: a Studio job (store_publish.py)
+  async storePublish(mod, action, question) {
+    let confirm = "";
+    if (action === "remove") {
+      confirm = prompt(`Take ${mod} out of the store? People who installed it keep it, but it leaves the store and its updates stop. Type ${mod} to confirm.`) || "";
+      if (confirm !== mod) { if (confirm) this.toast("The name didn't match: nothing removed", "bad"); return; }
+    } else if (!window.confirm(question)) return;
+    try {
+      const j = await this.api("/api/store/publish", { mod, action, confirm });
+      this.showJob(j); this.poll(j.id);
+      this.byId("jobsPanel").scrollIntoView({ behavior: "smooth", block: "nearest" });
+    } catch (e) { this.toast(e.message, "bad"); }
+  },
   async storeAct(body, done) {
     const r = await this.api("/api/store/act", body);
     if (done) { this.toast(done, "ok"); this.loadStore(["moderation", "admin"]); }
@@ -1226,10 +1260,15 @@ const App = {
     const saves = id => cs && cs.per_game ? Object.entries(cs.per_game).filter(([b]) => b === id || b.startsWith(id + ".")).reduce((s, [, g]) => s + g.backups, 0) : null;
     const rows = ours.map(o => { const a = (appsSec.ours || {})[o.id] || {};
       const here = !o.here ? badge("not here") : o.here === o.live ? badge(o.here, "good") : badge(o.here + " here", "warn");
-      return [el("span", {}, o.name || o.mod, " ", el("span", { class: "muted small", text: o.kind })), o.live || "—", here, n(a.views_7d), n((perApp[o.id] || {}).d7), n(a.installs_7d), n(a.likes), a.rating ? a.rating + ` (${a.ratings})` : "—", n(a.comments), n(saves(o.id)), ago(o.date)]; });
+      const acts = el("span", { class: "row", style: "flex-wrap:nowrap" },
+        o.here && o.here !== o.live && o.mod ? el("button", { class: "small primary", title: `Publish ${o.here} from this PC: a pull request with auto-merge, then the ${o.kind === "tweak" ? "release" : "cloud build"}`,
+          onclick: () => this.storePublish(o.mod, "update", `Publish ${o.name} ${o.here} to the store (live: ${o.live})?`) }, `Publish ${o.here}`) : null,
+        o.mod ? el("button", { class: "small ghost", title: "Take it out of the store (a pull request with auto-merge)",
+          onclick: () => this.storePublish(o.mod, "remove") }, "Remove") : null);
+      return [el("span", {}, o.name || o.mod, " ", el("span", { class: "muted small", text: o.kind })), o.live || "—", here, n(a.views_7d), n((perApp[o.id] || {}).d7), n(a.installs_7d), n(a.likes), a.rating ? a.rating + ` (${a.ratings})` : "—", n(a.comments), n(saves(o.id)), ago(o.date), acts]; });
     box.append(panel("Our mods in the store", el("span", { class: "fig", text: "7 days" }), state("public"),
-      ours.length ? table(["Mod", "Live", "Here", "Views", "Downloads", "Installs", "Likes", "Rating", "Comments", "Cloud saves", "Published"], rows, [3, 4, 5, 6, 7, 8, 9]) : null,
-      (pub.unlisted || []).length ? el("p", { class: "hint", text: "Not in the store (personal or not published): " + pub.unlisted.map(u => `${u.mod} ${u.version}`).join(", ") }) : null,
+      ours.length ? table(["Mod", "Live", "Here", "Views", "Downloads", "Installs", "Likes", "Rating", "Comments", "Cloud saves", "Published", ""], rows, [3, 4, 5, 6, 7, 8, 9]) : null,
+      (pub.unlisted || []).length ? el("p", { class: "hint", text: "Not in the store: " + pub.unlisted.map(u => `${u.mod} ${u.version}${u.personal ? " (personal)" : ""}`).join(", ") + ". Personal mods aren't published from Studio; a public mod is added to the cloud build's list first, then Mods: build a mod publishes it." }) : null,
       !linked && ours.length ? el("p", { class: "hint", text: "Views, downloads, likes and the rest need the admin link." }) : null));
 
     // trending + community

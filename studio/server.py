@@ -116,6 +116,8 @@ def job_resources(command, argv):
         resources.append("device")
     if command in {"new", "fetch", "start"}:
         resources.append("intake")
+    if command == "store":
+        resources.append("store-publish")  # one publish worktree at a time
     if (
         argv
         and MOD_NAME.fullmatch(argv[0])
@@ -591,6 +593,24 @@ def start_autobuild(mod, engine, limit):
             raise dev.DevError("Studio is restarting; reconnect before starting jobs")
         job = Job("autobuild", [mod, engine], cmd=[sys.executable, str(HERE / "autobuild.py"), mod, "--engine", engine,
                                                    "--limit", str(max(0, int(limit)))])  # 0: every usable switch
+        JOBS[job.id] = job
+    job.persist()
+    threading.Thread(target=job.run, daemon=True).start()
+    return job
+
+
+def start_store_publish(mod, action, confirm):
+    """studio/store_publish.py as a job: publish this checkout's version of a mod to the store, or take it out."""
+    if action not in ("update", "remove"):
+        raise dev.DevError("unknown store action")
+    if not (MOD_NAME.fullmatch(mod or "") and dev.mod_dir(mod).is_dir()):
+        raise dev.DevError("pick a mod first")
+    if action == "remove" and confirm != mod:
+        raise dev.DevError(f"type {mod} to confirm")
+    with SESSION_LOCK:
+        if RESTARTING.is_set():
+            raise dev.DevError("Studio is restarting; reconnect before starting jobs")
+        job = Job("store", [mod, action], cmd=[sys.executable, str(HERE / "store_publish.py"), action, mod])
         JOBS[job.id] = job
     job.persist()
     threading.Thread(target=job.run, daemon=True).start()
@@ -1358,6 +1378,10 @@ class Handler(BaseHTTPRequestHandler):
         if parts == ["api", "console"]:
             self.local_only()
             return self.send_json(console(str(body.get("line", ""))).view())
+        if parts == ["api", "store", "publish"]:
+            self.local_only()
+            return self.send_json(start_store_publish(str(body.get("mod", "")), str(body.get("action", "")),
+                                                      str(body.get("confirm", ""))).view())
         if parts == ["api", "store", "act"]:
             self.local_only()
             try:

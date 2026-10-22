@@ -195,7 +195,8 @@ def public(repo_root):
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        local[meta_path.parent.name] = {"version": meta.get("version"), "title": meta.get("name") or meta_path.parent.name}
+        local[meta_path.parent.name] = {"version": meta.get("version"), "title": meta.get("name") or meta_path.parent.name,
+                                        "personal": bool(meta.get("personal"))}
     listed = {o["mod"] for o in ours}
     for o in ours:
         o["here"] = (local.get(o["mod"]) or {}).get("version")
