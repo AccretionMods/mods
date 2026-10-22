@@ -180,6 +180,21 @@ class Api(unittest.TestCase):
         self.assertEqual(status, 200, job)
         self.assertEqual(job["args"], ["C:/no/such.ipa", "--install"])
         self.post(f"/api/jobs/{job['id']}/stop", {})
+        # fetch takes an app, not a mod
+        os.environ["AM_DECRYPT_URL"] = "http://127.0.0.1:9"  # nothing listens: no network in tests
+        try:
+            status, job = self.post(
+                "/api/jobs",
+                {"command": "fetch", "mod": "game-plus", "args": ["com.example.game"]},
+            )
+            self.assertEqual(status, 200, job)
+            self.assertEqual(job["args"], ["com.example.game"])
+            self.post(f"/api/jobs/{job['id']}/stop", {})
+            status, data = self.get("/api/fetch/account")
+            self.assertEqual(status, 400)
+            self.assertIn("did not answer", data["error"])
+        finally:
+            os.environ.pop("AM_DECRYPT_URL", None)
 
 
 if __name__ == "__main__":

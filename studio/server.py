@@ -4,12 +4,13 @@ Usage: python3 studio/server.py [--port 8765] [--host 127.0.0.1] [--no-open]
        scripts/am.ps1 ui   (same thing from PowerShell)
 
 Quick commands (find, fields, add, pin, call, tweak, remove, gen, suggest, mark, status) run in this process
-through dev.py's functions and answer at once. Long ones (dump, build, sign, install, run, log, update, new)
-run as jobs: a `python dev.py <command> ...` subprocess whose output the page streams. The Apple ID sign-in
+through dev.py's functions and answer at once. Long ones (dump, build, sign, install, run, log, update, new,
+fetch) run as jobs: a `python dev.py <command> ...` subprocess whose output the page streams. The Apple ID sign-in
 (2FA) can't be answered from a page: do it once from a console, plumesign keeps the session.
 
 API (JSON): GET /api/mods, /api/mods/<mod>, /api/mods/<mod>/find?q=&limit=, /api/mods/<mod>/fields?class=,
-/api/mods/<mod>/suggest, /api/bases; POST /api/mods/<mod>/<add|pin|call|tweak|remove|gen|mark> with the
+/api/mods/<mod>/suggest, /api/bases, /api/fetch/account, /api/fetch/search?q=&region=&platform=;
+POST /api/fetch/login {"email", "password"} (passed to the decrypt site, never saved), /api/fetch/logout; POST /api/mods/<mod>/<add|pin|call|tweak|remove|gen|mark> with the
 command's options as JSON (the same names as dev.py's flags, dashes as underscores); POST /api/jobs
 {"command": "build", "mod": "...", "args": ["--ipa"]}, GET /api/jobs/<id>?since=N, POST /api/jobs/<id>/stop.
 
@@ -39,6 +40,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import dev
 import dev_learn
 import gen_tweaks
+import ipa_fetch
 
 LOCK = threading.Lock()  # dev.py writes files and caches; one quick command at a time
 JOBS = {}
@@ -52,6 +54,7 @@ JOB_COMMANDS = {
     "update",
     "new",
     "check",
+    "fetch",
 }
 QUICK = {"add", "pin", "call", "tweak", "remove", "gen", "mark"}
 MOD_NAME = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
@@ -255,6 +258,10 @@ def suggest(name, limit):
     }
 
 
+def fetch_client():
+    return ipa_fetch.Client(dev.am_root())
+
+
 def bases():
     """Decrypted .ipa files in intake/ and Downloads, for the New mod form."""
     rows = []
@@ -273,6 +280,7 @@ def bases():
                     "name": info.get("CFBundleDisplayName") or info.get("CFBundleName"),
                     "version": info.get("CFBundleShortVersionString"),
                     "size": ipa.stat().st_size,
+                    "fetched": ipa.with_name(ipa.name + ".source.json").is_file(),
                 }
             )
     return {"ipas": rows}
@@ -394,7 +402,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
             self.handle_get()
-        except dev.DevError as e:
+        except (dev.DevError, ipa_fetch.FetchError) as e:
             self.send_json({"error": str(e)}, HTTPStatus.BAD_REQUEST)
         except Exception as e:  # noqa: BLE001
             self.send_json(
@@ -405,7 +413,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             self.handle_post()
-        except dev.DevError as e:
+        except (dev.DevError, ipa_fetch.FetchError) as e:
             self.send_json({"error": str(e)}, HTTPStatus.BAD_REQUEST)
         except Exception as e:  # noqa: BLE001
             self.send_json(
@@ -428,6 +436,13 @@ class Handler(BaseHTTPRequestHandler):
             )
         if parts[1:] == ["bases"]:
             return self.send_json(bases())
+        if parts[1:] == ["fetch", "account"]:
+            return self.send_json(fetch_client().account())
+        if parts[1:] == ["fetch", "search"]:
+            rows = fetch_client().search(
+                q.get("q", "").strip(), q.get("region", "us"), q.get("platform", "iphone")
+            )
+            return self.send_json({"results": rows[:30]})
         if parts[1:2] == ["jobs"]:
             if len(parts) == 2:
                 return self.send_json(
@@ -470,12 +485,18 @@ class Handler(BaseHTTPRequestHandler):
         if parts == ["api", "jobs"]:
             command = body.get("command", "")
             argv = []
-            # sign and install take a file, not a mod; new makes the mod
-            if command not in ("new", "sign", "install"):
+            # sign and install take a file, not a mod; new makes the mod; fetch takes an app
+            if command not in ("new", "sign", "install", "fetch"):
                 argv.append(self.mod_name(str(body.get("mod", ""))))
             argv += [str(a) for a in body.get("args", [])]
             job = start_job(command, argv)
             return self.send_json(job.view())
+        if parts == ["api", "fetch", "login"]:
+            user = fetch_client().login(str(body.get("email", "")), str(body.get("password", "")))
+            return self.send_json({"user": user})
+        if parts == ["api", "fetch", "logout"]:
+            fetch_client().logout()
+            return self.send_json({"ok": True})
         if len(parts) == 4 and parts[:2] == ["api", "jobs"] and parts[3] == "stop":
             job = JOBS.get(parts[2])
             if not job:

@@ -32,12 +32,21 @@ it); signing and device logs need the phone on USB and run on Windows (plumesign
   dev.py suggest <mod>                                           this game's methods that match what worked before
   dev.py mark <mod> <key> --works|--fails                        the phone result; feeds the suggestions
   dev.py learn <mod>                                             import an existing mod's hooks.json into the patterns
+  dev.py fetch <bundle-id | name | --mod M> [--region us]        a decrypted .ipa from the decrypt site into intake/
+         [--platform iphone] [--force]                           (AM_DECRYPT_URL; default decrypt.34306.lol, a third party)
+  dev.py fetch --login [--email E] | --logout | --account        the site account a new decrypt needs
+  dev.py fetch --save-login | --forget-login                     keep it in Windows Credential Manager; fetch signs in
+  dev.py fetch <bundle-id> --source decrypt.day|armconverter     open that site in the browser, take the download
+  dev.py fetch --import <file.ipa>                               check a copy downloaded by hand, move it to intake/
+         (a site that asks for a captcha opens in the browser; fetch waits for the download in ~/Downloads)
 
 scripts/am.ps1 wraps all of this as `am <command> ...` from PowerShell. With no arguments: this help.
 
 Folders (AM_ROOT, default C:\\AccretionMods): intake/ and ~/Downloads are searched for base .ipa files by
 bundle ID; work/ holds dumps; builds/ the .dylib and .ipa files; dev/<mod>.json remembers the base and dump.
-Base .ipa files must already be decrypted (personal copies); nothing here decrypts or uploads anything.
+Base .ipa files must be decrypted. Nothing here decrypts or uploads anything: bring your own copy, or `fetch`
+one already decrypted by the decrypt site (another party's Mac; the copy is checked, its origin and SHA-256 are
+saved next to it, and mods built on it are for testing on your own phone).
 """
 
 import argparse
@@ -62,6 +71,7 @@ sys.path.insert(0, str(HERE))
 
 import dev_learn
 import gen_tweaks
+import ipa_fetch
 from il2cpp_dump import methods
 
 WINDOWS = os.name == "nt"
@@ -1728,6 +1738,60 @@ def cmd_learn(args):
 # ---------------------------------------------------------------- main
 
 
+def cmd_fetch(args):
+    client = ipa_fetch.Client(am_root())
+    try:
+        vault = ipa_fetch.Vault(client.base)
+        if args.logout or args.forget_login:
+            client.logout()
+            print(f"signed out of {client.base}")
+            if args.forget_login:
+                vault.forget()
+                print("saved login removed from Windows Credential Manager")
+            return 0
+        if args.login or args.save_login:
+            import getpass
+
+            email = args.email or input(f"{client.base} account e-mail: ").strip()
+            password = getpass.getpass(
+                "password (kept in Windows Credential Manager): " if args.save_login
+                else "password (sent to the site only, not saved): "
+            )
+            user = client.login(email, password)  # only a login that works is saved
+            if args.save_login:
+                vault.save(email, password)
+                print(f"saved in Windows Credential Manager as {vault.target}; fetch signs in with it when needed")
+            print(
+                f"signed in as {user.get('email', email)}"
+                + ("" if user.get("approved", True) else " (waiting for the site admin's approval)")
+            )
+            return 0
+        if args.import_file:
+            ipa_fetch.import_ipa(am_root(), args.import_file, region=args.region)
+            return 0
+        if args.account or not (args.target or args.mod):
+            a = client.account()
+            print(f"site:      {a['site']} ({'up' if a['up'] else 'not answering'}"
+                  + (", paused: no new decrypts" if a["paused"] else "") + ")")
+            u = a["user"]
+            if not u:
+                print("account:   not signed in (cached apps still download)")
+            elif not u.get("approved"):
+                print(f"account:   {u.get('email')} (waiting for the site admin's approval)")
+            else:
+                left = "no daily limit" if u.get("limit") is None else f"{u.get('remaining')} of {u.get('limit')} new decrypts left today"
+                print(f"account:   {u.get('email')} ({left})")
+            return 0
+        target = args.target or read_json(mod_dir(args.mod) / "mod.json")["target_bundle_id"]
+        ipa_fetch.fetch(
+            am_root(), target, args.region, args.platform, args.force,
+            browser=not args.no_browser, source=args.source,
+        )
+    except ipa_fetch.FetchError as e:
+        raise DevError(str(e)) from e
+    return 0
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -1939,6 +2003,28 @@ def main(argv=None):
     s = sub.add_parser("learn", help="import a mod's hooks.json into the pattern store")
     s.add_argument("mod")
     s.set_defaults(fn=cmd_learn)
+
+    s = sub.add_parser(
+        "fetch", help="a decrypted .ipa from the decrypt site (AM_DECRYPT_URL) into intake/"
+    )
+    s.add_argument("target", nargs="?", help="bundle ID or app name")
+    s.add_argument("--mod", help="the app a mod targets (its target_bundle_id)")
+    s.add_argument("--region", default="us", choices=ipa_fetch.REGIONS)
+    s.add_argument("--platform", default="iphone", choices=ipa_fetch.PLATFORMS)
+    s.add_argument("--force", action="store_true", help="decrypt again even if the site has it")
+    s.add_argument("--login", action="store_true")
+    s.add_argument("--email")
+    s.add_argument("--logout", action="store_true")
+    s.add_argument("--save-login", action="store_true", help="sign in and keep the login in Credential Manager")
+    s.add_argument("--forget-login", action="store_true", help="sign out and remove the saved login")
+    s.add_argument("--account", action="store_true")
+    s.add_argument("--import", dest="import_file", help="check a downloaded .ipa and move it into intake/")
+    s.add_argument("--no-browser", action="store_true", help="fail instead of opening the site for a captcha")
+    s.add_argument(
+        "--source", default="34306", choices=list(ipa_fetch.SOURCES),
+        help="34306: decrypt.34306.lol (API, captcha -> browser); decrypt.day, armconverter: in the browser",
+    )
+    s.set_defaults(fn=cmd_fetch)
 
     if not argv and len(sys.argv) == 1:
         p.print_help()
