@@ -298,13 +298,6 @@ static BOOL AMItemOn(AMItem *item) {
     return [NSUserDefaults.standardUserDefaults boolForKey:AMKey(item.key)];
 }
 
-static void AMStyleTable(UITableView *table) {
-    table.backgroundColor = AM_BG;  // under the backdrop, where a table has one
-    table.separatorColor = AM_LINE;
-    table.sectionHeaderTopPadding = 6;
-    table.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
-}
-
 static void AMStyleNav(UINavigationController *nav) {
     UINavigationBarAppearance *a = [UINavigationBarAppearance new];
     [a configureWithOpaqueBackground];
@@ -321,65 +314,12 @@ static void AMStyleNav(UINavigationController *nav) {
 
 #pragma mark - List page
 
-@interface AMListPanel : UITableViewController
+@interface AMListPanel : UITableViewController <UITextFieldDelegate>
 @property (nonatomic, strong) AMItem *item;
 @property (nonatomic, copy) NSArray<NSDictionary<NSString *, NSString *> *> *entries;
+- (instancetype)initWithItem:(AMItem *)item;
 @end
 
-@implementation AMListPanel
-
-- (instancetype)initWithItem:(AMItem *)item {
-    if ((self = [super initWithStyle:UITableViewStyleInsetGrouped])) {
-        _item = item;
-        self.title = item.title;
-    }
-    return self;
-}
-
-- (void)viewDidLoad {
-    [super viewDidLoad];
-    AMStyleTable(self.tableView);
-}
-
-- (void)viewWillAppear:(BOOL)animated {
-    [super viewWillAppear:animated];
-    self.entries = self.item.entries ? self.item.entries() : @[];
-    [self.tableView reloadData];
-}
-
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    return self.entries.count;
-}
-
-- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
-    return self.entries.count ? [NSString stringWithFormat:@"%lu entries. Tap one to apply it.", (unsigned long)self.entries.count]
-                              : @"Nothing to list yet. Open this again once the game has loaded.";
-}
-
-- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
-    NSDictionary *e = self.entries[indexPath.row];
-    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"entry"]
-        ?: [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:@"entry"];
-    cell.backgroundColor = AM_SURFACE;
-    cell.textLabel.text = e[@"title"];
-    cell.textLabel.textColor = AM_FG;
-    cell.detailTextLabel.text = e[@"detail"];
-    cell.detailTextLabel.textColor = AM_MUTED;
-    cell.imageView.image = e[@"symbol"] ? [UIImage systemImageNamed:e[@"symbol"]] : nil;
-    cell.imageView.tintColor = AM_ACCENT_TEXT;
-    cell.accessoryType = UITableViewCellAccessoryNone;
-    return cell;
-}
-
-- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
-    [tableView deselectRowAtIndexPath:indexPath animated:YES];
-    if (self.item.onPick) self.item.onPick(indexPath.row);
-    UITableViewCell *cell = [tableView cellForRowAtIndexPath:indexPath];
-    cell.backgroundColor = AM_RAISED;  // a short flash says it was applied
-    [UIView animateWithDuration:0.6 animations:^{ cell.backgroundColor = AM_SURFACE; }];
-}
-
-@end
 
 #pragma mark - Backdrop and panels (the store's live-index look)
 
@@ -550,7 +490,7 @@ typedef NS_ENUM(NSInteger, AMPiece) { AMPieceTop, AMPieceMiddle, AMPieceBottom, 
 #pragma mark - Search
 
 // The only thing above the panels: a search field (long menus), edged in `line-strong` like the store's fields.
-static UITextField *AMSearchField(NSUInteger count) {
+static UITextField *AMSearchField(NSString *placeholder) {
     UITextField *field = [UITextField new];
     field.backgroundColor = AM_SURFACE;
     field.textColor = AM_FG;
@@ -563,8 +503,7 @@ static UITextField *AMSearchField(NSUInteger count) {
     field.returnKeyType = UIReturnKeyDone;
     field.autocorrectionType = UITextAutocorrectionTypeNo;
     field.attributedPlaceholder = [[NSAttributedString alloc]
-        initWithString:[NSString stringWithFormat:@"Search %lu switches", (unsigned long)count]
-             attributes:@{NSForegroundColorAttributeName: AM_MUTED}];
+        initWithString:placeholder attributes:@{NSForegroundColorAttributeName: AM_MUTED}];
     UIImageView *glass = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"magnifyingglass"]];
     glass.tintColor = AM_MUTED;
     glass.contentMode = UIViewContentModeCenter;
@@ -1203,7 +1142,7 @@ static NSString *AMGameName(NSString *fallback) {
     self.navigationItem.titleView = titleView;
     [self refreshAllOff];
     if (self.items.count - 2 > 12) {
-        self.search = AMSearchField(self.items.count - 2);
+        self.search = AMSearchField([NSString stringWithFormat:@"Search %lu switches", (unsigned long)(self.items.count - 2)]);
         self.search.delegate = self;
         [self.search addTarget:self action:@selector(searchChanged:) forControlEvents:UIControlEventEditingChanged];
         table.tableHeaderView = [[AMSearchHeader alloc] initWithField:self.search];
@@ -1540,6 +1479,275 @@ static NSString *AMGameName(NSString *fallback) {
     if ([row isKindOfClass:AMSliderCell.class]) [self showValueOf:item inRow:row];
     if (item.onSlider) item.onSlider(s.value);
     [self refreshHeaderOf:s.tag];
+}
+
+@end
+
+#pragma mark - List page
+
+// A tier's colour, from its name: the usual game rarities (Legendary, Epic, Rare, Uncommon or Normal); anything
+// else, and Common, in `muted`.
+static UIColor *AMTierColor(NSString *group) {
+    NSString *g = group.lowercaseString;
+    if ([g containsString:@"legend"] || [g containsString:@"mythic"]) return AMTok(0xF5B83D, 0x8C5A00);
+    if ([g containsString:@"epic"]) return AMTok(0xE879F9, 0xA21CAF);
+    if ([g containsString:@"rare"]) return AMTok(0xB48CFF, 0x6D3FE0);
+    if ([g containsString:@"uncommon"] || [g containsString:@"normal"]) return AMTok(0x7FD4E6, 0x0E7490);
+    return AM_MUTED;
+}
+
+// A list page's row: its symbol (when it has one), the title, the detail in mono at the right.
+@interface AMEntryCell : AMRowCell
+@property (nonatomic, strong) UIImageView *icon;
+@property (nonatomic, strong) UILabel *title, *detail;
+- (void)setSymbol:(nullable NSString *)symbol;
+@end
+
+@implementation AMEntryCell {
+    NSLayoutConstraint *_afterIcon, *_atEdge;
+}
+
+- (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier {
+    if ((self = [super initWithStyle:style reuseIdentifier:reuseIdentifier])) {
+        _icon = [UIImageView new];
+        _icon.tintColor = AM_ACCENT_TEXT;
+        _icon.contentMode = UIViewContentModeScaleAspectFit;
+        _title = [UILabel new];
+        _title.font = [UIFont systemFontOfSize:13];
+        _title.textColor = AM_FG;
+        _title.numberOfLines = 0;
+        [_title setContentCompressionResistancePriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
+        _detail = [UILabel new];
+        _detail.font = AMMono(11, UIFontWeightRegular);
+        _detail.textColor = AM_MUTED;
+        _detail.textAlignment = NSTextAlignmentRight;
+        [_detail setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+        [_detail setContentCompressionResistancePriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+        for (UIView *v in @[_icon, _title, _detail]) {
+            v.translatesAutoresizingMaskIntoConstraints = NO;
+            [self.contentView addSubview:v];
+        }
+        UILayoutGuide *m = self.contentView.layoutMarginsGuide;
+        _afterIcon = [_title.leadingAnchor constraintEqualToAnchor:_icon.trailingAnchor constant:10];
+        _atEdge = [_title.leadingAnchor constraintEqualToAnchor:m.leadingAnchor];
+        [NSLayoutConstraint activateConstraints:@[
+            [_icon.leadingAnchor constraintEqualToAnchor:m.leadingAnchor],
+            [_icon.centerYAnchor constraintEqualToAnchor:self.contentView.centerYAnchor],
+            [_icon.widthAnchor constraintEqualToConstant:16],
+            [_icon.heightAnchor constraintEqualToConstant:16],
+            [_title.topAnchor constraintEqualToAnchor:m.topAnchor constant:2],
+            [_title.bottomAnchor constraintEqualToAnchor:m.bottomAnchor constant:-2],
+            [_title.trailingAnchor constraintLessThanOrEqualToAnchor:_detail.leadingAnchor constant:-10],
+            [_detail.trailingAnchor constraintEqualToAnchor:m.trailingAnchor],
+            [_detail.centerYAnchor constraintEqualToAnchor:self.contentView.centerYAnchor],
+            [self.contentView.heightAnchor constraintGreaterThanOrEqualToConstant:30],
+            _atEdge,
+        ]];
+    }
+    return self;
+}
+
+- (void)setSymbol:(NSString *)symbol {
+    self.icon.image = symbol ? [UIImage systemImageNamed:symbol] : nil;
+    self.icon.hidden = !self.icon.image;
+    _afterIcon.active = !self.icon.hidden;
+    _atEdge.active = self.icon.hidden;
+}
+
+@end
+
+// A list page (a mod's addList): the menu's look, its entries in boxes. Entries that name a "group" (a quality
+// tier such as Legendary or Rare) get one box per group, in the order the mod lists them (best first), the label
+// in the tier's colour with the count; the first two groups are open, the rest folded until tapped. A search
+// field above long lists. A pick calls the mod with the entry's index in its own list; the page stays open.
+@implementation AMListPanel {
+    NSArray<NSString *> *_groups;              // shown groups ("" for entries with none)
+    NSArray<NSArray<NSNumber *> *> *_rows;     // indexes into entries, per shown group
+    NSMutableSet<NSString *> *_folded;
+    NSString *_query;
+    UILabel *_note;
+}
+
+- (instancetype)initWithItem:(AMItem *)item {
+    if ((self = [super initWithStyle:UITableViewStyleGrouped])) {
+        _item = item;
+        _query = @"";
+        self.title = item.title;
+    }
+    return self;
+}
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    UITableView *table = self.tableView;
+    table.backgroundColor = AM_BG;
+    table.backgroundView = [AMBackdrop new];
+    table.separatorStyle = UITableViewCellSeparatorStyleNone;
+    table.sectionHeaderTopPadding = 0;
+    table.estimatedRowHeight = 30;
+    table.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
+    table.tableHeaderView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 1, 8)];
+    UIView *foot = [[UIView alloc] initWithFrame:CGRectMake(0, 0, UIScreen.mainScreen.bounds.size.width, 52)];
+    _note = [UILabel new];
+    _note.numberOfLines = 0;
+    _note.font = AMMono(11, UIFontWeightRegular);
+    _note.textColor = AM_MUTED;
+    [foot addSubview:_note];
+    table.tableFooterView = foot;
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    self.entries = self.item.entries ? self.item.entries() : @[];
+    if (!_folded) {  // the first time: the two best groups open
+        _folded = [NSMutableSet new];
+        NSMutableArray<NSString *> *order = [NSMutableArray new];
+        for (NSDictionary *e in self.entries) {
+            NSString *g = e[@"group"] ?: @"";
+            if (![order containsObject:g]) [order addObject:g];
+        }
+        for (NSUInteger i = 2; i < order.count; i++) [_folded addObject:order[i]];
+    }
+    if (self.entries.count > 20 && ![self.tableView.tableHeaderView isKindOfClass:AMSearchHeader.class]) {
+        UITextField *field = AMSearchField([NSString stringWithFormat:@"Search %lu", (unsigned long)self.entries.count]);
+        field.delegate = self;
+        [field addTarget:self action:@selector(searchChanged:) forControlEvents:UIControlEventEditingChanged];
+        self.tableView.tableHeaderView = [[AMSearchHeader alloc] initWithField:field];
+    }
+    [self filter];
+    [self.tableView reloadData];
+}
+
+// The header and footer take the table's own width (the sheet can be narrower than the screen).
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    CGFloat width = self.tableView.bounds.size.width;
+    UIView *head = self.tableView.tableHeaderView;
+    if (head && fabs(head.frame.size.width - width) > 0.5) {
+        CGRect f = head.frame;
+        f.size.width = width;
+        head.frame = f;
+        self.tableView.tableHeaderView = head;
+    }
+    CGFloat side = AMInset(width) + 4;
+    _note.frame = CGRectMake(side, 8, MAX(width - 2 * side, 0), 36);
+}
+
+- (void)filter {
+    NSString *q = [_query stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+    NSStringCompareOptions opts = NSCaseInsensitiveSearch | NSDiacriticInsensitiveSearch;
+    NSMutableArray<NSString *> *groups = [NSMutableArray new];
+    NSMutableDictionary<NSString *, NSMutableArray<NSNumber *> *> *rows = [NSMutableDictionary new];
+    [self.entries enumerateObjectsUsingBlock:^(NSDictionary *e, NSUInteger i, BOOL *stop) {
+        if (q.length && [e[@"title"] ?: @"" rangeOfString:q options:opts].location == NSNotFound) return;
+        NSString *g = e[@"group"] ?: @"";
+        if (!rows[g]) { rows[g] = [NSMutableArray new]; [groups addObject:g]; }
+        [rows[g] addObject:@(i)];
+    }];
+    _groups = groups;
+    NSMutableArray *ordered = [NSMutableArray new];
+    for (NSString *g in groups) [ordered addObject:rows[g]];
+    _rows = ordered;
+    _note.text = !self.entries.count ? @"Nothing to list yet. Open this again once the game has loaded."
+               : !groups.count       ? [NSString stringWithFormat:@"Nothing matches “%@”.", q]
+                                     : [NSString stringWithFormat:@"%lu entries. Tap one to apply it.", (unsigned long)self.entries.count];
+}
+
+- (void)searchChanged:(UITextField *)field {
+    _query = field.text ?: @"";
+    [self filter];
+    [self.tableView reloadData];
+}
+
+- (BOOL)textFieldShouldReturn:(UITextField *)field {
+    [field resignFirstResponder];
+    return YES;
+}
+
+- (BOOL)isOpen:(NSInteger)section {
+    return _query.length || ![_folded containsObject:_groups[section]];
+}
+
+- (BOOL)named {  // groups get a header unless the list has none
+    return _groups.count > 1 || (_groups.count == 1 && _groups[0].length);
+}
+
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
+    return _groups.count;
+}
+
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
+    return [self isOpen:section] ? _rows[section].count : 0;
+}
+
+- (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section {
+    return self.named ? 32 : CGFLOAT_MIN;
+}
+
+- (CGFloat)tableView:(UITableView *)tableView heightForFooterInSection:(NSInteger)section {
+    return 6;
+}
+
+- (UIView *)tableView:(UITableView *)tableView viewForFooterInSection:(NSInteger)section {
+    return [UIView new];
+}
+
+- (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section {
+    if (!self.named) return nil;
+    AMSectionHead *head = [tableView dequeueReusableHeaderFooterViewWithIdentifier:@"tier"];
+    if (!head) {
+        head = [[AMSectionHead alloc] initWithReuseIdentifier:@"tier"];
+        [head.tap addTarget:self action:@selector(headerTapped:) forControlEvents:UIControlEventTouchUpInside];
+    }
+    NSString *g = _groups[section];
+    BOOL open = [self isOpen:section];
+    head.label.attributedText = AMLabel(g.length ? g : @"Other", AMTierColor(g));
+    head.right.attributedText = AMLabel([NSString stringWithFormat:@"%lu  %@", (unsigned long)_rows[section].count,
+                                         _query.length ? @"" : open ? @"▾" : @"›"], AM_MUTED);
+    head.off.hidden = YES;
+    head.tap.accessibilityIdentifier = g;
+    head.tap.userInteractionEnabled = !_query.length;
+    head.tap.isAccessibilityElement = YES;
+    head.tap.accessibilityTraits = UIAccessibilityTraitButton;
+    head.tap.accessibilityLabel = [NSString stringWithFormat:@"%@, %lu entries, %@", g, (unsigned long)_rows[section].count,
+                                   open ? @"open" : @"folded"];
+    [head setNeedsLayout];
+    return head;
+}
+
+- (void)headerTapped:(UIControl *)tap {
+    NSString *g = tap.accessibilityIdentifier ?: @"";
+    if ([_folded containsObject:g]) [_folded removeObject:g];
+    else [_folded addObject:g];
+    NSUInteger s = [_groups indexOfObject:g];
+    if (s == NSNotFound) return;
+    [UIView performWithoutAnimation:^{
+        [self.tableView reloadSections:[NSIndexSet indexSetWithIndex:s] withRowAnimation:UITableViewRowAnimationNone];
+    }];
+}
+
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+    NSDictionary *e = self.entries[_rows[indexPath.section][indexPath.row].integerValue];
+    AMEntryCell *cell = [tableView dequeueReusableCellWithIdentifier:@"entry"]
+        ?: [[AMEntryCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"entry"];
+    cell.title.text = e[@"title"];
+    cell.title.textColor = AM_FG;
+    cell.detail.text = e[@"detail"];
+    [cell setSymbol:e[@"symbol"]];
+    BOOL last = indexPath.row == (NSInteger)_rows[indexPath.section].count - 1, first = indexPath.row == 0;
+    [cell setPiece:last ? (first ? AMPieceWhole : AMPieceBottom) : (first ? AMPieceTop : AMPieceMiddle) rule:NO];
+    return cell;
+}
+
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
+    [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    if (self.item.onPick) self.item.onPick(_rows[indexPath.section][indexPath.row].integerValue);
+    [[[UISelectionFeedbackGenerator alloc] init] selectionChanged];
+    AMEntryCell *cell = (AMEntryCell *)[tableView cellForRowAtIndexPath:indexPath];
+    if (![cell isKindOfClass:AMEntryCell.class]) return;
+    cell.title.textColor = AM_ACCENT2;  // a short flash says it was applied
+    [UIView transitionWithView:cell.title duration:0.6 options:UIViewAnimationOptionTransitionCrossDissolve
+                    animations:^{ cell.title.textColor = AM_FG; } completion:nil];
 }
 
 @end
