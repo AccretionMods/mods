@@ -13,6 +13,10 @@ chose a local web app in this repo over a desktop app, a Claude panel or an iOS 
 - `studio/index.html`: the page (vanilla JS, Accretion's design tokens, dark/light).
 - Binds 127.0.0.1 by default. `--host 0.0.0.0` exposes it on the LAN with no login: trusted Wi-Fi only.
 - Apple ID prompts (2FA) can't be answered through the page: sign in once from a console (`am sign ... --install`).
+- **Console tab** (2026-10-22): `/api/console` runs any dev.py command as an interactive job (`/api/jobs/<id>/input`
+  answers prompts), this PC only; regexes kept (shlex, no escapes); `dev.build_parser()`. Prompts for Claude (update,
+  explore dump, narrow approach). Switches tab: build / sign + install / run. Jobs panel under every tab. Checked in
+  the page: find with a regex on the Wanderer dump, a prompt filled in, the Switches buttons.
 - **Games search + CLI** (2026-10-22): `scripts/games.py` (moved from studio/) adds search, info, like one game;
   `dev.py games` (`am games ...`, `--json`) and `/api/games?list=search|like`, `/api/games/info`; Enter in the tab's
   box searches the App Store, Like this on cards; newer list wins over a slow older one. Checked: 9 Kings found and liked.

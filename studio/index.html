@@ -81,6 +81,11 @@ dialog h3 { margin: 0 0 6px; }
 .sec h3 { margin: 0 0 8px; font-size: 15px; }
 .hidden { display: none !important; }
 .copy { float: right; }
+.cmdline { display: flex; gap: 8px; }
+.cmdline input { flex: 1; font-family: ui-monospace, "JetBrains Mono", Consolas, Menlo, monospace; }
+.chipbtn { font-size: 12.5px; padding: 2px 9px; border-radius: 7px; font-family: ui-monospace, Consolas, monospace; }
+.job .answer { display: flex; gap: 6px; margin-top: 6px; }
+.job .answer input { flex: 1; font-family: ui-monospace, Consolas, monospace; }
 .games { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
 .game { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--raised); min-width: 0; }
 .game .top { display: flex; gap: 10px; align-items: center; min-width: 0; }
@@ -113,6 +118,7 @@ dialog h3 { margin: 0 0 6px; }
       <button data-tab="phone">Build &amp; Phone</button>
       <button data-tab="files">Files</button>
       <button data-tab="games">Games</button>
+      <button data-tab="console">Console</button>
     </div>
     <section id="tab-switches"></section>
     <section id="tab-find" class="hidden"></section>
@@ -120,6 +126,12 @@ dialog h3 { margin: 0 0 6px; }
     <section id="tab-phone" class="hidden"></section>
     <section id="tab-files" class="hidden"></section>
     <section id="tab-games" class="hidden"></section>
+    <section id="tab-console" class="hidden"></section>
+    <section class="sec" id="jobsPanel" style="margin-top:18px;border-top:1px solid var(--line);padding-top:12px">
+      <div class="row"><h3 class="grow" style="margin:0">Jobs</h3><button class="small" id="clearJobs">Clear</button></div>
+      <p class="hint" id="jobsHint">Output of builds, signing, logs and console commands shows here, under every tab.</p>
+      <div id="jobs"></div>
+    </section>
   </main>
 </div>
 
@@ -189,12 +201,12 @@ const App = {
   setTab(tab) {
     this.tab = tab;
     document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
-    for (const s of ["switches", "find", "suggest", "phone", "files", "games"]) this.byId("tab-" + s).classList.toggle("hidden", s !== tab);
+    for (const s of ["switches", "find", "suggest", "phone", "files", "games", "console"]) this.byId("tab-" + s).classList.toggle("hidden", s !== tab);
     this.render();
   },
   render() {
     if (!this.detail) return;
-    ({ switches: this.renderSwitches, find: this.renderFind, suggest: this.renderSuggest, phone: this.renderPhone, files: this.renderFiles, games: this.renderGames })[this.tab].call(this);
+    ({ switches: this.renderSwitches, find: this.renderFind, suggest: this.renderSuggest, phone: this.renderPhone, files: this.renderFiles, games: this.renderGames, console: this.renderConsole })[this.tab].call(this);
   },
 
   // ---------------------------------------------------------------- switches
@@ -210,6 +222,13 @@ const App = {
       this.el("button", { class: "small", onclick: () => this.plainSwitchDialog() }, "Add a plain switch / slider"),
       this.el("button", { class: "small", onclick: () => this.quick("gen", {}) }, "Regenerate code"));
     box.append(top);
+    const bump = this.el("input", { type: "checkbox" });
+    box.append(this.el("div", { class: "row", style: "margin-bottom:12px;padding:10px;border:1px solid var(--line);border-radius:11px" },
+      this.el("b", { class: "grow", text: "Try it on the phone" }),
+      this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center" }, bump, "bump version"),
+      this.el("button", { class: "small", onclick: () => this.job("build", ["--ipa", ...(bump.checked ? ["--bump"] : [])]) }, "Build .ipa"),
+      this.el("button", { class: "small", disabled: this.detail.last_ipa ? null : "", title: this.detail.last_ipa || "no .ipa built yet", onclick: () => this.job("sign", [this.detail.last_ipa, "--install"]) }, "Sign + install last .ipa"),
+      this.el("button", { class: "small primary", onclick: () => this.job("run", [...(bump.checked ? ["--bump"] : []), "--seconds", "75"]) }, "Build, sign, install, open, log")));
     if (tj && tj.watch && tj.watch.length) {
       box.append(this.el("p", { class: "hint", text: "Watch (log every " + (tj.watch_every || 10) + " s): " + tj.watch.map(w => `${w.object} ${w.getter || w.field}`).join(", ") }));
     }
@@ -389,7 +408,7 @@ const App = {
   },
   needDump() {
     return this.el("div", { class: "item" }, this.el("p", { text: "No dump of the game yet. The dump reads the game's code names (Il2CppDumper) and takes under a minute." }),
-      this.el("button", { class: "primary", onclick: () => { this.setTab("phone"); this.job("dump", []); } }, "Dump the game"));
+      this.el("button", { class: "primary", onclick: () => this.job("dump", []) }, "Dump the game"));
   },
   renderFindRows() {
     const out = this.byId("findOut"); if (!out) return; out.replaceChildren();
@@ -465,9 +484,8 @@ const App = {
           btn("Run: build, sign, install, open, log", "run", () => [...extra(), "--seconds", String(Number(secs.value) || 75)], "primary"),
           btn("Log", "log", () => ["--seconds", String(Number(secs.value) || 60), ...(launch.checked ? ["--launch"] : [])]),
           this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center" }, launch, "open the app first"), this.el("span", { class: "muted small", text: "seconds" }), secs),
-          this.el("p", { class: "hint", text: "The first Apple ID sign-in (2FA) must be done once from a console: scripts\\am.ps1 sign <ipa> --install. After that plumesign keeps the session and these buttons work." })),
-        this.el("div", { class: "sec", id: "updateSec" }),
-        this.el("div", { class: "sec" }, this.el("div", { class: "row" }, this.el("h3", { class: "grow", text: "Jobs" }), this.el("button", { class: "small", onclick: () => { this.byId("jobs").replaceChildren(); } }, "Clear")), this.el("div", { id: "jobs" })));
+          this.el("p", { class: "hint", text: "The first Apple ID sign-in asks for a 2FA code: type it in the answer box under the job (or run scripts\\am.ps1 sign <ipa> --install once in a console). After that plumesign keeps the session." })),
+        this.el("div", { class: "sec", id: "updateSec" }));
     }
     this.byId("buildInfo").textContent = (d.last_dylib ? "Last dylib: " + d.last_dylib : "No build yet") + (d.last_ipa ? "   ·   Last ipa: " + d.last_ipa : "");
     box.querySelectorAll("button").forEach(b => { if (b.textContent.startsWith("Sign + install")) b.disabled = !d.last_ipa; });
@@ -481,9 +499,9 @@ const App = {
       const body = { command, args: (args || []).filter(a => a !== null && a !== undefined) };
       if (command !== "new" && command !== "fetch") body.mod = mod || this.mod;
       const j = await this.api("/api/jobs", body);
-      this.setTab("phone");
       this.showJob(j);
       this.poll(j.id);
+      this.byId("jobsPanel").scrollIntoView({ behavior: "smooth", block: "nearest" });
     } catch (e) { this.toast(e.message, "bad"); }
   },
   showJob(j) {
@@ -492,9 +510,14 @@ const App = {
     if (!det) {
       det = this.el("details", { class: "job", id: "job-" + j.id, open: "" },
         this.el("summary", {}, this.el("span", { class: "mono", text: `${j.command} ${j.args.join(" ")}` }), " ", this.el("span", { class: "badge", id: "jobst-" + j.id, text: j.status }), " ", this.el("button", { class: "small", onclick: ev => { ev.preventDefault(); this.api(`/api/jobs/${j.id}/stop`, {}).catch(() => {}); } }, "Stop")),
-        this.el("div", { class: "console", id: "jobout-" + j.id }));
+        this.el("div", { class: "console", id: "jobout-" + j.id }),
+        j.interactive ? this.el("form", { class: "answer", id: "jobans-" + j.id, onsubmit: ev => {
+          ev.preventDefault(); const i = ev.target.querySelector("input"); const text = i.value; i.value = "";
+          this.api(`/api/jobs/${j.id}/input`, { text }).catch(e => this.toast(e.message, "bad"));
+        } }, this.el("input", { placeholder: "answer a question from this command (a number, a 2FA code…), Enter sends" }), this.el("button", { class: "small", type: "submit" }, "Send")) : null);
       jobs.prepend(det);
     }
+    const ans = this.byId("jobans-" + j.id); if (ans && j.status !== "running") ans.remove();
     const st = this.byId("jobst-" + j.id); st.textContent = j.status; st.className = "badge " + (j.status === "done" ? "good" : j.status === "running" ? "accent" : "bad");
     const out = this.byId("jobout-" + j.id);
     if (j.lines && j.lines.length) { out.textContent += (out.textContent ? "\n" : "") + j.lines.join("\n"); out.scrollTop = out.scrollHeight; }
@@ -515,6 +538,79 @@ const App = {
     box.append(this.el("div", { class: "sec" }, this.el("h3", { text: "Paths" }), this.el("pre", { text: [`mod:        mods/${d.name}`, `base .ipa:  ${d.base_ipa || "(not remembered; dump finds it by bundle ID in intake/ and Downloads)"}`, `dump:       ${d.dump ? "present" : "none"}`, `last dylib: ${d.last_dylib || "-"}`, `last ipa:   ${d.last_ipa || "-"}`].join("\n") })),
       pre("tweaks.json", d.tweaks_json ? JSON.stringify(d.tweaks_json, null, 2) : "(none)"),
       pre("hooks.json", JSON.stringify({ engine: "unity-il2cpp", hooks: d.hooks_json }, null, 2)));
+  },
+
+  // ---------------------------------------------------------------- console
+  async renderConsole() {
+    const box = this.byId("tab-console");
+    const m = this.mod || "<mod>";
+    if (box.dataset.mod === m && box.childElementCount) return;
+    box.dataset.mod = m; box.replaceChildren();
+    let history = [];
+    try { history = JSON.parse(localStorage.getItem("studio.console.history") || "[]"); } catch (e) { history = []; }
+    let at = history.length;
+    const line = this.el("input", { placeholder: `any am command, e.g. find ${m} "Damage|Health"   (help lists them)`, autocomplete: "off", spellcheck: "false" });
+    const run = async text => {
+      text = (text ?? line.value).trim(); if (!text) return;
+      history = history.filter(h => h !== text).concat(text).slice(-100); at = history.length;
+      try { localStorage.setItem("studio.console.history", JSON.stringify(history)); } catch (e) {}
+      line.value = "";
+      try { const j = await this.api("/api/console", { line: text }); this.showJob(j); this.poll(j.id); this.byId("jobsPanel").scrollIntoView({ behavior: "smooth", block: "nearest" }); }
+      catch (e) { this.toast(e.message, "bad"); }
+    };
+    line.addEventListener("keydown", ev => {
+      if (ev.key === "Enter") { ev.preventDefault(); run(); }
+      else if (ev.key === "ArrowUp" && history.length) { ev.preventDefault(); at = Math.max(0, at - 1); line.value = history[at] || ""; }
+      else if (ev.key === "ArrowDown") { ev.preventDefault(); at = Math.min(history.length, at + 1); line.value = history[at] || ""; }
+    });
+    const put = text => { line.value = text; line.focus(); const i = text.indexOf("…"); if (i >= 0) { line.setSelectionRange(i, i + 1); } };
+    const chip = (label, text, go) => this.el("button", { class: "small chipbtn", title: text, onclick: () => go ? run(text) : put(text) }, label);
+    const group = (title, chips) => this.el("div", { class: "sec" }, this.el("h3", { text: title }), this.el("div", { class: "row" }, chips));
+    let commands = [];
+    try { commands = (await this.api("/api/console/commands")).commands; } catch (e) { commands = []; }
+    box.append(
+      this.el("p", { class: "hint", text: "Runs any scripts/dev.py command (the same as am <command> in PowerShell), with this mod filled in by the buttons. Regexes are passed as typed: quote them when they have spaces or |. ↑/↓ walk the history. Questions a command asks (pick's number, the Apple ID 2FA code) are answered in the box under its job. Only this PC can use the console." }),
+      this.el("div", { class: "cmdline" }, line, this.el("button", { class: "primary", onclick: () => run() }, "Run")),
+      this.el("div", { style: "margin-top:14px" },
+        group("Dump and search the game", [
+          chip("dump", `dump ${m}`, true), chip("dump again", `dump ${m} --force`, true), chip("check hooks", `check ${m}`, true),
+          chip("find regex…", `find ${m} "…"`), chip("find class…", `find ${m} --class …`), chip("fields…", `fields ${m} …`),
+          chip("suggest", `suggest ${m} --no-pick`, true), chip("pick…", `pick ${m} "…"`), chip("status", `status ${m}`, true)]),
+        group("Change switches", [
+          chip("add hook…", `add ${m} … --title "…"`), chip("pin field…", `pin ${m} … --value …`), chip("call every…", `call ${m} … --every 10`),
+          chip("plain switch…", `tweak ${m} … --title "…"`), chip("remove…", `remove ${m} …`), chip("regenerate", `gen ${m}`, true),
+          chip("mark works…", `mark ${m} … --works`), chip("learn patterns", `learn ${m}`, true)]),
+        group("Build, sign, phone", [
+          chip("build .ipa", `build ${m} --ipa`, true), chip("build + bump", `build ${m} --ipa --bump`, true),
+          chip("sign + install…", `sign … --install`), chip("run on phone", `run ${m} --seconds 75`, true),
+          chip("log 60 s", `log ${m} --seconds 60 --launch`, true), chip("update to newer base", `update ${m}`, true)]),
+        group("Games and copies", [
+          chip("games like ours", "games", true), chip("search games…", "games search …"), chip("game info…", "games info …"),
+          chip("get .ipa…", "fetch …"), chip("get newest for this mod", `fetch --mod ${m}`, true), chip("decrypt site account", "fetch --account", true)]),
+        this.promptGroup(),
+        group("Help", [chip("all commands", "help", true), ...commands.map(c => chip(c, `help ${c}`, true))])));
+    line.focus();
+  },
+  prompts() {
+    const d = this.detail || {}, m = d.name || "<mod>", t = d.title || m, g = d.target || "<bundle ID>";
+    const where = `Project: Accretion mods. Target: AccretionMods/mods, mods/${m} (${t} ${d.version || ""}, game ${g} ${d.app_version || "?"}; dump ${d.dump ? "present" : "not made yet: run am dump " + m + " first"}).`;
+    const limits = "Limits: single-player features only; never hook purchases, ads, accounts or online play (flag them instead); don't publish or push without asking.";
+    return [
+      ["Update this app", `Goal: bring ${t} up to the newest App Store version of ${g}, with every switch still working.\n${where}\nSteps: am games info ${g} for the store version; am fetch --mod ${m} for a decrypted copy (open the site if it asks for a captcha); am update ${m}; fix every hook it reports changed or missing (am find / am fields, then am add or am pin); am build ${m} --ipa --bump; am run ${m}; read the log.\nDone when: each switch is marked works or fails on the phone (am mark), mod.json's tested_app_version is the new version, and you list what changed.\n${limits}`],
+      ["Explore the dump for tweaks", `Goal: find every promising tweak in ${t}'s dump and flag the risky ones, before we change anything.\n${where}\nHow: am status ${m}; am suggest ${m} --no-pick; am find ${m} with regexes per area (currency|gold|coins|gems, health|hp|damage|armor, cooldown|timer|duration|speed, xp|level|exp, drop|loot|chance|rarity, unlock|owned|isLocked, energy|stamina); am fields on the classes that hold the values.\nDeliver: a table grouped by area: Class.method or Class.field, what changing it would do, the way (hook, no-JIT pin, call), needs JIT or not, risk; a FLAGS list (purchase/IAP, ads, online/server, anti-cheat or integrity checks, save sync); the top 10 ranked, each with the exact am add / am pin command.\nDone when: the table and the top 10 are in your reply. Read only: no files changed.\n${limits}`],
+      ["Help me narrow down the best approach", `Goal: pick the best way to make this work in ${t}: <describe the feature, e.g. "player takes no damage">.\n${where}\nGive 2 to 4 approaches (hook a method, pin a field without JIT, call a method every few seconds, patch an offset), each with: what it touches (Class.method/field from the dump), needs JIT or not, how likely it survives a game update, side effects, effort. Recommend one, say why, and give the exact am commands to try it, then how to check it on the phone (am run ${m}, what to look for in the log).\nAsk me before changing files if the choice is not clear.\n${limits}`],
+    ];
+  },
+  promptGroup() {
+    const out = this.el("textarea", { class: "hidden", rows: "10", style: "width:100%;margin-top:8px", readonly: "" });
+    const show = (label, text) => {
+      out.value = text; out.classList.remove("hidden");
+      navigator.clipboard.writeText(text).then(() => this.toast(`"${label}" copied: paste it into Claude Code`, "ok")).catch(() => { out.select(); this.toast("select and copy the prompt below", "bad"); });
+    };
+    return this.el("div", { class: "sec" }, this.el("h3", { text: "Prompts for Claude" }),
+      this.el("p", { class: "hint", text: "Filled in for this mod (game, versions, dump) in the goal / target / done when / limits shape. Click to copy, then paste into Claude Code." }),
+      this.el("div", { class: "row" }, this.prompts().map(([label, text]) => this.el("button", { class: "small", onclick: () => show(label, text) }, label))),
+      out);
   },
 
   // ---------------------------------------------------------------- games
@@ -679,6 +775,7 @@ const App = {
     this.byId("newBtn").addEventListener("click", () => this.newModDialog());
     this.byId("getBtn").addEventListener("click", () => this.getIpaDialog());
     this.byId("reloadMods").addEventListener("click", () => this.loadMods());
+    this.byId("clearJobs").addEventListener("click", () => this.byId("jobs").replaceChildren());
     this.loadMods().catch(e => this.toast(e.message, "bad"));
   },
 };
