@@ -698,7 +698,8 @@ class Handler(BaseHTTPRequestHandler):
                         fresh = [r for r in rows if not r["has"]]
                         return self.send_json({"text": dev.dump_scan.as_text(fresh, int(q.get("limit", 60)))})
                     return self.send_json({
-                        "classes": result["classes"], "total": len(result["rows"]), "flagged": len(result["flagged"]),
+                        "classes": result["classes"], "total": len(result["rows"]) + len(result.get("inventory", [])),
+                        "flagged": len(result["flagged"]) + len(result.get("inventory", [])), "matched": len(rows),
                         "rows": rows[: int(q.get("limit", 300))],
                     })
                 if rest == ["live"]:

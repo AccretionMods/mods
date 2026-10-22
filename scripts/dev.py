@@ -2250,7 +2250,7 @@ def scan_rows(mod, area=None, find=None, flagged=False):
     game = meta.get("target_bundle_id")
     result = dump_scan.scan(dump_path(mod), load_tweaks(folder, meta),
                             learned=lambda name, ctype, cls: dev_learn.member_boost(store, name, ctype, game, cls))
-    rows = result["flagged"] if flagged else result["rows"]
+    rows = (result["flagged"] if flagged else result["rows"]) + result.get("inventory", [])
     if area:
         rows = [r for r in rows if r["area"].lower().startswith(area.lower())]
     if find:

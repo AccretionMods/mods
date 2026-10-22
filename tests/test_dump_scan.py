@@ -139,6 +139,35 @@ class Scan(unittest.TestCase):
 
 
 class Checks(unittest.TestCase):
+    def test_store_names_are_purchases_but_restore_is_not(self):
+        self.assertEqual(dump_scan.area_of("GameStore", "IsOpen")[0], "In-app purchases")
+        self.assertEqual(dump_scan.area_of("Shop", "BuyProduct")[0], "In-app purchases")
+        self.assertNotEqual(dump_scan.area_of("SaveManager", "RestoreBackup")[0], "In-app purchases")
+
+    def test_purchase_inventory_includes_sdk_methods_and_unreachable_fields(self):
+        with tempfile.TemporaryDirectory() as folder:
+            dump = Path(folder) / "dump.cs"
+            dump.write_text(DUMP + """
+// Image 3: UnityEngine.Purchasing.dll - 30
+// Namespace: UnityEngine.Purchasing
+public class Product // TypeDefIndex: 30
+{
+    public static string Receipt; // 0x0
+    public bool Owned; // 0x20
+    public bool get_IsOwned() { }
+    public void Buy(string id) { }
+}
+""", encoding="utf-8")
+            result = dump_scan.scan(dump)
+            inventory = {(r["class"], r["member"]): r for r in result["inventory"]}
+            for member in ("Receipt", "Owned", "get_IsOwned", "Buy"):
+                row = inventory[("UnityEngine.Purchasing.Product", member)]
+                self.assertEqual(row["area"], "In-app purchases")
+                self.assertTrue(row["inspect_only"])
+                self.assertIn("signature", row)
+            self.assertIn(("SaveData", "Coins"), inventory)
+            self.assertEqual(result["inventory"], dump_scan.scan(dump)["inventory"])
+
     def test_direction_multipliers_and_chances(self):
         sug = dump_scan._suggest
         self.assertEqual((sug("NEW_TROOPS_ATTACK_DELAY_MULTIPLIER", "float", False)["value"],

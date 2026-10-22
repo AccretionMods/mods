@@ -264,6 +264,11 @@ decrypted copy (am fetch) if none is here, the report (it stops when the game ca
 folder and its dump (am new), then the best no-JIT candidates. In Studio: Start a mod and Report on a
 Games card; Start ends on the new mod's Scan tab.
 
+Scan's **In-app purchases** area includes Store/IAP types, fields and method declarations across all
+assemblies, including purchasing SDKs and objects that a pin cannot reach. Pin-compatible values keep
+**Add**; other entries offer **Inspect** with their signature and assembly. **Show next 300** loads more
+matches. This is name-based discovery; an entry's presence does not prove it controls a purchase.
+
 While the game runs, the mod's menu logs each switch's state (`[AccretionMods] status <key> ok|off|waiting:
 ...`), on change and every 20 s. Studio's Switches tab shows them from its log and run jobs ("on the phone:
 working"), and Watch the phone (5 min) keeps them current.

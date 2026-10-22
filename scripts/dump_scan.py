@@ -17,7 +17,9 @@ import os
 import re
 from pathlib import Path
 
-VERSION = 8  # dedicated purchase area and broader purchase-name detection
+from il2cpp_dump import SIGNATURE, TYPE, TYPE_INDEX
+
+VERSION = 10  # Store/IAP inventory, without generic token/cost matches from unrelated SDKs
 
 IMAGE = re.compile(r"^// Image \d+: (.+?)(?:\.dll)? - (\d+)\s*$")
 NAMESPACE = re.compile(r"^\s*// Namespace: ?(\S*)")
@@ -45,7 +47,7 @@ AREAS = [  # first match wins; member names count more than class names
 ]  # matched against words: "SkillPoints" -> "skill points", so "ill" no longer hits "skill"
 # Informational labels only: no topic excludes a candidate.
 FLAGS = [
-    ("sold in the shop", r"caps|token|gem|coin|currency|purchas|iap|in_?app|full_?game|paywall|billing|receipt|entitlement|shop|price|cost|premium|vip|subscri|"
+    ("sold in the shop", r"caps|token|gem|coin|currency|purchas|iap|in_?app|full_?game|paywall|billing|receipt|entitlement|shop|storekit|storefront|payment|(?:^|[._ ])(?:store|buy)(?:$|[._ ])|price|cost|premium|vip|subscri|"
                          r"max_?bag|bag_?(size|capacity)|fuel|petrol|van(crate|warranty)|fast_?travel|revive|"
                          r"supply_?(crate|drop)|boost|daily_?reward|redeem|special_?offer|starter_?pack|"
                          r"(battle|season|survivor|premium)_?pass"),
@@ -271,14 +273,73 @@ def scan(dump, tweaks=None, learned=None):
             data = None
     if not data or data.get("stamp") != stamp:
         classes = parse(dump)
-        data = {"stamp": stamp, "classes": len(classes),
+        data = {"stamp": stamp, "classes": len(classes), "inventory": purchase_inventory(dump),
                 "data": {k: dict(v, getters=sorted(v["getters"]), holds=sorted(v["holds"])) for k, v in classes.items()}}
         tmp = cache.with_name(cache.name + ".tmp")
         tmp.write_text(json.dumps(data), encoding="utf-8")
         os.replace(tmp, cache)
     classes = {k: dict(v, getters=set(v["getters"]), holds=set(v.get("holds", ()))) for k, v in data["data"].items()}
-    rows, flagged = build(classes, existing_targets(tweaks), learned)
-    return {"rows": rows, "flagged": flagged, "classes": data["classes"]}
+    existing = existing_targets(tweaks)
+    rows, flagged = build(classes, existing, learned)
+    pins = {(r["class"], r["member"]) for r in rows}
+    inventory = [dict(r, has=f"{r['class']}.{r['member']}" in existing)
+                 for r in data["inventory"] if (r["class"], r["member"]) not in pins]
+    return {"rows": rows, "flagged": flagged, "inventory": inventory, "classes": data["classes"]}
+
+
+def purchase_inventory(path):
+    """All named Store/IAP types, fields and method declarations, including SDKs and non-pin targets.
+
+    These are inspection rows, not pin suggestions. Keep them separate so automatic pin generation
+    and the learner never treat an arbitrary method or a string field as a writable numeric value.
+    """
+    field = re.compile(r"^\s*(?:(?:public|private|protected|internal|static|readonly|const)\s+)*"
+                       r"([\w.<>\[\], ]+?)\s+([\w<>]+)(?:\s*=\s*[^;]+)?; // (0x[0-9A-Fa-f]+)")
+    images, rows = [], []
+    namespace = cls = assembly = ""
+    topics = re.compile(r"purchas|iap|in_?app|full_?game|paywall|billing|receipt|entitlement|shop|"
+                        r"storekit|storefront|payment|premium|vip|subscri|token_?(balance|currency)|"
+                        r"(?:^|[._ ])(?:store|buy|currency|coins?|gems?|diamonds?)(?:$|[._ ])")
+
+    def matches(member):
+        return topics.search(_split_words(f"{assembly}.{cls}.{member}")) is not None
+
+    def add(member, ctype, kind, signature, offset=None):
+        rows.append({"class": cls, "object": cls, "member": member, "name": member,
+                     "ctype": ctype, "kind": kind, "signature": signature.strip(),
+                     "assembly": assembly, "offset": offset, "area": "In-app purchases",
+                     "flag": "sold in the shop", "score": 0, "has": False, "inspect_only": True})
+
+    with open(path, encoding="utf-8", errors="replace") as source:
+        for line in source:
+            image = IMAGE.match(line)
+            if image:
+                images.append((int(image.group(2)), image.group(1)))
+                continue
+            ns = NAMESPACE.match(line)
+            if ns:
+                namespace, cls = ns.group(1), ""
+                continue
+            typ, index = TYPE.match(line), TYPE_INDEX.search(line)
+            if typ and index:
+                cls = f"{namespace}.{typ.group(1)}" if namespace else typ.group(1)
+                assembly = next((name for start, name in reversed(images) if start <= int(index.group(1))), "")
+                if matches(""):
+                    add("(type)", "type", "type", line)
+                continue
+            if not cls:
+                continue
+            f = field.match(line)
+            sig = SIGNATURE.match(line.strip())
+            if f:
+                ctype, member, offset = f.groups()
+                if matches(member):
+                    add(member, ctype, "field", line, offset)
+            elif sig:
+                ctype, member, _params = sig.groups()
+                if matches(member):
+                    add(member, ctype, "method", line)
+    return rows
 
 
 def as_text(rows, limit=60):
