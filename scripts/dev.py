@@ -2010,11 +2010,12 @@ def cmd_post(args):
     meta = read_json(folder / "mod.json")
     tweaks = load_tweaks(folder, meta)
     app_version = meta.get("tested_app_version", "")
-    items = [t for t in tweaks.get("tweaks", []) if t.get("kind", "switch") in ("switch", "slider")]
+    skip = set(filter(None, (args.skip or "").split(",")))
+    items = [t for t in tweaks.get("tweaks", []) if t.get("kind", "switch") in ("switch", "slider") and t["key"] not in skip]
     ok = [t for t in items if (t.get("verified") or {}).get("result") == "works"
           and (t.get("verified") or {}).get("app_version") == app_version]
     left = [t for t in items if t not in ok]
-    if left and not args.draft:
+    if left and not (args.draft or args.partial):
         raise DevError(
             f"not every switch is marked works on {app_version} yet ({len(ok)} of {len(items)}): "
             + ", ".join(t["key"] for t in left) + ". Test them (am mark <mod> <key> --works), or --draft"
@@ -2030,7 +2031,14 @@ def cmd_post(args):
     before = state.get("posted") or {}
     new_keys = set() if not before else {t["key"] for t in ok} - set(before.get("features", []))
     shown = ok if not args.draft else items
+    if args.partial and left:  # owner, 2026-10-22: publish with what is confirmed and what should work, labelled
+        lines = [f"- {t['title']}" + (" (NEW)" if t["key"] in new_keys else "") for t in ok]
+        lines += ["", "Should work (applies in the game, not yet confirmed in play):"]
+        lines += [f"- {t['title']}" for t in left]
+        shown = []
     features = "\n".join(f"- {t['title']}" + (" (NEW)" if t["key"] in new_keys else "") for t in shown)
+    if args.partial and left:
+        features = "Confirmed working:\n" + "\n".join(lines)
     text = template.read_text(encoding="utf-8")
     for k, v in {
         "logo": app.get("artworkUrl512") or "[APP LOGO LINK]",
@@ -2463,6 +2471,8 @@ def build_parser():
     s = sub.add_parser("post", help="the release post, once every switch is marked works (written locally)")
     s.add_argument("mod")
     s.add_argument("--draft", action="store_true", help="write it anyway, marked DRAFT with what is not validated")
+    s.add_argument("--partial", action="store_true", help="publishable now: features as confirmed + should work")
+    s.add_argument("--skip", help="keys left out of the post, comma separated (switches kept off on purpose)")
     s.add_argument("-o", "--output")
     s.set_defaults(fn=cmd_post)
 
