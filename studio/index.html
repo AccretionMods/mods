@@ -76,12 +76,17 @@ header .sel b { color: var(--fg); font-family: var(--display); font-weight: 600;
   header .sel { order: 3; flex-basis: 100%; }
   header button { min-height: 32px; padding: 4px 10px; font-size: 13px; }
 }
-.card { background: color-mix(in srgb, var(--surface) 94%, transparent); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; min-width: 0; }
+.card { background: color-mix(in srgb, var(--surface) 60%, transparent); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; min-width: 0; }
 main.card { position: relative; }
-/* corner brackets, as on the store's live index */
-main.card::before, main.card::after { content: ""; position: absolute; width: 12px; height: 12px; pointer-events: none; }
-main.card::before { left: -6px; top: -6px; border-left: 1.5px solid var(--accent); border-top: 1.5px solid var(--accent); }
-main.card::after { right: -6px; bottom: -6px; border-right: 1.5px solid var(--accent-2); border-bottom: 1.5px solid var(--accent-2); }
+/* the mod menu template's card edge (no corner brackets any more): the outline in `line` with a violet-into-cyan
+   light and a bright glint running round it every 6 s; boxes 60% see-through so the drifting lights show */
+@property --edge { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+main.card::after, .panel::after { content: ""; position: absolute; inset: -1px; border-radius: inherit; padding: 1px; pointer-events: none;
+  background: conic-gradient(from var(--edge), var(--line) 0deg, var(--accent) 40deg, var(--accent-2) 80deg,
+    color-mix(in srgb, var(--accent-2) 30%, #fff) 95deg, var(--accent-2) 110deg, var(--line) 160deg, var(--line) 360deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; }
+@media (prefers-reduced-motion: no-preference) { main.card::after, .panel::after { animation: card-edge 6s linear infinite; } }
+@keyframes card-edge { to { --edge: 360deg; } }
 .mods { display: flex; flex-direction: column; gap: 8px; }
 .mod { padding: 11px 13px; border: 1px solid var(--line); border-radius: 12px; cursor: pointer; background: var(--surface); transition: border-color .15s, transform .15s; }
 .mod:hover { border-color: color-mix(in srgb, var(--line) 40%, var(--accent)); transform: translateY(-1px); }
@@ -103,11 +108,16 @@ main.card::after { right: -6px; bottom: -6px; border-right: 1.5px solid var(--ac
 .row > * { min-width: 0; }
 .grow { flex: 1; }
 /* a panel: bordered, its label inside at the top, a figure at the right (the dashboard's panels) */
-.panel { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); margin-bottom: 14px; }
+.panel { position: relative; border: 1px solid var(--line); border-radius: 12px; background: color-mix(in srgb, var(--surface) 60%, transparent); margin-bottom: 14px; }
 .panel-h { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 12px 14px 10px; }
 .panel-h .fig { font-family: var(--mono); letter-spacing: 0; text-transform: none; font-size: 12px; color: var(--fg); }
 .panel-h .fig.good { color: var(--good); }
 .panel-b { padding: 0 14px 14px; }
+.feature .panel-b { padding-bottom: 10px; }
+.feature-meta { font-size: 12px; color: var(--fg); opacity: .85; }
+.feature .hint { margin: 4px 0 6px; }
+.feature-more > summary { font-size: 12px; color: var(--muted); cursor: pointer; }
+.feature-more[open] > summary { margin-bottom: 4px; }
 .item { padding: 12px 14px; border-top: 1px solid var(--line); }
 .panel > .item:first-of-type { border-top: 1px solid var(--line); }
 .item .head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
@@ -309,13 +319,14 @@ const App = {
     const tj = d.tweaks_json;
     for (const f of d.features || []) {
       const v = f.verified || {}, state = f.verification_state;
-      const evidence = this.el("details", {}, this.el("summary", { text: "Test evidence and reuse criteria" }));
+      const evidence = this.el("details", { class: "feature-more" }, this.el("summary", { text: "Test evidence and reuse criteria" }));
       for (const text of [...(f.evidence || []), ...(f.criteria || [])]) evidence.append(this.el("p", { class: "hint", text }));
-      box.append(this.el("div", { class: "panel" },
+      box.append(this.el("div", { class: "panel feature" },
         this.el("div", { class: "panel-h" }, this.el("span", { text: f.title }),
           this.el("span", { class: "badge " + (state === "works" ? "good" : "warn"), text: state === "works" ? "Verified on this build" : state === "stale" ? "Needs retest" : state })),
-        this.el("p", { text: `${f.mode || "Custom feature"} · ${f.nojit ? "No JIT" : "Runtime dependent"} · game ${v.app_version || "?"} · mod ${v.mod_version || "?"} · ${v.date || ""}` }),
-        this.el("p", { class: "hint", text: f.summary || "" }), evidence));
+        this.el("div", { class: "panel-b" },
+          this.el("div", { class: "feature-meta mono", text: `${f.mode || "Custom feature"} · ${f.nojit ? "No JIT" : "Runtime dependent"} · game ${v.app_version || "?"} · mod ${v.mod_version || "?"} · ${v.date || ""}` }),
+          f.summary ? this.el("p", { class: "hint", text: f.summary }) : null, evidence)));
     }
     if (!tj) {
       box.append(this.el("p", { class: "hint", text: "This mod has a hand-written Tweak.x and no tweaks.json. Adding a switch here creates one; the Makefile must then list AMTweaks.gen.m and Tweak.x must call AMTweaksRegister() (see README \"Dev loop\")." }));
