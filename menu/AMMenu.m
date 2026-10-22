@@ -1424,12 +1424,16 @@ static void AMCloudCollect(NSString *folder, NSMutableDictionary *files, NSUInte
     NSURL *root = [AMCloudContainer() URLByAppendingPathComponent:folder isDirectory:YES];
     NSDirectoryEnumerator *walk = [NSFileManager.defaultManager enumeratorAtURL:root includingPropertiesForKeys:@[NSURLIsRegularFileKey]
                                                                        options:0 errorHandler:nil];
-    NSString *base = AMCloudContainer().path;
+    // the enumerator answers /private/var/... for a /var/... home: compare both resolved, or the names come out
+    // cut in the wrong place ("62A7A39/Documents/save0.json", the first backups)
+    NSString *base = root.URLByResolvingSymlinksInPath.path;
     for (NSURL *url in walk) {
         NSNumber *regular = nil;
         [url getResourceValue:&regular forKey:NSURLIsRegularFileKey error:nil];
         if (!regular.boolValue) continue;
-        NSString *rel = [url.path substringFromIndex:base.length + 1];
+        NSString *path = url.URLByResolvingSymlinksInPath.path;
+        if (![path hasPrefix:[base stringByAppendingString:@"/"]]) continue;
+        NSString *rel = [folder stringByAppendingPathComponent:[path substringFromIndex:base.length + 1]];
         NSData *data = [NSData dataWithContentsOfURL:url options:NSDataReadingMappedIfSafe error:nil];
         if (!data || *total + data.length > AMCloudMaxBytes) continue;
         *total += data.length;
@@ -1437,7 +1441,6 @@ static void AMCloudCollect(NSString *folder, NSMutableDictionary *files, NSUInte
     }
 }
 
-// The save as a zip, or nil with why.
 // The save as a zip, or nil with why; *hash fingerprints the save itself (not when or where it was packed), so an
 // unchanged save is not uploaded again.
 static NSData *AMCloudPack(NSString **why, NSString **hash) {
@@ -1500,11 +1503,17 @@ static BOOL AMCloudStage(NSData *zip, NSString **why) {
     if (![about[@"bundle"] isEqual:AMCloudBundle()]) { *why = @"That backup is from another game"; return NO; }
     NSURL *stage = [AMCloudDir() URLByAppendingPathComponent:@"restore" isDirectory:YES];
     [NSFileManager.defaultManager removeItemAtURL:stage error:nil];
-    for (NSString *name in files) {
-        if ([name containsString:@".."] || [name hasPrefix:@"/"]) continue;  // stay inside the stage
+    for (NSString *original in files) {
+        if ([original containsString:@".."] || [original hasPrefix:@"/"]) continue;  // stay inside the stage
+        // the first backups named files "62A7A39/Documents/save0.json": keep what follows the stray piece
+        NSString *name = original;
+        for (NSString *root in @[@"Documents/", @"Library/"]) {
+            NSRange r = [name rangeOfString:[@"/" stringByAppendingString:root]];
+            if (![name hasPrefix:root] && r.location != NSNotFound) { name = [name substringFromIndex:r.location + 1]; break; }
+        }
         NSURL *to = [stage URLByAppendingPathComponent:name];
         [NSFileManager.defaultManager createDirectoryAtURL:to.URLByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:nil];
-        if (![files[name] writeToURL:to options:NSDataWritingAtomic error:nil]) { *why = @"There is no room on the phone to restore it"; return NO; }
+        if (![files[original] writeToURL:to options:NSDataWritingAtomic error:nil]) { *why = @"There is no room on the phone to restore it"; return NO; }
     }
     return YES;
 }
