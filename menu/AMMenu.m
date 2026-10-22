@@ -79,7 +79,9 @@ void AMMenuStatus(const char *key, bool ok, const char *reason) {
     char line[220] = "";
     if (e) {
         const char *why = ok ? "" : (reason ?: "not reaching the game");
-        changed = e->at == 0 || e->ok != ok || strcmp(e->reason, why) != 0;
+        // a switch back on after a quiet spell (it was off) announces itself again, even with the same state
+        BOOL quiet = e->at != 0 && CFAbsoluteTimeGetCurrent() - e->at > AMStatusStale;
+        changed = e->at == 0 || quiet || e->ok != ok || strcmp(e->reason, why) != 0;
         e->ok = ok;
         strlcpy(e->reason, why, sizeof e->reason);
         e->at = CFAbsoluteTimeGetCurrent();
