@@ -165,6 +165,11 @@ dialog h3 { margin: 0 0 6px; font-family: var(--display); font-weight: 600; }
 .jobprog.going .jobprog-bar i { background-image: linear-gradient(90deg, var(--accent), var(--accent-2), var(--accent)); background-size: 200% 100%; animation: flow 2.4s linear infinite; }
 .jobprog.bad .jobprog-bar i { background: var(--bad); }
 /* Store tab */
+.mod-item { border-top: 1px solid var(--line); padding: 10px 0; }
+.mod-item:first-child { border-top: 0; padding-top: 0; }
+.mod-reason { margin: 6px 0; font-size: 13.5px; }
+.mod-post { margin: 0 0 8px; padding: 8px 12px; border-left: 2px solid var(--accent-2); background: color-mix(in srgb, var(--surface) 70%, transparent); border-radius: 6px; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.store-t td .mod-body { white-space: normal; overflow-wrap: anywhere; display: block; min-width: 220px; }
 .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
 .tile { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; min-width: 0; }
 .tile .l { font: 500 10.5px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
@@ -1086,7 +1091,7 @@ const App = {
   // endpoint we depend on, keys and sign-ins (secret names and ages, never values) and the publishing workflows.
   loadStore(parts) {
     this.store = this.store || {};
-    for (const p of parts || ["link", "public", "admin", "endpoints", "keys", "runs"]) {
+    for (const p of parts || ["link", "public", "admin", "moderation", "endpoints", "keys", "runs"]) {
       this.store[p] = { loading: true, ...(this.store[p] && this.store[p].data ? { data: this.store[p].data } : {}) };
       this.api("/api/store/" + p).then(data => { this.store[p] = { data, at: Date.now() }; })
         .catch(e => { this.store[p] = { error: e.message }; })
@@ -1110,6 +1115,11 @@ const App = {
       };
       setTimeout(poll, 3000);
     } catch (e) { this.toast(e.message, "bad"); }
+  },
+  async storeAct(body, done) {
+    const r = await this.api("/api/store/act", body);
+    if (done) { this.toast(done, "ok"); this.loadStore(["moderation", "admin"]); }
+    return r;
   },
   renderStore() {
     const box = this.byId("tab-store");
@@ -1165,6 +1175,51 @@ const App = {
       return el("div", {}, el("div", { class: "spark" }, dl.per_day.map(d => el("i", { title: `${d.day}: ${d.n}`, style: `height:${Math.max(3, Math.round(d.n / max * 100))}%` }))),
         el("div", { class: "hint", style: "margin:4px 0 0", text: "downloads per day, 14 days" + (dl.via ? " · " + Object.entries(dl.via).map(([k, v]) => `${k} ${n(v)}`).join(" · ") : "") })); })() : null;
     box.append(panel("The store", el("span", { class: "fig", text: st.built_at ? `built ${ago(st.built_at)} · ${st.size_mb || "?"} MB` : "" }), state("public"), tiles, spark));
+
+    // moderation: the site's #/mod page, acted on from here through the admin link
+    if (linked) {
+      const m = (S.moderation || {}).data || {}, reports = m.reports || [];
+      const list = v => Array.isArray(v) ? v : [];
+      const who = p => p ? el("span", {}, "@" + p.username, p.banned ? el("span", { class: "badge bad", style: "margin-left:6px", text: "banned" }) : null, p.role && p.role !== "user" ? el("span", { class: "badge accent", style: "margin-left:6px", text: p.role }) : null) : "—";
+      const btn = (label, cls, fn) => el("button", { class: "small " + (cls || ""), onclick: async ev => { ev.target.disabled = true; try { await fn(); } catch (e) { this.toast(e.message, "bad"); ev.target.disabled = false; } } }, label);
+      const act = (body, done) => this.storeAct(body, done);
+      const reportRows = reports.map(r => {
+        const target = r.post ? r.post.author_p : r.profile;
+        return el("div", { class: "mod-item" },
+          el("div", { class: "row" }, el("b", { text: r.post ? "Post" : "Profile" }),
+            el("span", { class: "muted small grow", text: `${r.reporter_p ? "reported by @" + r.reporter_p.username : "flagged by AI moderation"} · ${ago(r.created_at)}` })),
+          el("p", { class: "mod-reason", text: `“${r.reason}”` }),
+          r.post ? el("blockquote", { class: "mod-post", text: r.post.body }) : null,
+          el("div", { class: "row" }, el("span", { class: "small grow" }, "Author: ", who(target), r.post && r.post.app_id ? el("span", { class: "muted small mono", text: " · " + r.post.app_id }) : null),
+            r.post && !r.post.hidden ? btn("Hide post", "", async () => { await act({ action: "hide", target: String(r.post.id), flag: true }); await act({ action: "resolve", target: String(r.id), value: "resolved" }, "Post hidden"); }) : null,
+            target && !target.banned && target.role !== "admin" ? btn("Ban user", "", async () => { if (!confirm(`Ban @${target.username}? They can't post, like or report until unbanned.`)) throw new Error("Cancelled"); await act({ action: "ban", target: target.id, flag: true }); await act({ action: "resolve", target: String(r.id), value: "resolved" }, `@${target.username} banned`); }) : null,
+            btn("Dismiss", "ghost", () => act({ action: "resolve", target: String(r.id), value: "dismissed" }, "Dismissed"))));
+      });
+      const postRow = (p, hiddenList) => [el("span", { class: "small" }, who(p.author_p), el("div", { class: "muted small", text: `${ago(p.created_at)}${p.app_id ? " · " + p.app_id : ""}${p.parent_id ? " · reply" : ""}` })),
+        el("span", { class: "small mod-body", text: p.body.length > 220 ? p.body.slice(0, 220) + "…" : p.body }),
+        hiddenList || p.hidden ? btn("Unhide", "ghost", () => act({ action: "hide", target: String(p.id), flag: false }, "Post visible again")) : btn("Hide", "", () => act({ action: "hide", target: String(p.id), flag: true }, "Post hidden"))];
+      const roleUser = el("input", { placeholder: "username", style: "width:160px" });
+      const role = el("select", {}, [["mod", "Moderator"], ["user", "Regular user"], ["admin", "Admin"]].map(o => el("option", { value: o[0], text: o[1] })));
+      const supUser = el("input", { placeholder: "username", style: "width:160px" });
+      const team = list(m.team);
+      box.append(panel("Moderation", el("span", { class: "row" }, m.reports ? badge(reports.length ? `${reports.length} open report${reports.length === 1 ? "" : "s"}` : "no open reports", reports.length ? "warn" : "good") : null,
+          el("button", { class: "small ghost", onclick: () => this.loadStore(["moderation"]) }, "Refresh")), state("moderation"),
+        m.reports ? (reportRows.length ? el("div", {}, reportRows) : el("p", { class: "hint", text: "No open reports." })) : null,
+        m.reports ? el("details", { class: "feature-more" }, el("summary", { text: `Latest posts (${list(m.recent).length})` }),
+          table(["Author", "Post", ""], list(m.recent).map(p => postRow(p)))) : null,
+        m.reports ? el("details", { class: "feature-more" }, el("summary", { text: `Hidden posts (${list(m.hidden).length})` }),
+          list(m.hidden).length ? table(["Author", "Post", ""], list(m.hidden).map(p => postRow(p, true))) : el("p", { class: "hint", text: "None." })) : null,
+        m.reports ? el("details", { class: "feature-more" }, el("summary", { text: `Banned accounts (${list(m.banned).length})` }),
+          list(m.banned).length ? table(["Account", "Joined", ""], list(m.banned).map(u => ["@" + u.username, ago(u.created_at), btn("Unban", "ghost", () => act({ action: "ban", target: u.id, flag: false }, `@${u.username} unbanned`))])) : el("p", { class: "hint", text: "None." })) : null,
+        m.reports ? el("details", { class: "feature-more" }, el("summary", { text: `Team and supporters (${team.length})` }),
+          team.length ? table(["Account", "Role", "Supporter"], team.map(u => ["@" + u.username, u.role, u.supporter ? "♥" : ""])) : null,
+          el("div", { class: "row", style: "margin-top:10px" }, el("span", { class: "small", text: "Role" }), roleUser, role,
+            btn("Apply", "primary", async () => { const u = roleUser.value.trim().replace(/^@/, ""); if (!u) throw new Error("Type a username"); if (role.value === "admin" && !confirm(`Make @${u} an admin? Admins can change roles and ban.`)) throw new Error("Cancelled"); await act({ action: "role", target: u, value: role.value }, `@${u} is now ${role.value}`); })),
+          el("div", { class: "row", style: "margin-top:8px" }, el("span", { class: "small", text: "♥ Supporter" }), supUser,
+            btn("Give badge", "primary", async () => { const u = supUser.value.trim().replace(/^@/, ""); if (!u) throw new Error("Type a username"); await act({ action: "supporter", target: u, flag: true }, `@${u} is now a supporter ♥`); }),
+            btn("Remove", "ghost", async () => { const u = supUser.value.trim().replace(/^@/, ""); if (!u) throw new Error("Type a username"); await act({ action: "supporter", target: u, flag: false }, `@${u} is no longer a supporter`); }))) : null,
+        el("p", { class: "hint", text: "Actions go to the store at once, recorded under your admin account. Admins can't be banned from here, and your own role can't be changed here." })));
+    }
 
     // our mods
     const ours = pub.ours || [], appsSec = okSec("apps") || {}, perApp = (dl && dl.per_app) || {};

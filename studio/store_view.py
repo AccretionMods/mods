@@ -137,6 +137,37 @@ def admin_summary(root, apps):
     return {"linked": True, "took": round(took, 2), **body}
 
 
+def _studio(root, op, body, timeout=40):
+    token = admin_state(root).get("token")
+    if not token:
+        raise RuntimeError("Link Mod Studio first (Store tab)")
+    status, _, answer = _http("POST", f"{FUNCTIONS}/studio?op={op}", body, {"x-save-token": token}, timeout=timeout)
+    if status != 200 or not isinstance(answer, dict):
+        raise RuntimeError((answer.get("error") if isinstance(answer, dict) else None) or f"Accretion answered {status}")
+    return answer
+
+
+def moderation(root):
+    """The open reports, recent and hidden posts, banned users and the team (admin link only)."""
+    return _studio(root, "moderation", {})
+
+
+ACTIONS = {"hide", "resolve", "ban", "role", "supporter"}
+
+
+def act(root, body):
+    """One moderation action: hide/unhide a post, resolve or dismiss a report, ban/unban, role, supporter."""
+    action = str(body.get("action", ""))
+    if action not in ACTIONS or not str(body.get("target", "")):
+        raise RuntimeError("Unknown moderation action")
+    clean = {"action": action, "target": str(body["target"])[:100]}
+    if isinstance(body.get("flag"), bool):
+        clean["flag"] = body["flag"]
+    if isinstance(body.get("value"), str):
+        clean["value"] = body["value"][:20]
+    return _studio(root, "act", clean, timeout=20)
+
+
 # ---------------------------------------------------------------- the store's public data
 
 def public(repo_root):

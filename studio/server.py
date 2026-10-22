@@ -962,7 +962,7 @@ def store_apps():
 
 
 def store_get(rest):
-    """The Store tab's reads: public, admin, endpoints, keys, runs, link."""
+    """The Store tab's reads: public, admin, endpoints, keys, runs, link, moderation."""
     root = dev.am_root()
     if rest == ["public"]:
         return store_view.public(ROOT)
@@ -978,6 +978,11 @@ def store_get(rest):
         return store_view.keys(root, ROOT, sign, lambda: fetch_client().account())
     if rest == ["runs"]:
         return store_view.runs()
+    if rest == ["moderation"]:
+        try:
+            return store_view.moderation(root)
+        except RuntimeError as e:
+            raise dev.DevError(str(e)) from e
     if rest == ["link"]:
         state = store_view.admin_state(root)
         return {"status": "linked" if state.get("token") else ("waiting" if state.get("pending") else "none"),
@@ -1353,6 +1358,12 @@ class Handler(BaseHTTPRequestHandler):
         if parts == ["api", "console"]:
             self.local_only()
             return self.send_json(console(str(body.get("line", ""))).view())
+        if parts == ["api", "store", "act"]:
+            self.local_only()
+            try:
+                return self.send_json(store_view.act(dev.am_root(), body))
+            except RuntimeError as e:
+                raise dev.DevError(str(e)) from e
         if len(parts) == 4 and parts[:3] == ["api", "store", "link"] and parts[3] in ("start", "poll", "unlink"):
             self.local_only()
             act = {"start": store_view.link_start, "poll": store_view.link_poll, "unlink": store_view.unlink}[parts[3]]
