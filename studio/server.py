@@ -9,7 +9,8 @@ fetch) run as jobs: a `python dev.py <command> ...` subprocess whose output the 
 (2FA) can't be answered from a page: do it once from a console, plumesign keeps the session.
 
 API (JSON): GET /api/mods, /api/mods/<mod>, /api/mods/<mod>/find?q=&limit=, /api/mods/<mod>/fields?class=,
-/api/mods/<mod>/suggest, /api/bases, /api/fetch/account, /api/fetch/search?q=&region=&platform=,
+/api/mods/<mod>/suggest, /api/mods/<mod>/context (facts for the prompt builder), /api/prompts
+(studio/prompts.json), /api/bases, /api/fetch/account, /api/fetch/search?q=&region=&platform=,
 /api/games?list=top-free|top-paid|top-grossing|new-free|new-paid|similar|search|like&region=&q=&bundle=
 (scripts/games.py through dev.games_list; also `dev.py games`), /api/games/info?bundle=&region=;
 POST /api/fetch/login {"email", "password"} (passed to the decrypt site, never saved), /api/fetch/logout; POST /api/mods/<mod>/<add|pin|call|tweak|remove|gen|mark> with the
@@ -244,6 +245,47 @@ def mod_detail(name):
     return data
 
 
+LOG_ERROR = re.compile(r"error|exception|crash|fault|fail|not found|null|abort|terminat", re.IGNORECASE)
+
+
+def mod_context(name):
+    """Facts about a mod for the prompt builder: versions, dump, switches and their phone results, the last
+    device-log errors Studio saw in a log or run job, and whether a newer decrypted copy is waiting."""
+    d = mod_detail(name)
+    state = dev.load_state(name)
+    tweaks = (d.get("tweaks_json") or {}).get("tweaks", [])
+    result = {t["key"]: (t.get("verified") or {}).get("result") for t in tweaks}
+    works = [k for k, r in result.items() if r == "works"]
+    fails = [k for k, r in result.items() if r == "fails"]
+    untested = [k for k, r in result.items() if not r]
+    errors, seen_at = [], None
+    for job in sorted(JOBS.values(), key=lambda j: j.started, reverse=True):
+        if job.command in ("log", "run") and job.argv[:1] == [name] and job.status != "running":
+            errors = [line.strip() for line in job.lines if LOG_ERROR.search(line)][-12:]
+            seen_at = job.started
+            break
+    switches = f"{len(tweaks)} ({len(works)} work, {len(fails)} fail, {len(untested)} not checked)" if tweaks else "none yet"
+    return {
+        "mod": name,
+        "title": d["title"],
+        "version": d["version"],
+        "target": d["target"],
+        "app_version": d["app_version"] or "?",
+        "personal": d["personal"],
+        "dump": d["dump"],
+        "dump_state": f"made ({state.get('dump_dir')})" if d["dump"] else f"not made yet (am dump {name})",
+        "hooks": f"{d['hooks']} hooks, {d['hooks_jit']} need JIT",
+        "switches": switches,
+        "works": ", ".join(works) or "none",
+        "fails": ", ".join(fails) or "none",
+        "untested": ", ".join(untested) or "none",
+        "log_errors": ("\n" + "\n".join("  " + e for e in errors)) if errors else "none seen (run Log or Run in Studio first)",
+        "log_seen": bool(seen_at),
+        "newer_bases": d["newer_bases"],
+        "last_ipa": d["last_ipa"],
+    }
+
+
 def method_row(m):
     return {
         "full_name": m.full_name,
@@ -469,6 +511,8 @@ class Handler(BaseHTTPRequestHandler):
             )
         if parts[1:] == ["bases"]:
             return self.send_json(bases())
+        if parts[1:] == ["prompts"]:
+            return self.send_json(json.loads((HERE / "prompts.json").read_text(encoding="utf-8")))
         if parts[1:] == ["console", "commands"]:
             return self.send_json({"commands": console_commands()})
         if parts[1:] == ["games"]:
@@ -515,6 +559,8 @@ class Handler(BaseHTTPRequestHandler):
                     )
                 if rest == ["fields"]:
                     return self.send_json(fields(name, q.get("class", "")))
+                if rest == ["context"]:
+                    return self.send_json(mod_context(name))
                 if rest == ["suggest"]:
                     return self.send_json(suggest(name, int(q.get("limit", 30))))
         return self.send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)

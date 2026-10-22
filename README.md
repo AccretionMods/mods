@@ -191,9 +191,12 @@ cheats), and has Get .ipa, New mod (or Open mod) and Like this on each card. Ent
 whole App Store (a name or a bundle ID); `am games` gives the same lists in a console (below). Console
 runs any `dev.py` command typed as `am ...` (dump, `find` with any regex, fields, add, pin, build, sign, run,
 log, update, games, fetch…), with buttons that fill in the selected mod, ↑/↓ history, an answer box under a
-job for its questions (pick's number, the Apple ID 2FA code), and "Prompts for Claude": Update this app,
-Explore the dump for tweaks and Help me narrow down the best approach, filled in for the mod and copied to
-paste into Claude Code. The console answers only this PC, even with `--host 0.0.0.0`. The Switches tab has
+job for its questions (pick's number, the Apple ID 2FA code), and a prompt builder: pick a task (add a
+feature, narrow down the best approach, explore the dump, fix a switch or crash, update to the newest game,
+start a mod for another game, check before publishing), type one line, and it writes a prompt for Claude
+Code with the mod's facts (versions, dump, switches and their phone results, the last log errors Studio saw)
+in the goal / target / done when / limits shape, says which detail is missing (with a button that gets it),
+and copies it. The tasks are in `studio/prompts.json`, editable. The console answers only this PC, even with `--host 0.0.0.0`. The Switches tab has
 Build .ipa, Sign + install and Build, sign, install, open, log; job output shows under every tab. Quick commands
 run through `dev.py`'s own functions; long ones run `dev.py` as a subprocess. The first Apple ID
 sign-in (2FA) must be done once from a console, then the page's phone buttons work. The server binds

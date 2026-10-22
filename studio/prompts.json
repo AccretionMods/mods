@@ -1,0 +1,106 @@
+{
+  "_about": "Mod Studio's prompt builder tasks. Edit or add tasks here; the page reloads this file. {name} fills in a fact about the selected mod (see studio/server.py mod_context): mod, title, version, target, app_version, dump_state, switches, works, fails, untested, hooks, log_errors, ask, extra, region. needs: what the task must have; a missing one shows a hint instead of a weak prompt.",
+  "limits": "Limits: single-player features only; never hook purchases, ads, accounts or online play (list them under FLAGS instead); don't commit, publish or push without asking.",
+  "where": "Project: Accretion mods. Target: AccretionMods/mods, mods/{mod} ({title} {version}) for {target} {app_version}. Dump: {dump_state}. Switches: {switches}.",
+  "tasks": [
+    {
+      "id": "feature",
+      "label": "Add a feature",
+      "ask": "Which feature? (one line, e.g. player takes no damage)",
+      "needs": ["ask", "dump"],
+      "lines": [
+        "Goal: add \"{ask}\" to {title} as a switch (or slider) in the mod menu.",
+        "{where}",
+        "How: find the code that decides it (am find {mod} with regexes, am fields on the classes), prefer a no-JIT pin or call over a hook that needs JIT, then am add / am pin with a clear title, am build {mod} --ipa --bump and am run {mod}.",
+        "Done when: the switch changes the game on the phone (say what you saw in the log or on screen) and it is marked with am mark {mod} <key> --works or --fails.",
+        "If two ways look equally good, show both in two lines each and ask me before changing files.",
+        "{limits}"
+      ]
+    },
+    {
+      "id": "narrow",
+      "label": "Narrow down the best approach",
+      "ask": "For what? (one line: the feature or problem)",
+      "needs": ["ask", "dump"],
+      "read_only": true,
+      "lines": [
+        "Goal: pick the best way to do \"{ask}\" in {title}, before changing anything.",
+        "{where}",
+        "Give 2 to 4 approaches (hook a method, pin a field without JIT, call a method every few seconds, patch an offset). For each: what it touches (Class.method or Class.field from the dump), needs JIT or not, how likely it survives a game update, side effects, effort.",
+        "Recommend one with the reason, the exact am commands to try it, and how to check it on the phone.",
+        "Read only: change no files; wait for my choice.",
+        "{limits}"
+      ]
+    },
+    {
+      "id": "explore",
+      "label": "Explore the dump for tweaks",
+      "ask": "Focus (optional: an area like currency, combat, timers; empty = everything)",
+      "needs": ["dump"],
+      "read_only": true,
+      "lines": [
+        "Goal: find the most promising tweaks in {title}'s dump{extra}, and flag the risky code.",
+        "{where}",
+        "How: am status {mod}; am suggest {mod} --no-pick; am find {mod} with regexes per area (currency|gold|coins|gems, health|hp|damage|armor, cooldown|timer|duration|speed, xp|level|exp, drop|loot|chance|rarity, unlock|owned|isLocked, energy|stamina); am fields on the classes that hold the values.",
+        "Deliver: a table by area (Class.method or Class.field, what changing it does, hook / pin / call, needs JIT, risk); FLAGS (purchase/IAP, ads, online/server, anti-cheat or integrity checks, cloud save); the top 10 ranked with the exact am add / am pin command each, skipping what the mod already has.",
+        "Read only: change no files.",
+        "{limits}"
+      ]
+    },
+    {
+      "id": "fix",
+      "label": "Fix a broken switch or crash",
+      "ask": "What goes wrong? (one line: switch key or what you saw)",
+      "needs": ["ask", "log"],
+      "lines": [
+        "Goal: fix this in {title}: \"{ask}\".",
+        "{where}",
+        "Switches marked fails: {fails}. Not yet checked on the phone: {untested}.",
+        "Last device log errors from Mod Studio: {log_errors}",
+        "How: find the cause first (am log {mod} --seconds 90 --launch, am check {mod}, the hook's signature in the dump), change the smallest thing, then am build {mod} --ipa --bump and am run {mod}.",
+        "Done when: the log shows no error for it and the switch is marked works on the phone; say what the cause was in one line.",
+        "{limits}"
+      ]
+    },
+    {
+      "id": "update",
+      "label": "Update to the newest game",
+      "ask": "Anything to watch? (optional)",
+      "needs": [],
+      "lines": [
+        "Goal: bring {title} up to the newest App Store version of {target}, with every switch still working.{extra}",
+        "{where}",
+        "Steps: am games info {target} for the store version; am fetch --mod {mod} for a decrypted copy; am update {mod}; fix every hook it reports changed or missing (am find / am fields, then am add or am pin); am build {mod} --ipa --bump; am run {mod}.",
+        "Done when: each switch is marked works or fails on the new version (am mark), mod.json's tested_app_version is the new version, and you list what changed.",
+        "{limits}"
+      ]
+    },
+    {
+      "id": "port",
+      "label": "Start a mod for another game",
+      "ask": "Which game? (bundle ID, e.g. com.playdigious.9kings)",
+      "needs": ["ask"],
+      "lines": [
+        "Goal: start a personal mod for {ask}, using what worked in {title}.",
+        "Project: Accretion mods. Target: AccretionMods/mods, a new mods/<name>. Reference: mods/{mod} ({switches}).",
+        "Steps: am games info {ask} (version, engine hints, online flags); am fetch {ask} for a decrypted copy; am new <name> <the .ipa>; am dump <name>; am suggest <name> --no-pick for methods like the ones that worked before; propose the first 5 switches with commands and wait for my pick.",
+        "Done when: the mod folder exists, the dump is made, and you list the 5 proposed switches.",
+        "{limits}"
+      ]
+    },
+    {
+      "id": "release",
+      "label": "Check before publishing",
+      "ask": "Anything special? (optional)",
+      "needs": [],
+      "read_only": true,
+      "lines": [
+        "Goal: tell me if {title} {version} is ready to publish, and what to fix first.{extra}",
+        "{where}",
+        "Check: every switch marked works on {app_version} (fails: {fails}; untested: {untested}); am check {mod} clean; no hook touches purchases, ads or online play; mod.json title, description, version and tested_app_version right; the .ipa builds (am build {mod} --ipa) and installs.",
+        "Deliver: ready / not ready, then a short list of blockers and nice-to-haves. Read only: change no files; publishing is my call (scripts/upload_ipa.ps1).",
+        "{limits}"
+      ]
+    }
+  ]
+}
