@@ -231,7 +231,9 @@ const App = {
       this.el("button", { class: "small", onclick: () => this.job("build", ["--ipa", ...(bump.checked ? ["--bump"] : [])]) }, "Build .ipa"),
       this.el("button", { class: "small", disabled: this.detail.last_ipa ? null : "", title: this.detail.last_ipa || "no .ipa built yet", onclick: () => this.job("sign", [this.detail.last_ipa, "--install"]) }, "Sign + install last .ipa"),
       this.el("button", { class: "small primary", onclick: () => this.job("run", [...(bump.checked ? ["--bump"] : []), "--seconds", "75"]) }, "Build, sign, install, open, log"),
-      this.el("button", { class: "small", title: "reads the phone's log for 5 minutes: each switch shows its state in the game here", onclick: async () => { await this.job("log", ["--seconds", "300"]); setTimeout(() => this.refreshLive(), 3000); } }, "Watch the phone (5 min)")));
+      this.el("button", { class: "small", title: "reads the phone's log for 5 minutes: each switch shows its state in the game here", onclick: async () => { await this.job("log", ["--seconds", "300"]); setTimeout(() => this.refreshLive(), 3000); } }, "Watch the phone (5 min)"),
+      this.el("button", { class: "small", title: "the release post from your template, once every switch is marked works; written to the workspace, never posted", onclick: () => this.job("post", []) }, "Release post"),
+      this.el("button", { class: "small", title: "the post now, marked DRAFT with what is not validated yet", onclick: () => this.job("post", ["--draft"]) }, "Draft post")));
     if (tj && tj.watch && tj.watch.length) {
       box.append(this.el("p", { class: "hint", text: "Watch (log every " + (tj.watch_every || 10) + " s): " + tj.watch.map(w => `${w.object} ${w.getter || w.field}`).join(", ") }));
     }
