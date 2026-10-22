@@ -189,6 +189,7 @@ static UIColor *AMNeon(BOOL ok) {
 @interface AMPanel : UITableViewController
 @property (nonatomic, strong) NSArray<AMItem *> *items;
 @property (nonatomic, strong, nullable) NSTimer *statusTimer;
+@property (nonatomic, copy, nullable) void (^onClose)(void);  // the whole menu went away (Done or swipe down)
 @end
 
 @implementation AMPanel
@@ -294,6 +295,12 @@ static UIColor *AMNeon(BOOL ok) {
     [super viewWillDisappear:animated];
     [self.statusTimer invalidate];
     self.statusTimer = nil;
+}
+
+- (void)viewDidDisappear:(BOOL)animated {
+    [super viewDidDisappear:animated];
+    // not when a list page is pushed on top: only when the menu itself is dismissed
+    if ((self.navigationController.isBeingDismissed || self.isBeingDismissed) && self.onClose) self.onClose();
 }
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
@@ -516,7 +523,18 @@ typedef NS_ENUM(NSInteger, AMRingState) { AMRingNone, AMRingGood, AMRingSome, AM
     if (!top) return;
     AMPanel *panel = [[AMPanel alloc] initWithItems:_items title:self.title];
     UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:panel];
+    // the floating button sits above everything (zPosition): hide it while the menu is open so it covers no row
+    __weak typeof(self) weak = self;
+    panel.onClose = ^{ [weak setButtonsHidden:NO]; };
+    [self setButtonsHidden:YES];
     [top presentViewController:nav animated:YES completion:nil];
+}
+
+- (void)setButtonsHidden:(BOOL)hidden {
+    for (AMButton *button in _buttons) {
+        button.userInteractionEnabled = !hidden;
+        [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : 0.2 animations:^{ button.alpha = hidden ? 0 : 1; }];
+    }
 }
 
 @end
