@@ -172,7 +172,7 @@ class Job:
             if (
                 self.argv
                 and "mod:" + self.argv[0] in self.resources
-                and self.command in {"build", "run", "dump", "update", "new"}
+                and self.command in {"build", "run", "dump", "update", "new", "aider"}
             ):
                 folder = ROOT / "mods" / self.argv[0]
                 if folder.is_dir():
@@ -452,13 +452,20 @@ def claude_lines(raw):
     return []
 
 
-# Other models: aider with the model in ~/.aider.conf.yml (the free OpenRouter Nemotron, ~/AI-MODELS.md). It
-# answers only: ask mode, no edits, no commits, no git, no repo map, so nothing but the prompt leaves this PC. It
-# runs no commands either, so it works from what the prompt carries (the scan list, the mod's facts).
+# Other models: aider with the model in ~/.aider.conf.yml (the free OpenRouter Nemotron, ~/AI-MODELS.md). No git,
+# no commits, no repo map, no shell commands. Read only: ask mode, only the prompt leaves this PC. Changing files:
+# it edits the selected mod's own files (tweaks.json, hooks.json, mod.json, Tweak.x), which are sent with the
+# prompt; a snapshot is taken first (Files tab restores it). The am commands it proposes become buttons in Jobs.
 ENGINES = ("claude", "aider")
+AIDER_FILES = ("tweaks.json", "hooks.json", "mod.json", "Tweak.x")
 AIDER_NOTE = (
-    "\n\nYou are answering from this text only: you cannot run commands or read files, so do not ask to. "
-    "Where the task says to check something with am find or am fields, say what to check instead."
+    "\n\nYou cannot run commands or read other files. Where the task needs an am command (am pin, am add, am gen, "
+    "am build, am new, am find...), write the exact command on its own line starting with `am ` and Studio shows "
+    "a button to run it."
+)
+AIDER_EDIT_NOTE = (
+    " You may edit the files you were given; keep tweaks.json valid JSON and run nothing yourself. After an edit "
+    "of tweaks.json, end with the line: am gen {mod}"
 )
 
 
@@ -471,13 +478,21 @@ def aider_exe():
     return found
 
 
-def aider_command(prompt):
+def aider_command(prompt, mod=None):
+    files = []
+    if mod:
+        folder = dev.mod_dir(mod)
+        for name in AIDER_FILES:
+            if (folder / name).is_file():
+                files += ["--file", str(folder / name)]
+    note = AIDER_NOTE + (AIDER_EDIT_NOTE.format(mod=mod) if mod else "")
     return [
         aider_exe(),
-        "--chat-mode",
-        "ask",
+        *(["--chat-mode", "ask"] if not mod else []),
+        *files,
         "--message",
-        prompt + AIDER_NOTE,
+        prompt + note,
+        "--no-suggest-shell-commands",
         "--map-tokens",
         "0",
         "--no-git",
@@ -493,11 +508,11 @@ def aider_command(prompt):
     ]
 
 
-def start_claude(prompt, read_only, engine="claude"):
+def start_claude(prompt, read_only, engine="claude", mod=""):
     if engine not in ENGINES:
         raise dev.DevError(f"unknown model engine {engine!r}; use one of: {', '.join(ENGINES)}")
-    if engine == "aider" and not read_only:
-        raise dev.DevError("aider only answers here: run tasks that change files with Claude Code")
+    if engine == "aider" and not read_only and not (MOD_NAME.fullmatch(mod or "") and dev.mod_dir(mod).is_dir()):
+        raise dev.DevError("pick a mod first: aider edits that mod's files")
     prompt = (prompt or "").strip()
     if len(prompt) < 10:
         raise dev.DevError("the prompt is empty")
@@ -506,8 +521,10 @@ def start_claude(prompt, read_only, engine="claude"):
     with SESSION_LOCK:
         if RESTARTING.is_set():
             raise dev.DevError("Studio is restarting; reconnect before starting jobs")
-        if engine == "aider":
+        if engine == "aider" and read_only:
             job = Job("aider", ["(read only)"], cmd=aider_command(prompt))
+        elif engine == "aider":
+            job = Job("aider", [mod, "(may change files)"], cmd=aider_command(prompt, mod))
         else:
             job = Job(
                 "claude",
@@ -1151,6 +1168,7 @@ class Handler(BaseHTTPRequestHandler):
                     str(body.get("prompt", "")),
                     bool(body.get("read_only", True)),
                     str(body.get("engine", "claude")),
+                    str(body.get("mod", "")),
                 ).view()
             )
         if parts == ["api", "console"]:

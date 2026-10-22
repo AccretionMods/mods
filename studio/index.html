@@ -673,12 +673,12 @@ const App = {
     if (j.lines && j.lines.length) { out.textContent += (out.textContent ? "\n" : "") + j.lines.join("\n"); out.scrollTop = out.scrollHeight; }
     if ((j.command === "claude" || j.command === "aider") && j.status !== "running" && !this.byId("jobcmds-" + j.id)) {
       const text = (this.byId("jobout-" + j.id) || {}).textContent || "";
-      const cmds = [...new Set(text.split("\n").map(l => l.trim().replace(/^[`$>\s]+|`+$/g, "")).filter(l => /^am (pin|call|add|tweak) \S+ /.test(l)))];
+      const cmds = [...new Set(text.split("\n").map(l => l.trim().replace(/^[`$>\s]+|`+$/g, "")).filter(l => /^am (pin|call|add|tweak|remove|gen|mark|build|update|new|dump|check|scan|find|fields) \S+/.test(l)))];
       if (cmds.length) {
-        const list = this.el("div", { id: "jobcmds-" + j.id, class: "sec", style: "margin-top:8px" }, this.el("h3", { text: `${cmds.length} commands from Claude` }));
+        const list = this.el("div", { id: "jobcmds-" + j.id, class: "sec", style: "margin-top:8px" }, this.el("h3", { text: `${cmds.length} commands from ${j.command === "aider" ? "aider" : "Claude"}` }));
         for (const c of cmds) {
-          const btn = this.el("button", { class: "small primary" }, "Add");
-          btn.onclick = async () => { btn.disabled = true; try { const r = await this.api("/api/console", { line: c }); this.showJob(r); this.poll(r.id); btn.textContent = "Added"; } catch (e) { btn.disabled = false; this.toast(e.message, "bad"); } };
+          const btn = this.el("button", { class: "small primary" }, /^am (pin|call|add|tweak) /.test(c) ? "Add" : "Run");
+          btn.onclick = async () => { btn.disabled = true; try { const r = await this.api("/api/console", { line: c }); this.showJob(r); this.poll(r.id); btn.textContent = "Started"; } catch (e) { btn.disabled = false; this.toast(e.message, "bad"); } };
           list.append(this.el("div", { class: "row", style: "margin-bottom:6px" }, this.el("span", { class: "mono small grow", text: c }), btn));
         }
         this.byId("job-" + j.id).append(list);
@@ -926,9 +926,10 @@ const App = {
     const runBtn = this.el("button", { class: "small", onclick: async () => {
       const t = conf && (conf.tasks.find(x => x.id === task.value) || conf.tasks[0]); if (!t) return;
       const readOnly = !!t.read_only, engine = this.engine();
-      if (engine === "aider" && !readOnly) { this.toast("aider only answers: run this task with Claude Code, or copy the prompt", "bad"); return; }
-      if (!readOnly && !confirm("This task may change files: Claude Code can edit this repo and run any am command (build, sign, install on the phone). It cannot push, publish or run other shell commands. Run it?")) return;
-      try { const j = await this.api("/api/claude", { prompt: out.value, read_only: readOnly, engine }); this.showJob(j); this.poll(j.id); this.byId("jobsPanel").scrollIntoView({ behavior: "smooth", block: "nearest" }); this.toast(`${this.engineName(engine)} is working: its answer streams into Jobs`, "ok"); }
+      if (engine === "aider" && !readOnly) {
+        if (!confirm(`aider (free model) will edit mods/${this.mod}: tweaks.json, hooks.json, mod.json and Tweak.x are sent with the prompt to the free OpenRouter model. Studio snapshots them first (Files tab restores). aider runs no commands: the am commands it proposes appear as buttons in Jobs. Run it?`)) return;
+      } else if (!readOnly && !confirm("This task may change files: Claude Code can edit this repo and run any am command (build, sign, install on the phone). It cannot push, publish or run other shell commands. Run it?")) return;
+      try { const j = await this.api("/api/claude", { prompt: out.value, read_only: readOnly, engine, mod: this.mod }); this.showJob(j); this.poll(j.id); this.byId("jobsPanel").scrollIntoView({ behavior: "smooth", block: "nearest" }); this.toast(`${this.engineName(engine)} is working: its answer streams into Jobs`, "ok"); }
       catch (e) { this.toast(e.message, "bad"); }
     } }, "Run with Claude Code");
     const runNote = this.el("span", { class: "muted small" });
@@ -947,10 +948,9 @@ const App = {
       out.value = t.lines.map(l => fill(l, facts)).join("\n");
       tags.replaceChildren(t.read_only ? this.el("span", { class: "badge good", text: "read only" }) : this.el("span", { class: "badge warn", text: "changes files" }));
       const viaAider = this.engine() === "aider";
-      runBtn.textContent = viaAider ? "Ask aider (read only)" : t.read_only ? "Run with Claude Code (read only)" : "Run with Claude Code…";
-      runBtn.disabled = viaAider && !t.read_only;
+      runBtn.textContent = viaAider ? (t.read_only ? "Ask aider (read only)" : "Run with aider…") : t.read_only ? "Run with Claude Code (read only)" : "Run with Claude Code…";
       runNote.textContent = viaAider
-        ? (t.read_only ? "aider answers from the prompt alone with the free model: no files, no commands, nothing else leaves this PC." : "This task changes files: pick Claude Code to run it, or copy the prompt.")
+        ? (t.read_only ? "aider answers from the prompt alone with the free model: no files, no commands, nothing else leaves this PC." : "Asks first: aider edits this mod's files (snapshot first); its am commands become buttons in Jobs.")
         : t.read_only ? "Claude reads the repo and runs read-only am commands; it changes nothing." : "Asks first: Claude may edit files and run am commands (no push, no publish).";
       const missing = [];
       if ((t.needs || []).includes("ask") && !line) missing.push([`Type the one line: ${t.ask}`]);
