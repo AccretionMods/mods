@@ -17,7 +17,7 @@ import os
 import re
 from pathlib import Path
 
-VERSION = 4  # bump when the row format or the scoring changes (the cache is rebuilt)
+VERSION = 5  # bump when the row format or the scoring changes (the cache is rebuilt)
 
 IMAGE = re.compile(r"^// Image \d+: (.+?)(?:\.dll)? - (\d+)\s*$")
 NAMESPACE = re.compile(r"^\s*// Namespace: ?(\S*)")
@@ -106,14 +106,15 @@ def parse(path):
             if "// TypeDefIndex:" in line:
                 m = CLASS.match(line)
                 current = None
-                if m and not namespace:
+                if m:  # namespaced game classes too (9 Kings keeps its code in Core, Spells, Policies...)
                     index = int(m.group(3))
                     image = ""
                     for start, name in images:
                         if start <= index:
                             image = name
-                    if image.startswith("Assembly-CSharp") and m.group(1) not in classes:
-                        current = classes[m.group(1)] = {
+                    full = f"{namespace}.{m.group(1)}" if namespace else m.group(1)
+                    if image.startswith("Assembly-CSharp") and full not in classes:
+                        current = classes[full] = {
                             "base": m.group(2) or "", "statics": [], "fields": {}, "props": {}, "getters": set()
                         }
                         current_name = m.group(1)
@@ -200,7 +201,8 @@ def existing_targets(tweaks):
     out = set()
     for t in (tweaks or {}).get("tweaks", []):
         for p in t.get("pins", []):
-            cls = p.get("class") or p["object"].replace("[]", "").split(".")[0]
+            obj = p["object"]
+            cls = p.get("class") or (obj[:-2] if obj.endswith("[]") else obj.rpartition(".")[0] or obj)
             for k in ("field", "setter", "call"):
                 if p.get(k):
                     out.add(f"{cls}.{p[k]}")
