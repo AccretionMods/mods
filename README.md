@@ -191,7 +191,7 @@ Tests: `tests/test_studio.py`.
 #### Dev loop for personal mods (`scripts/dev.py`)
 
 `scripts/dev.py` runs the whole loop for a personal mod of a Unity game from one place: dump, search, add a
-switch, build, sign, read the device log. It needs a decrypted copy of the game (your own), WSL with Theos
+switch, build, sign, read the device log. It needs a decrypted copy of the game (your own, or one from `am fetch` below), WSL with Theos
 for the build, and on Windows the .NET runtime for the dumper and the phone on USB for signing and logs.
 Run it as `uv run --no-project --python 3.12 scripts/dev.py ...` (Windows) or `python3 scripts/dev.py ...`
 (WSL). Base `.ipa` files are found by bundle ID in `C:\AccretionMods\intake` and `~/Downloads`; dumps go
@@ -238,6 +238,43 @@ function that makes it plain `am`). With no command it prints the help. Three mo
   mod's `hooks.json`). `am mark my-game-plus noDamage --works` (or `--fails`) records the phone result on
   the switch and on the pattern, so what worked ranks higher next time and what failed drops out. Methods
   named for purchases or online play are never suggested (README rules), nor are Unity callbacks.
+
+#### Getting a decrypted copy (`am fetch`)
+
+Nothing in this repo decrypts. When you have no decrypted copy of a game, `am fetch` downloads one that
+an unfaird site ([macOSAppstoreDecrypter](https://github.com/34306/macOSAppstoreDecrypter)) already
+decrypted, into `intake/`, where `new`, `dump` and `update` find it. The default site,
+`https://decrypt.34306.lol`, is another party's M1 Mac: free, can be paused or gone, and not ours.
+`AM_DECRYPT_URL` points at another copy of the same software.
+
+```sh
+am fetch com.JamieParish.TheWanderer [--region us|jp|cn|vn] [--platform iphone]   # or an app name
+am fetch --mod wanderer-dev        # the app a mod targets, for example a newer version before `am update`
+am fetch --account                 # site up or paused, signed in or not, decrypts left today
+am fetch --login | --logout        # site account; the password is sent to the site only, never saved
+am fetch --save-login              # same, and keeps the login in Windows Credential Manager
+                                   # (AccretionMods/decrypt/<host>); fetch signs in with it when a decrypt
+                                   # needs it or the session ran out. --forget-login removes it.
+am fetch com.JamieParish.TheWanderer --source decrypt.day      # or --source armconverter (store/<region>)
+```
+
+`--source decrypt.day` and `--source armconverter` have no API here: decrypt.day sits behind Cloudflare's bot
+check and armconverter's store needs your sign-in, so `fetch` opens the site in your browser (sign in there
+once; the browser keeps it), you download the app, and `fetch` takes it from Downloads as below. Their
+logins are not saved by this tool and no script signs in to them.
+
+decrypt.34306.lol asks scripts for a captcha, and nothing here tries to pass one: `fetch` then opens the site
+in your browser, you search the bundle ID there and press Decrypt or Download, and `fetch` waits (up to 30
+min) for that app's `.ipa` in Downloads, checks it and moves it into `intake/`. `am fetch --import file.ipa`
+does the check and move for a copy you downloaded yourself; `--no-browser` fails instead of opening the site.
+The direct path (lookup, decrypt, download, all from the script) works with a copy of the site that has no
+captcha. Apps the site already has download with no account. A new decrypt needs an account made on the site and
+approved by its admin (a few a day); while the site is paused it takes none, and `fetch` falls back to an
+older copy the site still has. Every copy is checked (the app asked for, main binary not FairPlay-encrypted;
+otherwise it is deleted) and `<file>.source.json` records the site, version and SHA-256. Nothing proves the
+site did not change the app, so mods built on a fetched copy are for testing on your own phone. In Mod
+Studio: **Get .ipa** in the top bar (search, sign in, Get), and **Get the newest from the decrypt site** on a
+mod's Build & phone tab. Tests: `tests/test_ipa_fetch.py` (a fake site, no network).
 
 **Without JIT, hooks on plain methods catch nothing** (the game calls them directly; only virtual methods and
 Unity callbacks go through the swapped pointers), so a switch for any phone is a *pin*: every half second the

@@ -87,6 +87,7 @@ dialog h3 { margin: 0 0 6px; }
 <header>
   <h1>Mod Studio</h1>
   <div class="sel" id="sel">no mod selected</div>
+  <button id="getBtn">Get .ipa</button>
   <button id="newBtn" class="primary">New mod</button>
   <button id="themeBtn" title="Dark / light">Theme</button>
 </header>
@@ -463,11 +464,12 @@ const App = {
     const up = this.byId("updateSec"); up.replaceChildren(this.el("h3", { text: "Newer game version" }));
     if (d.newer_bases.length) for (const b of d.newer_bases) up.append(this.el("div", { class: "row", style: "margin-bottom:6px" }, this.el("span", { class: "mono small grow", text: `${b.version}  ${b.path}` }), this.el("button", { class: "small", onclick: () => this.job("update", [b.path]) }, "Update to it")));
     else up.append(this.el("p", { class: "hint", text: `No copy of ${d.target} newer than ${d.app_version} in intake/ or Downloads. Drop one there and this offers the update (re-dump, hooks checked, mod.json refreshed).` }));
+    up.append(this.el("div", { class: "row" }, this.el("button", { class: "small", onclick: () => this.job("fetch", ["--mod", this.mod]) }, "Get the newest from the decrypt site"), this.el("span", { class: "muted small", text: "then reload: it shows up above" })));
   },
   async job(command, args, mod) {
     try {
       const body = { command, args: (args || []).filter(a => a !== null && a !== undefined) };
-      if (command !== "new") body.mod = mod || this.mod;
+      if (command !== "new" && command !== "fetch") body.mod = mod || this.mod;
       const j = await this.api("/api/jobs", body);
       this.setTab("phone");
       this.showJob(j);
@@ -509,9 +511,9 @@ const App = {
   async newModDialog() {
     let ipas = [];
     try { ipas = (await this.api("/api/bases")).ipas; } catch (e) { this.toast(e.message, "bad"); }
-    const opts = [["", "choose a decrypted .ipa from intake/ or Downloads…"], ...ipas.map(i => [i.path, `${i.name} ${i.version} · ${i.bundle} · ${this.mb(i.size)}`])];
+    const opts = [["", "choose a decrypted .ipa from intake/ or Downloads…"], ...ipas.map(i => [i.path, `${i.name} ${i.version} · ${i.bundle} · ${this.mb(i.size)}${i.fetched ? " · decrypt site" : ""}`])];
     this.dialog("New personal mod", [
-      { type: "note", text: "Makes mods/<name>/ from a decrypted .ipa of your own copy of the game, then dumps it. Nothing is uploaded." },
+      { type: "note", text: "Makes mods/<name>/ from a decrypted .ipa of the game, then dumps it. Nothing is uploaded. No copy yet? Close this and use Get .ipa." },
       { name: "name", label: "Folder name", help: "lowercase letters, digits, dashes", value: "", placeholder: "my-game-plus", mono: true },
       { name: "title", label: "Menu title", value: "", placeholder: "My Game+" },
       { name: "pick", label: "Base .ipa", type: "select", options: opts, onchange: i => { if (i.pick.value) { const row = ipas.find(x => x.path === i.pick.value); i.path.value = i.pick.value; if (!i.title.value) i.title.value = row.name + "+"; if (!i.name.value) i.name.value = row.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") + "-plus"; } } },
@@ -524,12 +526,73 @@ const App = {
     }, "Create and dump");
   },
 
+  // ---------------------------------------------------------------- get .ipa (decrypt site)
+  async getIpaDialog(preset) {
+    const dlg = this.byId("dlg"), body = this.byId("dlgBody"); body.replaceChildren();
+    const status = this.el("p", { class: "hint", text: "Checking the decrypt site…" });
+    const q = this.el("input", { class: "mono", placeholder: "bundle ID (com.company.game) or app name", value: preset || "", style: "width:100%" });
+    const region = this.el("select", {}, [["us", "USA"], ["jp", "Japan"], ["cn", "China"], ["vn", "Vietnam"]].map(o => this.el("option", { value: o[0], text: o[1] })));
+    const platform = this.el("select", {}, [["iphone", "iPhone / iPad"], ["appletv", "Apple TV"], ["vision", "Vision Pro"]].map(o => this.el("option", { value: o[0], text: o[1] })));
+    const source = this.el("select", {}, [["34306", "decrypt.34306.lol"], ["decrypt.day", "decrypt.day (browser)"], ["armconverter", "armconverter.com (browser, your account)"]].map(o => this.el("option", { value: o[0], text: o[1] })));
+    const results = this.el("div", { style: "margin-top:10px;max-height:320px;overflow:auto" });
+    const viaBrowser = () => {
+      const bundle = q.value.trim(), isId = /^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)+$/.test(bundle);
+      return [this.el("p", { class: "hint", text: "Get opens the site in your browser (sign in there if it asks): find the app, download it, and Studio picks the file up from Downloads, checks it and moves it to intake/." + (isId ? "" : " Type the bundle ID (com.company.game) above first.") }),
+        this.el("div", { class: "row" }, this.el("button", { class: "small primary", disabled: isId ? null : "", onclick: () => { dlg.close(); this.job("fetch", [bundle, "--source", source.value, "--region", region.value, "--platform", platform.value]); } }, "Get " + (isId ? bundle : "…") + " through the browser"))];
+    };
+    const account = this.el("div", { class: "sec", style: "margin-top:12px" });
+    const search = async () => {
+      if (q.value.trim().length < 2) return;
+      if (source.value !== "34306") { results.replaceChildren(...viaBrowser()); return; }
+      results.replaceChildren(this.el("p", { class: "hint", text: "Searching…" }));
+      try {
+        const r = await this.api(`/api/fetch/search?q=${encodeURIComponent(q.value.trim())}&region=${region.value}&platform=${platform.value}`);
+        results.replaceChildren();
+        if (!r.results.length) results.append(this.el("p", { class: "hint", text: "Nothing found in that store." }));
+        for (const a of r.results) {
+          const cached = a.is_cached ? this.el("span", { class: "badge good", text: "ready" }) : a.cached_version ? this.el("span", { class: "badge warn", text: "older " + a.cached_version + " ready" }) : this.el("span", { class: "badge", text: "needs a decrypt" });
+          results.append(this.el("div", { class: "row", style: "margin-bottom:8px" },
+            this.el("div", { class: "grow" }, this.el("b", { text: a.name }), " ", this.el("span", { class: "muted small", text: a.version + (a.size_bytes ? " · " + this.mb(Number(a.size_bytes)) : "") }), this.el("br"), this.el("span", { class: "mono small muted", text: a.bundle_id }), " ", cached),
+            this.el("button", { class: "small primary", onclick: () => { dlg.close(); this.job("fetch", [a.bundle_id, "--region", region.value, "--platform", platform.value]); } }, "Get")));
+        }
+      } catch (e) {
+        results.replaceChildren(this.el("p", { class: "hint", text: e.message }));
+        if (/captcha/i.test(e.message)) results.append(...viaBrowser());
+      }
+    };
+    const showAccount = a => {
+      status.textContent = `${a.site}: ${a.up ? "up" : "not answering"}${a.paused ? " · paused, no new decrypts right now (apps marked ready still download)" : ""}`;
+      account.replaceChildren(this.el("h3", { text: "Site account" }));
+      if (a.user) {
+        const u = a.user;
+        account.append(this.el("div", { class: "row" }, this.el("span", { class: "grow", text: `${u.email} · ${!u.approved ? "waiting for the site admin's approval" : u.limit == null ? "no daily limit" : `${u.remaining} of ${u.limit} new decrypts left today`}` }),
+          this.el("button", { class: "small", onclick: async () => { await this.api("/api/fetch/logout", {}); showAccount(await this.api("/api/fetch/account")); } }, "Sign out")));
+      } else {
+        const email = this.el("input", { type: "email", placeholder: "e-mail", style: "width:100%" }), pw = this.el("input", { type: "password", placeholder: "password", style: "width:100%" });
+        account.append(this.el("p", { class: "hint", text: "Apps marked ready download with no account. A new decrypt needs an account on the site, made on the site itself and approved by its admin. The password goes to the site only; Studio keeps just the session." }),
+          this.el("div", { class: "row" }, email, pw, this.el("button", { class: "small", onclick: async () => {
+            try { await this.api("/api/fetch/login", { email: email.value.trim(), password: pw.value }); pw.value = ""; showAccount(await this.api("/api/fetch/account")); this.toast("signed in", "ok"); } catch (e) { this.toast(e.message, "bad"); }
+          } }, "Sign in")));
+      }
+    };
+    q.addEventListener("keydown", ev => { if (ev.key === "Enter") { ev.preventDefault(); search(); } });
+    body.append(this.el("h3", { text: "Get a decrypted .ipa" }),
+      this.el("p", { class: "hint", text: "From the decrypt site (another party's Mac, free, may be paused). The copy lands in intake/, is checked (right app, not encrypted) and its origin is saved next to it. Use mods built on it on your own phone." }),
+      status, q, this.el("div", { class: "row", style: "margin-top:8px" }, source, region, platform, this.el("button", { class: "primary", onclick: search }, "Search")),
+      results, account,
+      this.el("div", { class: "row", style: "margin-top:14px;justify-content:flex-end" }, this.el("button", { onclick: () => dlg.close() }, "Close")));
+    dlg.showModal();
+    this.api("/api/fetch/account").then(showAccount).catch(e => { status.textContent = e.message; });
+    if (preset) search();
+  },
+
   init() {
     const theme = localStorage.getItem("studio.theme") || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
     document.documentElement.dataset.theme = theme;
     this.byId("themeBtn").addEventListener("click", () => { const t = document.documentElement.dataset.theme === "light" ? "dark" : "light"; document.documentElement.dataset.theme = t; localStorage.setItem("studio.theme", t); });
     this.byId("tabs").addEventListener("click", ev => { const b = ev.target.closest("button"); if (b) this.setTab(b.dataset.tab); });
     this.byId("newBtn").addEventListener("click", () => this.newModDialog());
+    this.byId("getBtn").addEventListener("click", () => this.getIpaDialog());
     this.byId("reloadMods").addEventListener("click", () => this.loadMods());
     this.loadMods().catch(e => this.toast(e.message, "bad"));
   },
