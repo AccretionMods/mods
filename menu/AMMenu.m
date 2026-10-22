@@ -295,7 +295,7 @@ static void AMStyleNav(UINavigationController *nav) {
 
 @end
 
-#pragma mark - Backdrop and summary (the store's live-index look)
+#pragma mark - Backdrop and panels (the store's live-index look)
 
 static BOOL AMStill(void) {
     return UIAccessibilityIsReduceMotionEnabled() || NSProcessInfo.processInfo.lowPowerModeEnabled;
@@ -304,6 +304,9 @@ static BOOL AMStill(void) {
 static UIColor *AMResolved(UIColor *c, UITraitCollection *t) {
     return [c resolvedColorWithTraitCollection:t];
 }
+
+#define AM_ACCENT2 AMTok(0x22D3EE, 0x0E8FB0)
+#define AM_LINE_STRONG AMTok(0x6458AF, 0x8F7ED2)
 
 // The Backdrop: `bg`, a hairline grid every 28 pt and two soft lights (violet, cyan) drifting over 40 s.
 // Core Animation moves the lights on the render server: no timer, nothing redrawn per frame. Still with
@@ -340,7 +343,7 @@ static UIColor *AMResolved(UIColor *c, UITraitCollection *t) {
 - (void)applyColors {
     BOOL light = self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleLight;
     CGFloat glow = light ? 0.09 : 0.16;
-    UIColor *a = AMResolved(AM_ACCENT, self.traitCollection), *b = AMResolved(AMTok(0x22D3EE, 0x0E8FB0), self.traitCollection);
+    UIColor *a = AMResolved(AM_ACCENT, self.traitCollection), *b = AMResolved(AM_ACCENT2, self.traitCollection);
     _lights[0].colors = @[(id)[a colorWithAlphaComponent:glow].CGColor, (id)[a colorWithAlphaComponent:0].CGColor];
     _lights[1].colors = @[(id)[b colorWithAlphaComponent:glow].CGColor, (id)[b colorWithAlphaComponent:0].CGColor];
     _grid.strokeColor = (light ? [UIColor colorWithRed:0x1E / 255.0 green:0x1B / 255.0 blue:0x4B / 255.0 alpha:0.05]
@@ -383,146 +386,47 @@ static UIColor *AMResolved(UIColor *c, UITraitCollection *t) {
 
 @end
 
-// One number tile: an uppercase mono label over a big tabular number.
-@interface AMTile : UIView
-@property (nonatomic, strong) UILabel *label, *number;
+// Panels: every category is one bordered card (`surface`, a 1 px `line` edge, 12 pt corners), its label inside
+// at the top like the store's dashboard panels. A table can't border a whole section, so each header and row
+// draws its own slice: the top (rounded corners, top edge), a middle (the two sides), the bottom, or a whole
+// card (a folded category), with a hairline between rows.
+static const CGFloat AMSide = 16;   // a panel's distance from the screen edge
+static const CGFloat AMPad = 14;    // inside a panel
+static const CGFloat AMRadius = 12;
+
+typedef NS_ENUM(NSInteger, AMPiece) { AMPieceTop, AMPieceMiddle, AMPieceBottom, AMPieceWhole };
+
+@interface AMPanelPiece : UIView
+@property (nonatomic) AMPiece piece;
+@property (nonatomic) BOOL rule;  // a hairline at the top: under the header, between rows
 @end
 
-@implementation AMTile
+@implementation AMPanelPiece {
+    CAShapeLayer *_fill, *_edge, *_hair;
+}
 
-- (instancetype)initWithLabel:(NSString *)label {
+- (instancetype)init {
     if ((self = [super initWithFrame:CGRectZero])) {
-        self.backgroundColor = AM_RAISED;
-        self.layer.cornerRadius = 10;
-        self.layer.borderWidth = 1;
-        _label = [UILabel new];
-        _label.attributedText = AMLabel(label, AM_MUTED);
-        _label.adjustsFontSizeToFitWidth = YES;
-        _label.minimumScaleFactor = 0.7;
-        _number = [UILabel new];
-        _number.font = [UIFont monospacedDigitSystemFontOfSize:22 weight:UIFontWeightSemibold];
-        _number.textColor = AM_FG;
-        _number.text = @"0";
-        [self addSubview:_label];
-        [self addSubview:_number];
-        self.isAccessibilityElement = YES;
-    }
-    return self;
-}
-
-- (void)layoutSubviews {
-    [super layoutSubviews];
-    self.layer.borderColor = AMResolved(AM_LINE, self.traitCollection).CGColor;
-    CGFloat w = self.bounds.size.width - 20;
-    self.label.frame = CGRectMake(10, 9, w, 13);
-    self.number.frame = CGRectMake(10, 25, w, 28);
-}
-
-- (void)setValue:(NSUInteger)value color:(UIColor *)color {
-    self.number.text = [NSString stringWithFormat:@"%lu", (unsigned long)value];
-    self.number.textColor = color;
-    self.accessibilityLabel = [NSString stringWithFormat:@"%@ %lu", self.label.text.lowercaseString, (unsigned long)value];
-}
-
-@end
-
-// The card above the switches: "● ACCRETION / mod menu" and the build, the violet-to-cyan hairline, four
-// number tiles, and the search field. Corner brackets as on the store's live index.
-@interface AMSummary : UIView
-@property (nonatomic, strong) UITextField *search;
-- (void)showSwitches:(NSUInteger)all on:(NSUInteger)on working:(NSUInteger)working waiting:(NSUInteger)waiting;
-@end
-
-@implementation AMSummary {
-    UIView *_card;
-    AMStatusDot *_live;
-    UILabel *_brand, *_build;
-    CAGradientLayer *_rule;
-    NSArray<AMTile *> *_tiles;
-    NSArray<CAShapeLayer *> *_corners;
-}
-
-- (instancetype)initWithCount:(NSUInteger)count search:(BOOL)search {
-    if ((self = [super initWithFrame:CGRectZero])) {
-        _card = [UIView new];
-        _card.backgroundColor = AM_SURFACE;
-        _card.layer.cornerRadius = 14;
-        _card.layer.borderWidth = 1;
-        [self addSubview:_card];
-        _live = [AMStatusDot new];
-        [_card addSubview:_live];
-        _brand = [UILabel new];
-        NSMutableAttributedString *brand = [[NSMutableAttributedString alloc] initWithString:@"ACCRETION"
-            attributes:@{NSFontAttributeName: AMMono(12, UIFontWeightSemibold), NSForegroundColorAttributeName: AM_FG, NSKernAttributeName: @2}];
-        [brand appendAttributedString:[[NSAttributedString alloc] initWithString:@"  /  mod menu"
-            attributes:@{NSFontAttributeName: AMMono(12, UIFontWeightRegular), NSForegroundColorAttributeName: AM_MUTED}]];
-        _brand.attributedText = brand;
-        [_card addSubview:_brand];
-        _build = [UILabel new];
-        _build.font = AMMono(11, UIFontWeightRegular);
-        _build.textColor = AM_MUTED;
-        _build.textAlignment = NSTextAlignmentRight;
-        NSString *version = NSBundle.mainBundle.infoDictionary[@"CFBundleShortVersionString"];
-        _build.text = version.length ? [@"v" stringByAppendingString:version] : nil;
-        [_card addSubview:_build];
-        _rule = [CAGradientLayer layer];
-        _rule.startPoint = CGPointMake(0, 0.5);
-        _rule.endPoint = CGPointMake(1, 0.5);
-        [_card.layer addSublayer:_rule];
-        NSMutableArray *tiles = [NSMutableArray new];
-        for (NSString *label in @[@"switches", @"on", @"working", @"waiting"]) {
-            AMTile *tile = [[AMTile alloc] initWithLabel:label];
-            [_card addSubview:tile];
-            [tiles addObject:tile];
-        }
-        _tiles = tiles;
-        NSMutableArray *corners = [NSMutableArray new];
-        for (int i = 0; i < 4; i++) {
-            CAShapeLayer *corner = [CAShapeLayer layer];
-            corner.fillColor = UIColor.clearColor.CGColor;
-            corner.lineWidth = 1.5;
-            [self.layer addSublayer:corner];
-            [corners addObject:corner];
-        }
-        _corners = corners;
-        if (search) {
-            _search = [UITextField new];
-            _search.backgroundColor = AM_RAISED;
-            _search.textColor = AM_FG;
-            _search.tintColor = AM_ACCENT_TEXT;
-            _search.font = [UIFont systemFontOfSize:15];
-            _search.layer.cornerRadius = 10;
-            _search.layer.borderWidth = 1;
-            _search.clearButtonMode = UITextFieldViewModeWhileEditing;
-            _search.returnKeyType = UIReturnKeyDone;
-            _search.autocorrectionType = UITextAutocorrectionTypeNo;
-            _search.attributedPlaceholder = [[NSAttributedString alloc]
-                initWithString:[NSString stringWithFormat:@"Search %lu switches", (unsigned long)count]
-                     attributes:@{NSForegroundColorAttributeName: AM_MUTED}];
-            UIImageView *glass = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"magnifyingglass"]];
-            glass.tintColor = AM_MUTED;
-            glass.contentMode = UIViewContentModeCenter;
-            glass.frame = CGRectMake(0, 0, 36, 36);
-            _search.leftView = glass;
-            _search.leftViewMode = UITextFieldViewModeAlways;
-            [_card addSubview:_search];
-        }
+        self.userInteractionEnabled = NO;
+        _fill = [CAShapeLayer layer];
+        _edge = [CAShapeLayer layer];
+        _edge.fillColor = UIColor.clearColor.CGColor;
+        _edge.lineWidth = 1;
+        _hair = [CAShapeLayer layer];
+        _hair.lineWidth = 1 / UIScreen.mainScreen.scale;
+        for (CALayer *l in @[_fill, _hair, _edge]) [self.layer addSublayer:l];
         [self applyColors];
     }
     return self;
 }
 
-- (CGFloat)heightForWidth:(CGFloat)width {
-    return 12 + 16 + 18 + 12 + 1 + 14 + 62 + (self.search ? 12 + 40 : 0) + 16 + 8;
-}
+- (void)setPiece:(AMPiece)piece { _piece = piece; [self setNeedsLayout]; }
+- (void)setRule:(BOOL)rule { _rule = rule; [self setNeedsLayout]; }
 
 - (void)applyColors {
-    UITraitCollection *t = self.traitCollection;
-    _card.layer.borderColor = AMResolved(AM_LINE, t).CGColor;
-    _search.layer.borderColor = AMResolved(AMTok(0x6458AF, 0x8F7ED2), t).CGColor;  // `line-strong`: a field's edge
-    UIColor *a = AMResolved(AM_ACCENT, t), *b = AMResolved(AMTok(0x22D3EE, 0x0E8FB0), t);
-    _rule.colors = @[(id)a.CGColor, (id)b.CGColor];
-    for (NSUInteger i = 0; i < _corners.count; i++) _corners[i].strokeColor = (i % 3 ? b : a).CGColor;
+    _fill.fillColor = AMResolved(AM_SURFACE, self.traitCollection).CGColor;
+    _edge.strokeColor = AMResolved(AM_LINE, self.traitCollection).CGColor;
+    _hair.strokeColor = AMResolved(AM_LINE, self.traitCollection).CGColor;
 }
 
 - (void)traitCollectionDidChange:(UITraitCollection *)previous {
@@ -532,50 +436,151 @@ static UIColor *AMResolved(UIColor *c, UITraitCollection *t) {
 
 - (void)layoutSubviews {
     [super layoutSubviews];
-    CGFloat side = MAX(self.layoutMargins.left, 16);
-    CGRect card = CGRectMake(side, 12, self.bounds.size.width - 2 * side, self.bounds.size.height - 20);
-    _card.frame = card;
-    CGFloat w = card.size.width - 32, y = 16;
-    _live.center = CGPointMake(16 + 4, y + 9);
-    _brand.frame = CGRectMake(30, y, w * 0.65, 18);
-    _build.frame = CGRectMake(16 + w * 0.6, y, w * 0.4, 18);
-    y += 18 + 12;
-    _rule.frame = CGRectMake(16, y, w, 1);
-    y += 1 + 14;
-    CGFloat gap = 8, tw = (w - gap * 3) / 4;
-    for (NSUInteger i = 0; i < _tiles.count; i++) _tiles[i].frame = CGRectMake(16 + i * (tw + gap), y, tw, 62);
-    y += 62 + 12;
-    _search.frame = CGRectMake(16, y, w, 40);
-    // corner brackets just outside the card, 10 pt arms
-    CGFloat l = 10, o = 4;
-    CGPoint pts[4] = {CGPointMake(CGRectGetMinX(card) - o, CGRectGetMinY(card) - o), CGPointMake(CGRectGetMaxX(card) + o, CGRectGetMinY(card) - o),
-                      CGPointMake(CGRectGetMaxX(card) + o, CGRectGetMaxY(card) + o), CGPointMake(CGRectGetMinX(card) - o, CGRectGetMaxY(card) + o)};
-    int dx[4] = {1, -1, -1, 1}, dy[4] = {1, 1, -1, -1};
-    for (int i = 0; i < 4; i++) {
-        UIBezierPath *p = [UIBezierPath bezierPath];
-        [p moveToPoint:CGPointMake(pts[i].x, pts[i].y + dy[i] * l)];
-        [p addLineToPoint:pts[i]];
-        [p addLineToPoint:CGPointMake(pts[i].x + dx[i] * l, pts[i].y)];
-        _corners[i].path = p.CGPath;
+    BOOL top = self.piece == AMPieceTop || self.piece == AMPieceWhole;
+    BOOL bottom = self.piece == AMPieceBottom || self.piece == AMPieceWhole;
+    CGRect b = self.bounds;
+    CGFloat x0 = AMSide + 0.5, x1 = b.size.width - AMSide - 0.5, R = AMRadius;
+    CGFloat y0 = top ? 0.5 : 0, y1 = bottom ? b.size.height - 0.5 : b.size.height;
+    UIRectCorner corners = (top ? UIRectCornerTopLeft | UIRectCornerTopRight : 0) | (bottom ? UIRectCornerBottomLeft | UIRectCornerBottomRight : 0);
+    _fill.path = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(x0, y0, x1 - x0, y1 - y0) byRoundingCorners:corners
+                                             cornerRadii:CGSizeMake(R, R)].CGPath;
+    UIBezierPath *e = [UIBezierPath bezierPath];
+    if (bottom) {  // right side's lower end, round the bottom, up the left side
+        [e moveToPoint:CGPointMake(x1, y1 - R)];
+        [e addArcWithCenter:CGPointMake(x1 - R, y1 - R) radius:R startAngle:0 endAngle:M_PI_2 clockwise:YES];
+        [e addLineToPoint:CGPointMake(x0 + R, y1)];
+        [e addArcWithCenter:CGPointMake(x0 + R, y1 - R) radius:R startAngle:M_PI_2 endAngle:M_PI clockwise:YES];
+    } else {
+        [e moveToPoint:CGPointMake(x0, y1)];
     }
-}
-
-- (void)showSwitches:(NSUInteger)all on:(NSUInteger)on working:(NSUInteger)working waiting:(NSUInteger)waiting {
-    [_tiles[0] setValue:all color:AM_FG];
-    [_tiles[1] setValue:on color:on ? AM_FG : AM_MUTED];
-    [_tiles[2] setValue:working color:working ? AM_GOOD : AM_MUTED];
-    [_tiles[3] setValue:waiting color:waiting ? AM_WARN : AM_MUTED];
-    _live.hidden = on == 0;
-    _live.ok = waiting == 0;
+    [e addLineToPoint:CGPointMake(x0, top ? y0 + R : y0)];
+    if (top) {  // round the top, then down the right side
+        [e addArcWithCenter:CGPointMake(x0 + R, y0 + R) radius:R startAngle:M_PI endAngle:3 * M_PI_2 clockwise:YES];
+        [e addLineToPoint:CGPointMake(x1 - R, y0)];
+        [e addArcWithCenter:CGPointMake(x1 - R, y0 + R) radius:R startAngle:3 * M_PI_2 endAngle:2 * M_PI clockwise:YES];
+    } else {
+        [e moveToPoint:CGPointMake(x1, y0)];
+    }
+    [e addLineToPoint:CGPointMake(x1, bottom ? y1 - R : y1)];
+    _edge.path = e.CGPath;
+    UIBezierPath *h = [UIBezierPath bezierPath];
+    if (self.rule && !top) {
+        [h moveToPoint:CGPointMake(x0 + AMPad, 0.25)];
+        [h addLineToPoint:CGPointMake(x1 - AMPad, 0.25)];
+    }
+    _hair.path = h.CGPath;
 }
 
 @end
 
+#pragma mark - Search
+
+// The only thing above the panels: a search field (long menus), edged in `line-strong` like the store's fields.
+static UITextField *AMSearchField(NSUInteger count) {
+    UITextField *field = [UITextField new];
+    field.backgroundColor = AM_SURFACE;
+    field.textColor = AM_FG;
+    field.tintColor = AM_ACCENT_TEXT;
+    field.font = [UIFont systemFontOfSize:15];
+    field.layer.cornerRadius = 10;
+    field.layer.borderWidth = 1;
+    field.layer.borderColor = AMResolved(AM_LINE_STRONG, UITraitCollection.currentTraitCollection).CGColor;
+    field.clearButtonMode = UITextFieldViewModeWhileEditing;
+    field.returnKeyType = UIReturnKeyDone;
+    field.autocorrectionType = UITextAutocorrectionTypeNo;
+    field.attributedPlaceholder = [[NSAttributedString alloc]
+        initWithString:[NSString stringWithFormat:@"Search %lu switches", (unsigned long)count]
+             attributes:@{NSForegroundColorAttributeName: AM_MUTED}];
+    UIImageView *glass = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"magnifyingglass"]];
+    glass.tintColor = AM_MUTED;
+    glass.contentMode = UIViewContentModeCenter;
+    glass.frame = CGRectMake(0, 0, 36, 36);
+    field.leftView = glass;
+    field.leftViewMode = UITextFieldViewModeAlways;
+    return field;
+}
+
 #pragma mark - Rows
 
-// A slider row: the title on its own line (never squeezed by the slider), the value in mono on the right
-// (accent when it is not the default), the game's own value under the title, the slider full width below.
-@interface AMSliderCell : UITableViewCell
+// Every row sits in its category's panel: a slice of the border as its background, content inside the panel's padding.
+@interface AMRowCell : UITableViewCell
+- (void)setPiece:(AMPiece)piece rule:(BOOL)rule;
+@end
+
+@implementation AMRowCell
+
+- (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier {
+    if ((self = [super initWithStyle:UITableViewCellStyleDefault reuseIdentifier:reuseIdentifier])) {
+        self.backgroundColor = UIColor.clearColor;
+        self.selectionStyle = UITableViewCellSelectionStyleNone;
+        self.backgroundView = [AMPanelPiece new];
+        self.contentView.preservesSuperviewLayoutMargins = NO;
+        self.contentView.insetsLayoutMarginsFromSafeArea = NO;
+        self.contentView.layoutMargins = UIEdgeInsetsMake(12, AMSide + AMPad, 12, AMSide + AMPad);
+    }
+    return self;
+}
+
+- (void)setPiece:(AMPiece)piece rule:(BOOL)rule {
+    AMPanelPiece *bg = (AMPanelPiece *)self.backgroundView;
+    bg.piece = piece;
+    bg.rule = rule;
+}
+
+@end
+
+// A switch: the status dot (when on), the title, what to do when it is not working, the switch.
+@interface AMSwitchCell : AMRowCell
+@property (nonatomic, strong) AMStatusDot *dot;
+@property (nonatomic, strong) UILabel *title, *detail;
+@property (nonatomic, strong) UISwitch *toggle;
+@end
+
+@implementation AMSwitchCell
+
+- (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier {
+    if ((self = [super initWithStyle:style reuseIdentifier:reuseIdentifier])) {
+        _dot = [AMStatusDot new];
+        _title = [UILabel new];
+        _title.font = [UIFont systemFontOfSize:15];
+        _title.textColor = AM_FG;
+        _title.numberOfLines = 0;
+        _detail = [UILabel new];
+        _detail.font = [UIFont systemFontOfSize:12];
+        _detail.textColor = AM_BAD;
+        _detail.numberOfLines = 0;
+        _toggle = [UISwitch new];
+        _toggle.onTintColor = AM_ACCENT_FILL;
+        for (UIView *v in @[_dot, _title, _detail, _toggle]) {
+            v.translatesAutoresizingMaskIntoConstraints = NO;
+            [self.contentView addSubview:v];
+        }
+        UILayoutGuide *m = self.contentView.layoutMarginsGuide;
+        [NSLayoutConstraint activateConstraints:@[
+            [_dot.widthAnchor constraintEqualToConstant:8],
+            [_dot.heightAnchor constraintEqualToConstant:8],
+            [_dot.leadingAnchor constraintEqualToAnchor:m.leadingAnchor],
+            [_dot.centerYAnchor constraintEqualToAnchor:_title.firstBaselineAnchor constant:-5],
+            [_title.topAnchor constraintEqualToAnchor:m.topAnchor constant:2],
+            [_title.leadingAnchor constraintEqualToAnchor:m.leadingAnchor constant:18],
+            [_title.trailingAnchor constraintLessThanOrEqualToAnchor:_toggle.leadingAnchor constant:-12],
+            [_detail.topAnchor constraintEqualToAnchor:_title.bottomAnchor constant:2],
+            [_detail.leadingAnchor constraintEqualToAnchor:_title.leadingAnchor],
+            [_detail.trailingAnchor constraintLessThanOrEqualToAnchor:_toggle.leadingAnchor constant:-12],
+            [_detail.bottomAnchor constraintEqualToAnchor:m.bottomAnchor constant:-2],
+            [_toggle.trailingAnchor constraintEqualToAnchor:m.trailingAnchor],
+            [_toggle.centerYAnchor constraintEqualToAnchor:self.contentView.centerYAnchor],
+            [self.contentView.heightAnchor constraintGreaterThanOrEqualToConstant:56],
+        ]];
+    }
+    return self;
+}
+
+@end
+
+// A slider: the title on its own line (never squeezed), the value in mono on the right (accent when it is not
+// the default), the game's own value under the title, the slider full width below.
+@interface AMSliderCell : AMRowCell
 @property (nonatomic, strong) UILabel *title, *value, *note;
 @property (nonatomic, strong) UISlider *slider;
 @end
@@ -584,14 +589,12 @@ static UIColor *AMResolved(UIColor *c, UITraitCollection *t) {
 
 - (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier {
     if ((self = [super initWithStyle:style reuseIdentifier:reuseIdentifier])) {
-        self.backgroundColor = AM_SURFACE;
-        self.selectionStyle = UITableViewCellSelectionStyleNone;
         _title = [UILabel new];
         _title.font = [UIFont systemFontOfSize:15];
         _title.textColor = AM_FG;
         _title.numberOfLines = 0;
         _value = [UILabel new];
-        _value.font = [UIFont monospacedDigitSystemFontOfSize:15 weight:UIFontWeightSemibold];
+        _value.font = AMMono(15, UIFontWeightSemibold);
         _value.textAlignment = NSTextAlignmentRight;
         [_value setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
         [_value setContentCompressionResistancePriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
@@ -626,18 +629,97 @@ static UIColor *AMResolved(UIColor *c, UITraitCollection *t) {
 
 @end
 
+// A row that opens a list page: its symbol, the title, a chevron.
+@interface AMListCell : AMRowCell
+@property (nonatomic, strong) UIImageView *icon;
+@property (nonatomic, strong) UILabel *title;
+@end
+
+@implementation AMListCell
+
+- (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier {
+    if ((self = [super initWithStyle:style reuseIdentifier:reuseIdentifier])) {
+        _icon = [UIImageView new];
+        _icon.tintColor = AM_ACCENT_TEXT;
+        _icon.contentMode = UIViewContentModeScaleAspectFit;
+        _title = [UILabel new];
+        _title.font = [UIFont systemFontOfSize:15];
+        _title.textColor = AM_FG;
+        _title.numberOfLines = 0;
+        UILabel *chevron = [UILabel new];
+        chevron.text = @"›";
+        chevron.font = [UIFont systemFontOfSize:20 weight:UIFontWeightLight];
+        chevron.textColor = AM_MUTED;
+        for (UIView *v in @[_icon, _title, chevron]) {
+            v.translatesAutoresizingMaskIntoConstraints = NO;
+            [self.contentView addSubview:v];
+        }
+        UILayoutGuide *m = self.contentView.layoutMarginsGuide;
+        [NSLayoutConstraint activateConstraints:@[
+            [_icon.leadingAnchor constraintEqualToAnchor:m.leadingAnchor],
+            [_icon.centerYAnchor constraintEqualToAnchor:self.contentView.centerYAnchor],
+            [_icon.widthAnchor constraintEqualToConstant:22],
+            [_icon.heightAnchor constraintEqualToConstant:22],
+            [_title.leadingAnchor constraintEqualToAnchor:_icon.trailingAnchor constant:12],
+            [_title.topAnchor constraintEqualToAnchor:m.topAnchor constant:4],
+            [_title.bottomAnchor constraintEqualToAnchor:m.bottomAnchor constant:-4],
+            [_title.trailingAnchor constraintLessThanOrEqualToAnchor:chevron.leadingAnchor constant:-12],
+            [chevron.trailingAnchor constraintEqualToAnchor:m.trailingAnchor],
+            [chevron.centerYAnchor constraintEqualToAnchor:self.contentView.centerYAnchor],
+        ]];
+        self.selectionStyle = UITableViewCellSelectionStyleNone;
+    }
+    return self;
+}
+
+@end
+
+// A category's header: the top of its panel, the label inside at the left, "N on" (and the count with ▾ / ›
+// when the menu folds) at the right. A folded category is a whole small panel.
+@interface AMSectionHead : UITableViewHeaderFooterView
+@property (nonatomic, strong) AMPanelPiece *piece;
+@property (nonatomic, strong) UILabel *label, *right;
+@property (nonatomic, strong) UIControl *tap;
+@end
+
+@implementation AMSectionHead
+
+- (instancetype)initWithReuseIdentifier:(NSString *)reuseIdentifier {
+    if ((self = [super initWithReuseIdentifier:reuseIdentifier])) {
+        _piece = [AMPanelPiece new];
+        self.backgroundView = _piece;
+        _label = [UILabel new];
+        _right = [UILabel new];
+        _right.textAlignment = NSTextAlignmentRight;
+        _tap = [UIControl new];
+        for (UIView *v in @[_label, _right, _tap]) [self.contentView addSubview:v];
+    }
+    return self;
+}
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    CGFloat w = self.contentView.bounds.size.width, x = AMSide + AMPad, inner = w - 2 * x;
+    self.label.frame = CGRectMake(x, 16, inner * 0.6, 16);
+    self.right.frame = CGRectMake(x + inner * 0.4, 16, inner * 0.6, 16);
+    self.tap.frame = self.contentView.bounds;
+}
+
+@end
+
 #pragma mark - Panel
 
 @interface AMPanel : UITableViewController <UITextFieldDelegate>
 @property (nonatomic, strong) NSArray<AMItem *> *items;
-@property (nonatomic, strong) NSArray<NSString *> *allTitles;            // sections in the order first added
+@property (nonatomic, strong) NSArray<NSString *> *allTitles;            // categories in the order first added
 @property (nonatomic, strong) NSArray<NSArray<NSNumber *> *> *allRows;   // indexes into items
 @property (nonatomic, strong) NSArray<NSString *> *shownTitles;          // after the search filter
 @property (nonatomic, strong) NSArray<NSArray<NSNumber *> *> *shownRows;
 @property (nonatomic, copy) NSString *query;
-@property (nonatomic) BOOL folds;  // long menus fold their sections
+@property (nonatomic) BOOL folds;  // long menus fold their categories
+@property (nonatomic, strong, nullable) UITextField *search;
+@property (nonatomic, strong) UILabel *note;
 @property (nonatomic, strong, nullable) NSTimer *statusTimer;
-@property (nonatomic, strong) AMSummary *summary;
 @property (nonatomic, copy, nullable) void (^onClose)(void);  // the whole menu went away (Done or swipe down)
 @end
 
@@ -646,7 +728,7 @@ static NSString *const AMOpenSections = @"AM__openSections";
 @implementation AMPanel
 
 - (instancetype)initWithItems:(NSArray<AMItem *> *)items title:(NSString *)title {
-    if ((self = [super initWithStyle:UITableViewStyleInsetGrouped])) {
+    if ((self = [super initWithStyle:UITableViewStyleGrouped])) {
         _items = items;
         _query = @"";
         self.title = title;
@@ -707,6 +789,12 @@ static NSString *const AMOpenSections = @"AM__openSections";
     self.query = q;
     [self filter];
     [self.tableView reloadData];
+    [self showNote];
+}
+
+- (BOOL)textFieldShouldReturn:(UITextField *)field {
+    [field resignFirstResponder];
+    return YES;
 }
 
 - (NSInteger)flatIndexAt:(NSIndexPath *)path {
@@ -724,52 +812,43 @@ static NSString *const AMOpenSections = @"AM__openSections";
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    AMStyleTable(self.tableView);
-    self.tableView.estimatedRowHeight = 52;
-    self.tableView.backgroundView = [AMBackdrop new];  // fixed behind the rows while they scroll
+    UITableView *table = self.tableView;
+    table.backgroundColor = AM_BG;
+    table.backgroundView = [AMBackdrop new];  // fixed behind the panels while they scroll
+    table.separatorStyle = UITableViewCellSeparatorStyleNone;
+    table.sectionHeaderTopPadding = 0;
+    table.estimatedRowHeight = 56;
+    table.estimatedSectionHeaderHeight = 48;
+    table.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
     self.navigationItem.rightBarButtonItem =
         [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(close)];
-    NSUInteger switches = 0;
-    for (AMItem *item in self.items) if (!item.isList) switches++;
-    // the summary card, with the search field in it when the menu is long (not a bar floating over the rows)
-    self.summary = [[AMSummary alloc] initWithCount:switches search:self.items.count > 12];
-    self.summary.search.delegate = self;
-    [self.summary.search addTarget:self action:@selector(searchChanged:) forControlEvents:UIControlEventEditingChanged];
-    [self sizeSummary];
-    self.tableView.tableHeaderView = self.summary;
-    [self refreshSummary];
-}
-
-- (void)sizeSummary {
-    CGFloat width = self.tableView.bounds.size.width ?: UIScreen.mainScreen.bounds.size.width;
-    CGRect frame = CGRectMake(0, 0, width, [self.summary heightForWidth:width]);
-    if (!CGRectEqualToRect(frame, self.summary.frame)) {
-        self.summary.frame = frame;
-        self.tableView.tableHeaderView = self.summary;
+    if (self.items.count > 12) {
+        UIView *head = [[UIView alloc] initWithFrame:CGRectMake(0, 0, UIScreen.mainScreen.bounds.size.width, 64)];
+        self.search = AMSearchField(self.items.count);
+        self.search.frame = CGRectMake(AMSide, 14, head.bounds.size.width - 2 * AMSide, 40);
+        self.search.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+        self.search.delegate = self;
+        [self.search addTarget:self action:@selector(searchChanged:) forControlEvents:UIControlEventEditingChanged];
+        [head addSubview:self.search];
+        table.tableHeaderView = head;
+    } else {
+        table.tableHeaderView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 1, 8)];
     }
+    UIView *foot = [[UIView alloc] initWithFrame:CGRectMake(0, 0, UIScreen.mainScreen.bounds.size.width, 90)];
+    self.note = [[UILabel alloc] initWithFrame:CGRectInset(foot.bounds, AMSide + 4, 10)];
+    self.note.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    self.note.numberOfLines = 0;
+    self.note.font = AMMono(11, UIFontWeightRegular);
+    self.note.textColor = AM_MUTED;
+    [foot addSubview:self.note];
+    table.tableFooterView = foot;
+    [self showNote];
 }
 
-- (void)viewDidLayoutSubviews {
-    [super viewDidLayoutSubviews];
-    [self sizeSummary];
-}
-
-- (BOOL)textFieldShouldReturn:(UITextField *)field {
-    [field resignFirstResponder];
-    return YES;
-}
-
-// The tiles: switches and sliders, how many are on, how many of those reach the game, how many wait.
-- (void)refreshSummary {
-    NSUInteger all = 0, on = 0, working = 0;
-    for (AMItem *item in self.items) {
-        if (item.isList) continue;
-        all++;
-        if (!AMItemOn(item)) continue;
-        on++;
-        if (AMStatusFor(item.key, NULL)) working++;
-    }
-    [self.summary showSwitches:all on:on working:working waiting:on - working];
+- (void)showNote {
+    self.note.text = self.shownTitles.count
+        ? @"Made by Accretion. Settings stay on this device; the game pauses while this menu is open. A dot by a switch that is on: green when it reaches the game, red with what to do."
+        : [NSString stringWithFormat:@"No switch matches “%@”.", self.query];
 }
 
 - (void)close {
@@ -777,146 +856,103 @@ static NSString *const AMOpenSections = @"AM__openSections";
 }
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
-    return MAX(self.shownTitles.count, 1);
+    return self.shownTitles.count;
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    if (!self.shownTitles.count) return 0;
     return [self isOpen:self.shownTitles[section]] ? self.shownRows[section].count : 0;
 }
 
-// Section header: the mono label, then how many are on, and ▾ / › when the menu folds.
 - (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section {
-    if (!self.shownTitles.count || !self.shownTitles[section].length) return nil;
-    UITableViewHeaderFooterView *head = [tableView dequeueReusableHeaderFooterViewWithIdentifier:@"head"];
+    if (!self.shownTitles[section].length) return nil;
+    AMSectionHead *head = [tableView dequeueReusableHeaderFooterViewWithIdentifier:@"head"];
     if (!head) {
-        head = [[UITableViewHeaderFooterView alloc] initWithReuseIdentifier:@"head"];
-        UIButton *button = [UIButton buttonWithType:UIButtonTypeCustom];
-        button.tag = 9101;
-        button.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
-        button.translatesAutoresizingMaskIntoConstraints = NO;
-        [button addTarget:self action:@selector(headerTapped:) forControlEvents:UIControlEventTouchUpInside];
-        UILabel *right = [UILabel new];
-        right.tag = 9102;
-        right.textAlignment = NSTextAlignmentRight;
-        right.translatesAutoresizingMaskIntoConstraints = NO;
-        [head.contentView addSubview:button];
-        [head.contentView addSubview:right];
-        UILayoutGuide *g = head.contentView.layoutMarginsGuide;
-        [NSLayoutConstraint activateConstraints:@[
-            [button.leadingAnchor constraintEqualToAnchor:g.leadingAnchor],
-            [button.trailingAnchor constraintEqualToAnchor:g.trailingAnchor],
-            [button.topAnchor constraintEqualToAnchor:head.contentView.topAnchor constant:4],
-            [button.bottomAnchor constraintEqualToAnchor:head.contentView.bottomAnchor constant:-4],
-            [button.heightAnchor constraintGreaterThanOrEqualToConstant:32],
-            [right.trailingAnchor constraintEqualToAnchor:g.trailingAnchor],
-            [right.centerYAnchor constraintEqualToAnchor:button.centerYAnchor],
-        ]];
-        right.userInteractionEnabled = NO;
+        head = [[AMSectionHead alloc] initWithReuseIdentifier:@"head"];
+        [head.tap addTarget:self action:@selector(headerTapped:) forControlEvents:UIControlEventTouchUpInside];
     }
     [self configureHeader:head section:section];
     return head;
 }
 
-- (void)configureHeader:(UITableViewHeaderFooterView *)head section:(NSInteger)section {
+- (void)configureHeader:(AMSectionHead *)head section:(NSInteger)section {
     NSString *title = self.shownTitles[section];
-    UIButton *button = [head.contentView viewWithTag:9101];
-    UILabel *right = [head.contentView viewWithTag:9102];
-    [button setAttributedTitle:AMLabel(title, AM_MUTED) forState:UIControlStateNormal];
-    button.accessibilityIdentifier = title;
-    button.userInteractionEnabled = self.folds && !self.query.length;
+    BOOL open = [self isOpen:title];
+    head.piece.piece = open && self.shownRows[section].count ? AMPieceTop : AMPieceWhole;
+    head.label.attributedText = AMLabel(title, AM_MUTED);
+    head.tap.accessibilityIdentifier = title;
+    head.tap.userInteractionEnabled = self.folds && !self.query.length;
     NSUInteger on = 0;
     for (NSNumber *n in self.shownRows[section]) if (AMItemOn(self.items[n.integerValue])) on++;
     NSMutableAttributedString *r = [NSMutableAttributedString new];
     if (on) [r appendAttributedString:AMLabel([NSString stringWithFormat:@"%lu on", (unsigned long)on], AM_GOOD)];
-    if (button.userInteractionEnabled) {
-        NSString *tail = [NSString stringWithFormat:@"%@%lu  %@", on ? @" · " : @"", (unsigned long)self.shownRows[section].count,
-                                                                [self isOpen:title] ? @"▾" : @"›"];
+    if (head.tap.userInteractionEnabled) {
+        NSString *tail = [NSString stringWithFormat:@"%@%lu  %@", on ? @" · " : @"", (unsigned long)self.shownRows[section].count, open ? @"▾" : @"›"];
         [r appendAttributedString:AMLabel(tail, AM_MUTED)];
     }
-    right.attributedText = r;
-    button.accessibilityLabel = [NSString stringWithFormat:@"%@, %lu switches, %lu on, %@", title,
-                                 (unsigned long)self.shownRows[section].count, (unsigned long)on, [self isOpen:title] ? @"open" : @"folded"];
+    head.right.attributedText = r;
+    head.tap.isAccessibilityElement = YES;
+    head.tap.accessibilityTraits = UIAccessibilityTraitButton;
+    head.tap.accessibilityLabel = [NSString stringWithFormat:@"%@, %lu switches, %lu on, %@", title,
+                                   (unsigned long)self.shownRows[section].count, (unsigned long)on, open ? @"open" : @"folded"];
 }
 
 - (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section {
-    return self.shownTitles.count && self.shownTitles[section].length ? UITableViewAutomaticDimension : 8;
+    return self.shownTitles[section].length ? 48 : CGFLOAT_MIN;
 }
 
-- (void)headerTapped:(UIButton *)button {
-    if (button.accessibilityIdentifier) [self toggle:button.accessibilityIdentifier];
+- (CGFloat)tableView:(UITableView *)tableView heightForFooterInSection:(NSInteger)section {
+    return 14;  // the gap between panels
 }
 
-- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
-    if (!self.shownTitles.count) return [NSString stringWithFormat:@"No switch matches “%@”.", self.query];
-    if (section != (NSInteger)self.shownTitles.count - 1) return nil;
-    return @"Made by Accretion. Settings stay on this device. The game pauses while this menu is open. A dot by a switch that is on: green when it reaches the game, red with what to do.";
+- (UIView *)tableView:(UITableView *)tableView viewForFooterInSection:(NSInteger)section {
+    return [UIView new];
 }
 
-- (void)tableView:(UITableView *)tableView willDisplayFooterView:(UIView *)view forSection:(NSInteger)section {
-    if ([view isKindOfClass:UITableViewHeaderFooterView.class]) {
-        ((UITableViewHeaderFooterView *)view).textLabel.textColor = AM_MUTED;
-    }
+- (void)headerTapped:(UIControl *)tap {
+    if (tap.accessibilityIdentifier) [self toggle:tap.accessibilityIdentifier];
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     NSInteger flat = [self flatIndexAt:indexPath];
     AMItem *item = self.items[flat];
-    NSString *kind = item.isList ? @"list" : item.isSlider ? @"slider" : @"switch";
+    NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
+    AMRowCell *cell;
     if (item.isSlider) {
-        AMSliderCell *row = [tableView dequeueReusableCellWithIdentifier:kind];
+        AMSliderCell *row = [tableView dequeueReusableCellWithIdentifier:@"slider"];
         if (!row) {
-            row = [[AMSliderCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:kind];
+            row = [[AMSliderCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"slider"];
             [row.slider addTarget:self action:@selector(sliderChanged:) forControlEvents:UIControlEventValueChanged];
         }
         row.title.text = item.title;
         row.slider.minimumValue = item.min;
         row.slider.maximumValue = item.max;
-        row.slider.value = [NSUserDefaults.standardUserDefaults floatForKey:AMKey(item.key)];
+        row.slider.value = [d floatForKey:AMKey(item.key)];
         row.slider.tag = flat;
-        row.note.text = AMNoteFor(item.key);
+        row.note.text = AMNoteFor(item.key).lowercaseString;
         [self showValueOf:item inRow:row];
-        return row;
-    }
-    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:kind];
-    if (!cell) {
-        cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:kind];
-        cell.backgroundColor = AM_SURFACE;
-        cell.selectionStyle = UITableViewCellSelectionStyleNone;
-        cell.textLabel.textColor = AM_FG;
-        cell.textLabel.font = [UIFont systemFontOfSize:15];
-        cell.textLabel.numberOfLines = 0;  // whole titles, on two lines when they need it
-        cell.detailTextLabel.font = [UIFont systemFontOfSize:12];
-        cell.detailTextLabel.numberOfLines = 0;
-        if (item.isList) {
-            cell.selectionStyle = UITableViewCellSelectionStyleDefault;
-            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-            cell.imageView.tintColor = AM_ACCENT_TEXT;
-        } else {
-            UISwitch *s = [UISwitch new];
-            s.onTintColor = AM_ACCENT_FILL;
-            [s addTarget:self action:@selector(switchChanged:) forControlEvents:UIControlEventValueChanged];
-            cell.accessoryView = s;
-            // room for the status dot, drawn over an empty image so titles line up with or without it
-            UIGraphicsImageRenderer *blank = [[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(8, 8)];
-            cell.imageView.image = [blank imageWithActions:^(UIGraphicsImageRendererContext *ctx) {}];
-            AMStatusDot *dot = [AMStatusDot new];
-            dot.tag = 7001;
-            [cell.imageView addSubview:dot];
-            cell.imageView.clipsToBounds = NO;
-        }
-    }
-    cell.textLabel.text = item.title;
-    NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
-    if (item.isList) {
-        cell.imageView.image = item.symbol ? [UIImage systemImageNamed:item.symbol] : nil;
-        cell.detailTextLabel.text = nil;
+        cell = row;
+    } else if (item.isList) {
+        AMListCell *row = [tableView dequeueReusableCellWithIdentifier:@"list"] ?: [[AMListCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"list"];
+        row.title.text = item.title;
+        row.icon.image = item.symbol ? [UIImage systemImageNamed:item.symbol] : nil;
+        cell = row;
     } else {
-        UISwitch *s = (UISwitch *)cell.accessoryView;
-        s.on = [d boolForKey:AMKey(item.key)];
-        s.tag = flat;
-        [self showStatusOf:item inCell:cell];
+        AMSwitchCell *row = [tableView dequeueReusableCellWithIdentifier:@"switch"];
+        if (!row) {
+            row = [[AMSwitchCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"switch"];
+            [row.toggle addTarget:self action:@selector(switchChanged:) forControlEvents:UIControlEventValueChanged];
+        }
+        row.title.text = item.title;
+        row.toggle.on = [d boolForKey:AMKey(item.key)];
+        row.toggle.tag = flat;
+        [self showStatusOf:item inRow:row];
+        cell = row;
     }
+    // which slice of the category's panel this row draws
+    BOOL head = self.shownTitles[indexPath.section].length > 0;
+    BOOL last = indexPath.row == (NSInteger)self.shownRows[indexPath.section].count - 1;
+    BOOL first = indexPath.row == 0 && !head;
+    [cell setPiece:last ? (first ? AMPieceWhole : AMPieceBottom) : (first ? AMPieceTop : AMPieceMiddle) rule:!first];
     return cell;
 }
 
@@ -926,40 +962,35 @@ static NSString *const AMOpenSections = @"AM__openSections";
     row.value.textColor = v != item.defaultValue ? AM_ACCENT_TEXT : AM_MUTED;
 }
 
-- (void)showStatusOf:(AMItem *)item inCell:(UITableViewCell *)cell {
-    AMStatusDot *dot = [cell.imageView viewWithTag:7001];
-    dot.center = CGPointMake(4, 4);
+- (void)showStatusOf:(AMItem *)item inRow:(AMSwitchCell *)row {
     BOOL on = [NSUserDefaults.standardUserDefaults boolForKey:AMKey(item.key)];
-    dot.hidden = !on;
-    if (!on) { cell.detailTextLabel.text = nil; return; }
+    row.dot.hidden = !on;
+    if (!on) { row.detail.text = nil; return; }
     NSString *line = nil;
     BOOL ok = AMStatusFor(item.key, &line);
-    dot.ok = ok;
-    dot.accessibilityValue = line;
-    // the green dot says "working" on its own; a line only when something needs doing
-    cell.detailTextLabel.text = ok ? nil : line;
-    cell.detailTextLabel.textColor = AM_BAD;
+    row.dot.ok = ok;
+    row.dot.accessibilityValue = line;
+    row.detail.text = ok ? nil : line;  // the green dot says "working" on its own; a line only when something needs doing
 }
 
 - (void)refreshStatus {
     BOOL resize = NO;
-    for (NSIndexPath *path in self.tableView.indexPathsForVisibleRows) {
+    for (UITableViewCell *cell in self.tableView.visibleCells) {
+        NSIndexPath *path = [self.tableView indexPathForCell:cell];
+        if (!path) continue;
         AMItem *item = self.items[[self flatIndexAt:path]];
-        if (item.isList) continue;
-        UITableViewCell *cell = [self.tableView cellForRowAtIndexPath:path];
-        if (!cell) continue;
-        if (item.isSlider) {
+        if ([cell isKindOfClass:AMSliderCell.class]) {
             AMSliderCell *row = (AMSliderCell *)cell;
             BOOL had = row.note.text.length > 0;
-            row.note.text = AMNoteFor(item.key);
+            row.note.text = AMNoteFor(item.key).lowercaseString;
             if (had != (row.note.text.length > 0)) resize = YES;
-            continue;
+        } else if ([cell isKindOfClass:AMSwitchCell.class]) {
+            AMSwitchCell *row = (AMSwitchCell *)cell;
+            BOOL had = row.detail.text.length > 0;
+            [self showStatusOf:item inRow:row];
+            if (had != (row.detail.text.length > 0)) resize = YES;
         }
-        BOOL had = cell.detailTextLabel.text.length > 0;
-        [self showStatusOf:item inCell:cell];
-        if (had != (cell.detailTextLabel.text.length > 0)) resize = YES;
     }
-    [self refreshSummary];
     if (resize) {
         [UIView performWithoutAnimation:^{ [self.tableView beginUpdates]; [self.tableView endUpdates]; }];
     }
@@ -990,13 +1021,12 @@ static NSString *const AMOpenSections = @"AM__openSections";
     if (item.isList) [self.navigationController pushViewController:[[AMListPanel alloc] initWithItem:item] animated:YES];
 }
 
-// The "N on" count in a section header follows the switches.
+// The "N on" in a category's header follows its switches.
 - (void)refreshHeaderOf:(NSInteger)flat {
-    NSString *section = self.items[flat].section ?: @"";
-    NSUInteger s = [self.shownTitles indexOfObject:section];
+    NSUInteger s = [self.shownTitles indexOfObject:self.items[flat].section ?: @""];
     if (s == NSNotFound) return;
-    UITableViewHeaderFooterView *head = [self.tableView headerViewForSection:s];
-    if (head) [self configureHeader:head section:s];
+    AMSectionHead *head = (AMSectionHead *)[self.tableView headerViewForSection:s];
+    if ([head isKindOfClass:AMSectionHead.class]) [self configureHeader:head section:s];
 }
 
 - (void)switchChanged:(UISwitch *)s {
@@ -1006,14 +1036,13 @@ static NSString *const AMOpenSections = @"AM__openSections";
     if (!s.on) os_log(OS_LOG_DEFAULT, "[AccretionMods] status %{public}@ off", item.key);
     [[[UISelectionFeedbackGenerator alloc] init] selectionChanged];
     NSIndexPath *path = [self pathOfFlat:s.tag];
-    UITableViewCell *cell = path ? [self.tableView cellForRowAtIndexPath:path] : nil;
-    if (cell) {
-        [self showStatusOf:item inCell:cell];
+    AMSwitchCell *row = path ? (AMSwitchCell *)[self.tableView cellForRowAtIndexPath:path] : nil;
+    if ([row isKindOfClass:AMSwitchCell.class]) {
+        [self showStatusOf:item inRow:row];
         [self.tableView beginUpdates];  // the status line appears or goes: let the row resize
         [self.tableView endUpdates];
     }
     [self refreshHeaderOf:s.tag];
-    [self refreshSummary];
 }
 
 - (void)sliderChanged:(UISlider *)s {
@@ -1024,7 +1053,6 @@ static NSString *const AMOpenSections = @"AM__openSections";
     if ([row isKindOfClass:AMSliderCell.class]) [self showValueOf:item inRow:row];
     if (item.onSlider) item.onSlider(s.value);
     [self refreshHeaderOf:s.tag];
-    [self refreshSummary];
 }
 
 @end
