@@ -749,7 +749,7 @@ static UITextField *AMSearchField(NSUInteger count) {
         _note.textColor = AM_MUTED;
         _slider = [UISlider new];
         _slider.minimumTrackTintColor = AM_ACCENT;
-        _slider.maximumTrackTintColor = AM_RAISED;
+        _slider.maximumTrackTintColor = AM_LINE;  // `raised` vanished on the panel's surface
         for (UIView *v in @[_title, _value, _note, _slider]) {
             v.translatesAutoresizingMaskIntoConstraints = NO;
             [self.contentView addSubview:v];
