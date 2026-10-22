@@ -81,4 +81,12 @@ extern "C"
 #endif
 void AMMenuNote(const char *key, const char *_Nullable note);
 
+// What a list page's pick did, called from inside its onPick block: ok and a few words ("Added", "Load a vault
+// first"). The row then lights up cyan with "✓ Added" or red with the reason. Without a call the row says "✓ Sent":
+// the mod did not say whether the game took it.
+#ifdef __cplusplus
+extern "C"
+#endif
+void AMMenuPickResult(bool ok, const char *_Nullable text);
+
 NS_ASSUME_NONNULL_END
