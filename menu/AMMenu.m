@@ -1,6 +1,7 @@
 #import "AMMenu.h"
 #import <os/lock.h>
 #import <os/log.h>
+#import <dlfcn.h>
 
 static NSString *AMKey(NSString *key) {
     return [@"AM_" stringByAppendingString:key];
@@ -296,13 +297,17 @@ static UIBarButtonItem *AMBarText(NSString *title, id target, SEL action) {
 @property (nonatomic, copy) void (^onPick)(NSInteger);
 @property (nonatomic, copy) NSString *section;  // the menu group it belongs to ("" before any addSection)
 @property (nonatomic) BOOL display;  // one of the menu's own Display settings: never counted as a cheat that is on
+// an action row (Cloud saves): runs on tap, then says what happened on the row (✓ text in cyan, or red)
+@property (nonatomic, copy) void (^onAction)(void (^done)(BOOL ok, NSString *text));
+@property (nonatomic, copy) NSString *label;  // the action row's right side before it runs ("›")
+@property (nonatomic) BOOL quiet;  // a muted title (Unlink)
 @end
 
 @implementation AMItem
 @end
 
 static BOOL AMItemOn(AMItem *item) {
-    if (item.isList || item.display) return NO;
+    if (item.isList || item.display || item.onAction) return NO;
     if (item.isSlider) return [NSUserDefaults.standardUserDefaults floatForKey:AMKey(item.key)] != item.defaultValue;
     return [NSUserDefaults.standardUserDefaults boolForKey:AMKey(item.key)];
 }
@@ -628,6 +633,8 @@ static UITextField *AMSearchField(NSString *placeholder) {
 @implementation AMCardEdge {
     CAGradientLayer *_spin;
     CAShapeLayer *_mask;
+@public
+    CGFloat _radius;  // 0: the category box's corners; the Log in capsule sets half its height
 }
 
 - (instancetype)init {
@@ -669,7 +676,7 @@ static UITextField *AMSearchField(NSString *placeholder) {
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
     _mask.frame = self.bounds;
-    _mask.path = [UIBezierPath bezierPathWithRoundedRect:CGRectInset(self.bounds, 0.5, 0.5) cornerRadius:AMRadius].CGPath;
+    _mask.path = [UIBezierPath bezierPathWithRoundedRect:CGRectInset(self.bounds, 0.5, 0.5) cornerRadius:_radius ?: AMRadius].CGPath;
     CGFloat d = hypot(self.bounds.size.width, self.bounds.size.height);
     _spin.bounds = CGRectMake(0, 0, d, d);
     _spin.position = CGPointMake(CGRectGetMidX(self.bounds), CGRectGetMidY(self.bounds));
@@ -1100,6 +1107,102 @@ static UITextField *AMSearchField(NSString *placeholder) {
 
 @end
 
+// An action row (Cloud saves): the title, and at the right what it will do or did ("›", "✓ Backed up · 2 MB").
+@interface AMActionCell : AMRowCell
+@property (nonatomic, strong) UILabel *title, *right;
+@end
+
+@implementation AMActionCell
+
+- (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier {
+    if ((self = [super initWithStyle:style reuseIdentifier:reuseIdentifier])) {
+        _title = [UILabel new];
+        _title.font = [UIFont systemFontOfSize:13];
+        _title.numberOfLines = 0;
+        [_title setContentCompressionResistancePriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
+        _right = [UILabel new];
+        _right.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
+        _right.textAlignment = NSTextAlignmentRight;
+        _right.numberOfLines = 2;
+        for (UIView *v in @[_title, _right]) {
+            v.translatesAutoresizingMaskIntoConstraints = NO;
+            [self.contentView addSubview:v];
+        }
+        UILayoutGuide *m = self.contentView.layoutMarginsGuide;
+        [NSLayoutConstraint activateConstraints:@[
+            [_title.leadingAnchor constraintEqualToAnchor:m.leadingAnchor constant:AMDotColumn],
+            [_title.topAnchor constraintEqualToAnchor:m.topAnchor constant:2],
+            [_title.bottomAnchor constraintEqualToAnchor:m.bottomAnchor constant:-2],
+            [_title.trailingAnchor constraintLessThanOrEqualToAnchor:_right.leadingAnchor constant:-10],
+            [_right.trailingAnchor constraintEqualToAnchor:m.trailingAnchor],
+            [_right.centerYAnchor constraintEqualToAnchor:self.contentView.centerYAnchor],
+            [_right.widthAnchor constraintLessThanOrEqualToAnchor:self.contentView.widthAnchor multiplier:0.55],
+            [self.contentView.heightAnchor constraintGreaterThanOrEqualToConstant:30],
+        ]];
+        self.isAccessibilityElement = YES;
+        self.accessibilityTraits = UIAccessibilityTraitButton;
+    }
+    return self;
+}
+
+- (NSString *)accessibilityLabel { return self.title.text; }
+- (NSString *)accessibilityValue { return self.right.text; }
+
+@end
+
+// The Log in capsule under the title (or, once linked, who is signed in): opens Accretion's sign-in in a browser
+// inside the game; the moving cyan edge runs around it like around the category boxes.
+@interface AMLoginBar : UIView
+@property (nonatomic, strong) UIButton *button;
+@property (nonatomic, strong) UILabel *who;
+- (void)show:(nullable NSString *)account busy:(BOOL)busy;
+@end
+
+@implementation AMLoginBar {
+    AMCardEdge *_edge;
+}
+
+- (instancetype)init {
+    if ((self = [super initWithFrame:CGRectMake(0, 0, 320, 52)])) {
+        _button = [UIButton buttonWithType:UIButtonTypeSystem];
+        _button.layer.cornerRadius = 17;
+        _button.backgroundColor = [AM_SURFACE colorWithAlphaComponent:AMCardAlpha];
+        _button.accessibilityHint = @"Opens Accretion's sign-in to back up your saves";
+        _edge = [AMCardEdge new];
+        _edge->_radius = 17;
+        _edge.layer.zPosition = 0;
+        _who = [UILabel new];
+        _who.textAlignment = NSTextAlignmentCenter;
+        _who.font = AMMono(11, UIFontWeightRegular);
+        _who.textColor = AM_MUTED;
+        for (UIView *v in @[_button, _who]) [self addSubview:v];
+        [_button addSubview:_edge];
+        [self show:nil busy:NO];
+    }
+    return self;
+}
+
+- (void)show:(NSString *)account busy:(BOOL)busy {
+    self.button.hidden = account.length > 0;
+    self.who.hidden = account.length == 0;
+    self.who.text = account.length ? [@"☁ Cloud saves · " stringByAppendingString:account] : nil;
+    NSString *title = busy ? @"Opening sign-in…" : @"Log in  ·  back up your saves";
+    [self.button setAttributedTitle:[[NSAttributedString alloc] initWithString:title attributes:@{
+        NSFontAttributeName: [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold], NSForegroundColorAttributeName: AM_FG}]
+                           forState:UIControlStateNormal];
+    self.button.enabled = !busy;
+}
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    CGFloat w = MIN(self.bounds.size.width - 2 * AMSide, 300);
+    self.button.frame = CGRectMake((self.bounds.size.width - w) / 2, 10, w, 34);
+    _edge.frame = self.button.bounds;
+    self.who.frame = CGRectMake(AMSide, 14, self.bounds.size.width - 2 * AMSide, 24);
+}
+
+@end
+
 // A category's header: a line above its box, the label at the left, "N on" (and the count with ▾ / › when the
 // menu folds) at the right, then Off in plain text while something in it is on. A folded category is that line.
 @interface AMSectionHead : UITableViewHeaderFooterView
@@ -1143,10 +1246,326 @@ static UITextField *AMSearchField(NSString *placeholder) {
 
 @end
 
+#pragma mark - Cloud saves
+
+// Cloud saves: the game's save, backed up to the owner's Accretion account and restored from it (any device).
+// A mod links once: Link asks the store's `saves` function for a one-time code, the owner approves it signed in at
+// getaccretion.app/#/link (or in the Accretion app), and the menu gets a token for this game only (no password in
+// the game). The token lives in Library/Accretion/cloud.json, which a backup never includes.
+//
+// A backup is a zip (stored, not compressed: the menu needs no library) of the game's saved preferences
+// (prefs.plist, without the menu's own AM__ settings), Documents/ and Library/Application Support/ (Unity's
+// persistentDataPath and friends), with accretion.json saying what it is. A restore keeps a backup of the current
+// save first, stages the chosen one in Library/Accretion/restore/, and closes the game; on the next launch,
+// before the game reads anything, AMCloudApplyRestore puts it in place.
+static NSString *const AMCloudSection = @"Cloud saves";
+static NSString *const AMCloudAPI = @"https://bbcjpinhvlxocjxlyplt.supabase.co/functions/v1/saves?op=";
+static NSString *const AMCloudAutoKey = @"AM__cloudAuto";  // the Display-style setting "Back up when the menu opens"
+static const NSUInteger AMCloudMaxBytes = 50 * 1024 * 1024;
+
+static NSURL *AMCloudDir(void) {
+    NSURL *lib = [NSFileManager.defaultManager URLsForDirectory:NSLibraryDirectory inDomains:NSUserDomainMask].firstObject;
+    NSURL *dir = [lib URLByAppendingPathComponent:@"Accretion" isDirectory:YES];
+    [NSFileManager.defaultManager createDirectoryAtURL:dir withIntermediateDirectories:YES attributes:nil error:nil];
+    return dir;
+}
+
+static NSMutableDictionary *AMCloudState(void) {
+    NSData *data = [NSData dataWithContentsOfURL:[AMCloudDir() URLByAppendingPathComponent:@"cloud.json"]];
+    id json = data ? [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:nil] : nil;
+    return [json isKindOfClass:NSMutableDictionary.class] ? json : [NSMutableDictionary new];
+}
+
+static void AMCloudSave(NSDictionary *state) {
+    NSData *data = [NSJSONSerialization dataWithJSONObject:state options:0 error:nil];
+    [data writeToURL:[AMCloudDir() URLByAppendingPathComponent:@"cloud.json"] options:NSDataWritingAtomic error:nil];
+}
+
+static BOOL AMCloudLinked(void) { return [AMCloudState()[@"token"] length] > 0; }
+
+// The game's id without a re-signing team suffix (io.x.game.ABCDE12345 -> io.x.game), so every device agrees.
+static NSString *AMCloudBundle(void) {
+    NSString *b = NSBundle.mainBundle.bundleIdentifier ?: @"";
+    NSRange r = [b rangeOfString:@"\\.[A-Z0-9]{10}$" options:NSRegularExpressionSearch];
+    return r.location != NSNotFound ? [b substringToIndex:r.location] : b;
+}
+
+static NSString *AMCloudGame(void) {
+    NSDictionary *info = NSBundle.mainBundle.infoDictionary;
+    return info[@"CFBundleDisplayName"] ?: info[@"CFBundleName"] ?: AMCloudBundle();
+}
+
+static NSString *AMCloudDevice(void) { return UIDevice.currentDevice.name ?: UIDevice.currentDevice.model; }
+
+// "10.1-mod1.0.26" -> game 10.1, mod 1.0.26
+static void AMCloudVersions(NSString **game, NSString **mod) {
+    NSString *v = NSBundle.mainBundle.infoDictionary[@"CFBundleShortVersionString"] ?: @"";
+    NSRange r = [v rangeOfString:@"-mod"];
+    *game = r.location != NSNotFound ? [v substringToIndex:r.location] : v;
+    *mod = r.location != NSNotFound ? [v substringFromIndex:NSMaxRange(r)] : @"";
+}
+
+static NSString *AMCloudSize(long long bytes) {
+    return [NSByteCountFormatter stringFromByteCount:bytes countStyle:NSByteCountFormatterCountStyleFile];
+}
+
+// One call to the saves function: JSON in and out, on the main queue. err is a plain sentence.
+static void AMCloudCall(NSString *op, NSDictionary *body, void (^done)(NSDictionary *json, NSString *err)) {
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:[AMCloudAPI stringByAppendingString:op]]];
+    req.HTTPMethod = @"POST";
+    req.timeoutInterval = 30;
+    [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+    NSString *token = AMCloudState()[@"token"];
+    if (token.length) [req setValue:token forHTTPHeaderField:@"x-save-token"];
+    req.HTTPBody = [NSJSONSerialization dataWithJSONObject:body ?: @{} options:0 error:nil];
+    [[NSURLSession.sharedSession dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+        id json = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+        NSInteger status = [(NSHTTPURLResponse *)response statusCode];
+        NSString *err = error ? @"No connection to Accretion"
+                      : ![json isKindOfClass:NSDictionary.class] ? @"Accretion did not answer as expected"
+                      : json[@"error"] ? [json[@"error"] description]
+                      : status >= 400 ? [NSString stringWithFormat:@"Accretion answered %ld", (long)status] : nil;
+        if (status == 401) {  // unlinked from the site: forget the token here too
+            NSMutableDictionary *state = AMCloudState();
+            [state removeObjectForKey:@"token"];
+            AMCloudSave(state);
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{ done(err ? nil : json, err); });
+    }] resume];
+}
+
+static void AMCloudTransfer(NSString *method, NSString *url, NSData *body, void (^done)(NSData *data, NSString *err)) {
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];
+    req.HTTPMethod = method;
+    req.timeoutInterval = 120;
+    if (body) [req setValue:@"application/zip" forHTTPHeaderField:@"Content-Type"];
+    void (^finish)(NSData *, NSURLResponse *, NSError *) = ^(NSData *data, NSURLResponse *response, NSError *error) {
+        NSInteger status = [(NSHTTPURLResponse *)response statusCode];
+        NSString *err = error ? @"The transfer stopped: check the connection" : status >= 300 ? [NSString stringWithFormat:@"Storage answered %ld", (long)status] : nil;
+        dispatch_async(dispatch_get_main_queue(), ^{ done(err ? nil : data, err); });
+    };
+    if (body) [[NSURLSession.sharedSession uploadTaskWithRequest:req fromData:body completionHandler:finish] resume];
+    else [[NSURLSession.sharedSession dataTaskWithRequest:req completionHandler:finish] resume];
+}
+
+#pragma mark Zip (stored entries only)
+
+static uint32_t AMCrc32(const uint8_t *bytes, NSUInteger length) {
+    static uint32_t table[256];
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        for (uint32_t i = 0; i < 256; i++) {
+            uint32_t c = i;
+            for (int k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320u ^ (c >> 1) : c >> 1;
+            table[i] = c;
+        }
+    });
+    uint32_t c = 0xFFFFFFFFu;
+    for (NSUInteger i = 0; i < length; i++) c = table[(c ^ bytes[i]) & 0xFF] ^ (c >> 8);
+    return c ^ 0xFFFFFFFFu;
+}
+
+static void AMPut16(NSMutableData *d, uint16_t v) { uint8_t b[2] = {v & 0xFF, v >> 8}; [d appendBytes:b length:2]; }
+static void AMPut32(NSMutableData *d, uint32_t v) { uint8_t b[4] = {v & 0xFF, (v >> 8) & 0xFF, (v >> 16) & 0xFF, v >> 24}; [d appendBytes:b length:4]; }
+static uint16_t AMGet16(const uint8_t *p) { return p[0] | p[1] << 8; }
+static uint32_t AMGet32(const uint8_t *p) { return p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24; }
+
+// A zip of {path: data}, every entry stored (method 0), UTF-8 names.
+static NSData *AMZip(NSDictionary<NSString *, NSData *> *files) {
+    NSMutableData *out = [NSMutableData new], *central = [NSMutableData new];
+    for (NSString *name in [files.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
+        NSData *data = files[name], *n = [name dataUsingEncoding:NSUTF8StringEncoding];
+        uint32_t crc = AMCrc32(data.bytes, data.length), offset = (uint32_t)out.length;
+        AMPut32(out, 0x04034b50); AMPut16(out, 20); AMPut16(out, 0x0800); AMPut16(out, 0); AMPut16(out, 0); AMPut16(out, 0);
+        AMPut32(out, crc); AMPut32(out, (uint32_t)data.length); AMPut32(out, (uint32_t)data.length);
+        AMPut16(out, (uint16_t)n.length); AMPut16(out, 0);
+        [out appendData:n]; [out appendData:data];
+        AMPut32(central, 0x02014b50); AMPut16(central, 20); AMPut16(central, 20); AMPut16(central, 0x0800); AMPut16(central, 0);
+        AMPut16(central, 0); AMPut16(central, 0); AMPut32(central, crc); AMPut32(central, (uint32_t)data.length);
+        AMPut32(central, (uint32_t)data.length); AMPut16(central, (uint16_t)n.length); AMPut16(central, 0); AMPut16(central, 0);
+        AMPut16(central, 0); AMPut16(central, 0); AMPut32(central, 0); AMPut32(central, offset);
+        [central appendData:n];
+    }
+    uint32_t start = (uint32_t)out.length;
+    [out appendData:central];
+    AMPut32(out, 0x06054b50); AMPut16(out, 0); AMPut16(out, 0); AMPut16(out, (uint16_t)files.count); AMPut16(out, (uint16_t)files.count);
+    AMPut32(out, (uint32_t)central.length); AMPut32(out, start); AMPut16(out, 0);
+    return out;
+}
+
+// {path: data} from a zip made by AMZip (stored entries; anything else is refused). nil when it is not one.
+static NSDictionary<NSString *, NSData *> *AMUnzip(NSData *zip) {
+    const uint8_t *p = zip.bytes;
+    NSUInteger len = zip.length, at = 0;
+    NSMutableDictionary *files = [NSMutableDictionary new];
+    while (at + 30 <= len && AMGet32(p + at) == 0x04034b50) {
+        uint16_t method = AMGet16(p + at + 8), nameLen = AMGet16(p + at + 26), extra = AMGet16(p + at + 28);
+        uint32_t crc = AMGet32(p + at + 14), size = AMGet32(p + at + 18);
+        NSUInteger start = at + 30 + nameLen + extra;
+        if (method != 0 || start + size > len) return nil;
+        NSString *name = [[NSString alloc] initWithBytes:p + at + 30 length:nameLen encoding:NSUTF8StringEncoding];
+        NSData *data = [zip subdataWithRange:NSMakeRange(start, size)];
+        if (!name || AMCrc32(data.bytes, data.length) != crc) return nil;
+        files[name] = data;
+        at = start + size;
+    }
+    return files.count ? files : nil;
+}
+
+#pragma mark Backup and restore
+
+static NSURL *AMCloudContainer(void) { return [NSURL fileURLWithPath:NSHomeDirectory() isDirectory:YES]; }
+
+// Every file under these container folders, by its path from the container ("Documents/save.dat").
+static void AMCloudCollect(NSString *folder, NSMutableDictionary *files, NSUInteger *total) {
+    NSURL *root = [AMCloudContainer() URLByAppendingPathComponent:folder isDirectory:YES];
+    NSDirectoryEnumerator *walk = [NSFileManager.defaultManager enumeratorAtURL:root includingPropertiesForKeys:@[NSURLIsRegularFileKey]
+                                                                       options:0 errorHandler:nil];
+    NSString *base = AMCloudContainer().path;
+    for (NSURL *url in walk) {
+        NSNumber *regular = nil;
+        [url getResourceValue:&regular forKey:NSURLIsRegularFileKey error:nil];
+        if (!regular.boolValue) continue;
+        NSString *rel = [url.path substringFromIndex:base.length + 1];
+        NSData *data = [NSData dataWithContentsOfURL:url options:NSDataReadingMappedIfSafe error:nil];
+        if (!data || *total + data.length > AMCloudMaxBytes) continue;
+        *total += data.length;
+        files[rel] = data;
+    }
+}
+
+// The save as a zip, or nil with why.
+static NSData *AMCloudPack(NSString **why) {
+    NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
+    [d synchronize];
+    NSMutableDictionary *prefs = [[d persistentDomainForName:NSBundle.mainBundle.bundleIdentifier] mutableCopy] ?: [NSMutableDictionary new];
+    for (NSString *key in prefs.allKeys) if ([key hasPrefix:@"AM__"]) [prefs removeObjectForKey:key];  // the menu's own settings
+    NSMutableDictionary *files = [NSMutableDictionary new];
+    NSUInteger total = 0;
+    NSData *plist = [NSPropertyListSerialization dataWithPropertyList:prefs format:NSPropertyListBinaryFormat_v1_0 options:0 error:nil];
+    if (plist) { files[@"prefs.plist"] = plist; total += plist.length; }
+    AMCloudCollect(@"Documents", files, &total);
+    AMCloudCollect(@"Library/Application Support", files, &total);
+    if (files.count <= 1 && prefs.count == 0) { if (why) *why = @"There is no save yet: play a little first"; return nil; }
+    NSString *game, *mod;
+    AMCloudVersions(&game, &mod);
+    NSDictionary *about = @{@"game": AMCloudGame(), @"bundle": AMCloudBundle(), @"game_version": game, @"mod_version": mod,
+                            @"device": AMCloudDevice(), @"created": @((long long)NSDate.date.timeIntervalSince1970), @"format": @1};
+    files[@"accretion.json"] = [NSJSONSerialization dataWithJSONObject:about options:NSJSONWritingPrettyPrinted error:nil];
+    return AMZip(files);
+}
+
+// Back up now: pack, ask for a place, upload, confirm. text: "Backed up · 2.3 MB" or why not.
+static void AMCloudBackup(void (^done)(BOOL ok, NSString *text)) {
+    NSString *why = nil;
+    NSData *zip = AMCloudPack(&why);
+    if (!zip) { done(NO, why); return; }
+    NSString *game, *mod;
+    AMCloudVersions(&game, &mod);
+    AMCloudCall(@"backup-start", @{@"size": @(zip.length), @"mod_version": mod, @"game_version": game}, ^(NSDictionary *json, NSString *err) {
+        if (err) { done(NO, err); return; }
+        AMCloudTransfer(@"PUT", json[@"upload_url"], zip, ^(NSData *data, NSString *err2) {
+            if (err2) { done(NO, err2); return; }
+            AMCloudCall(@"backup-finish", @{@"id": json[@"id"]}, ^(NSDictionary *fin, NSString *err3) {
+                if (err3) { done(NO, err3); return; }
+                NSMutableDictionary *state = AMCloudState();
+                state[@"last_backup"] = @((long long)NSDate.date.timeIntervalSince1970);
+                AMCloudSave(state);
+                done(YES, [@"Backed up · " stringByAppendingString:AMCloudSize(zip.length)]);
+            });
+        });
+    });
+}
+
+// Stage a downloaded backup for the next launch. NO with why when the file is not a save of this game.
+static BOOL AMCloudStage(NSData *zip, NSString **why) {
+    NSDictionary *files = AMUnzip(zip);
+    NSDictionary *about = files[@"accretion.json"] ? [NSJSONSerialization JSONObjectWithData:files[@"accretion.json"] options:0 error:nil] : nil;
+    if (!files || ![about isKindOfClass:NSDictionary.class]) { *why = @"That backup could not be read"; return NO; }
+    if (![about[@"bundle"] isEqual:AMCloudBundle()]) { *why = @"That backup is from another game"; return NO; }
+    NSURL *stage = [AMCloudDir() URLByAppendingPathComponent:@"restore" isDirectory:YES];
+    [NSFileManager.defaultManager removeItemAtURL:stage error:nil];
+    for (NSString *name in files) {
+        if ([name containsString:@".."] || [name hasPrefix:@"/"]) continue;  // stay inside the stage
+        NSURL *to = [stage URLByAppendingPathComponent:name];
+        [NSFileManager.defaultManager createDirectoryAtURL:to.URLByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:nil];
+        if (![files[name] writeToURL:to options:NSDataWritingAtomic error:nil]) { *why = @"There is no room on the phone to restore it"; return NO; }
+    }
+    return YES;
+}
+
+// At launch, before the game reads its save: a staged restore goes in place (prefs, Documents, Application Support),
+// keeping the menu's own settings, then the stage is removed.
+__attribute__((constructor)) static void AMCloudApplyRestore(void) {
+    @autoreleasepool {
+        NSFileManager *fm = NSFileManager.defaultManager;
+        NSURL *lib = [fm URLsForDirectory:NSLibraryDirectory inDomains:NSUserDomainMask].firstObject;
+        NSURL *stage = [lib URLByAppendingPathComponent:@"Accretion/restore" isDirectory:YES];
+        if (![fm fileExistsAtPath:[stage URLByAppendingPathComponent:@"accretion.json"].path]) return;
+        NSURL *home = AMCloudContainer();
+        for (NSString *folder in @[@"Documents", @"Library/Application Support"]) {
+            NSURL *from = [stage URLByAppendingPathComponent:folder], *to = [home URLByAppendingPathComponent:folder];
+            if (![fm fileExistsAtPath:from.path]) continue;
+            for (NSURL *old in [fm contentsOfDirectoryAtURL:to includingPropertiesForKeys:nil options:0 error:nil]) [fm removeItemAtURL:old error:nil];
+            [fm createDirectoryAtURL:to withIntermediateDirectories:YES attributes:nil error:nil];
+            for (NSURL *item in [fm contentsOfDirectoryAtURL:from includingPropertiesForKeys:nil options:0 error:nil])
+                [fm moveItemAtURL:item toURL:[to URLByAppendingPathComponent:item.lastPathComponent] error:nil];
+        }
+        NSData *plist = [NSData dataWithContentsOfURL:[stage URLByAppendingPathComponent:@"prefs.plist"]];
+        NSDictionary *prefs = plist ? [NSPropertyListSerialization propertyListWithData:plist options:0 format:nil error:nil] : nil;
+        if ([prefs isKindOfClass:NSDictionary.class]) {
+            NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
+            NSString *domain = NSBundle.mainBundle.bundleIdentifier;
+            NSMutableDictionary *merged = [prefs mutableCopy];
+            [[d persistentDomainForName:domain] enumerateKeysAndObjectsUsingBlock:^(NSString *key, id value, BOOL *stop) {
+                if ([key hasPrefix:@"AM__"]) merged[key] = value;  // the menu's own settings stay this device's
+            }];
+            [d setPersistentDomain:merged forName:domain];
+            [d synchronize];
+        }
+        [fm removeItemAtURL:stage error:nil];
+        os_log(OS_LOG_DEFAULT, "[AccretionMods] cloud save restored");
+    }
+}
+
+// Restore: keep a backup of the current save first, then download, stage, and close the game.
+static void AMCloudRestore(NSString *backupId, void (^done)(BOOL ok, NSString *text)) {
+    AMCloudBackup(^(BOOL keptOk, NSString *keptText) {
+        // with no save yet there is nothing to keep; any other failure stops the restore (the current save stays)
+        if (!keptOk && ![keptText hasPrefix:@"There is no save yet"]) { done(NO, [@"Your current save could not be kept: " stringByAppendingString:keptText]); return; }
+        AMCloudCall(@"restore", @{@"id": backupId}, ^(NSDictionary *json, NSString *err) {
+            if (err) { done(NO, err); return; }
+            AMCloudTransfer(@"GET", json[@"download_url"], nil, ^(NSData *zip, NSString *err2) {
+                if (err2) { done(NO, err2); return; }
+                NSString *why = nil;
+                if (!AMCloudStage(zip, &why)) { done(NO, why); return; }
+                done(YES, @"Restored: the game closes; open it again");
+            });
+        });
+    });
+}
+
+static NSString *AMCloudWhen(NSString *iso) {
+    NSISO8601DateFormatter *in = [NSISO8601DateFormatter new];
+    in.formatOptions = NSISO8601DateFormatWithInternetDateTime | NSISO8601DateFormatWithFractionalSeconds;
+    NSDate *date = [in dateFromString:iso];
+    if (!date) { in.formatOptions = NSISO8601DateFormatWithInternetDateTime; date = [in dateFromString:iso]; }
+    if (!date) return iso ?: @"";
+    NSDateFormatter *out = [NSDateFormatter new];
+    out.doesRelativeDateFormatting = YES;
+    out.dateStyle = NSDateFormatterMediumStyle;
+    out.timeStyle = NSDateFormatterShortStyle;
+    return [out stringFromDate:date];
+}
+
 #pragma mark - Panel
 
 @interface AMPanel : UITableViewController <UITextFieldDelegate>
 @property (nonatomic, strong) AMCardEdges *edges;
+@property (nonatomic, strong) NSArray<AMItem *> *cheats;  // the mod's own items, as registered
+@property (nonatomic, strong) AMLoginBar *login;
+@property (nonatomic, strong, nullable) UIViewController *browser;  // the sign-in page while it is open
+@property (nonatomic, strong, nullable) NSTimer *linkTimer;
 @property (nonatomic, strong) NSArray<AMItem *> *items;
 @property (nonatomic, strong) NSArray<NSString *> *allTitles;            // categories in the order first added
 @property (nonatomic, strong) NSArray<NSArray<NSNumber *> *> *allRows;   // indexes into items
@@ -1180,20 +1599,30 @@ static NSString *AMGameName(NSString *fallback) {
 
 - (instancetype)initWithItems:(NSArray<AMItem *> *)items title:(NSString *)title {
     if ((self = [super initWithStyle:UITableViewStyleGrouped])) {
-        NSUInteger cheats = items.count;
-        NSMutableArray<AMItem *> *all = [items mutableCopy];
-        for (NSArray<NSString *> *d in @[@[@"_pulse", @"Pulsing dot"], @[@"_toggles", @"Toggles"]]) {
-            AMItem *item = [AMItem new];  // AMKey(@"_pulse") is AMPulseKey
-            item.key = d[0];
-            item.title = d[1];
-            item.section = AMDisplaySection;
-            item.display = YES;
-            [all addObject:item];
-        }
-        items = all;
-        _items = items;
+        _cheats = items;
         _query = @"";
         self.title = title;
+        [self regroup];
+    }
+    return self;
+}
+
+// The menu's own rows after the mod's: Cloud saves (once linked), then Display.
+- (void)regroup {
+    NSUInteger cheats = self.cheats.count;
+    NSMutableArray<AMItem *> *all = [self.cheats mutableCopy];
+    [all addObjectsFromArray:[self cloudItems]];
+    for (NSArray<NSString *> *d in @[@[@"_pulse", @"Pulsing dot"], @[@"_toggles", @"Toggles"]]) {
+        AMItem *item = [AMItem new];  // AMKey(@"_pulse") is AMPulseKey
+        item.key = d[0];
+        item.title = d[1];
+        item.section = AMDisplaySection;
+        item.display = YES;
+        [all addObject:item];
+    }
+    NSArray<AMItem *> *items = all;
+    {
+        _items = items;
         NSMutableArray<NSString *> *titles = [NSMutableArray new];
         NSMutableDictionary<NSString *, NSMutableArray<NSNumber *> *> *rows = [NSMutableDictionary new];
         [items enumerateObjectsUsingBlock:^(AMItem *item, NSUInteger i, BOOL *stop) {
@@ -1208,11 +1637,164 @@ static NSString *AMGameName(NSString *fallback) {
         _folds = cheats > 30 && titles.count > 2;
         [self filter];
     }
-    return self;
+}
+
+- (NSArray<AMItem *> *)cloudItems {
+    if (!AMCloudLinked()) return @[];  // the Log in capsule under the title stands in for them
+    __weak typeof(self) weak = self;
+    AMItem *backup = [AMItem new];
+    backup.title = @"Back up now";
+    backup.onAction = ^(void (^done)(BOOL, NSString *)) { AMCloudBackup(done); };
+    AMItem *restore = [AMItem new];
+    restore.title = @"Restore a backup";
+    restore.label = @"›";
+    restore.onAction = ^(void (^done)(BOOL, NSString *)) { [weak showBackups:done]; };
+    AMItem *autoBackup = [AMItem new];
+    autoBackup.key = @"_cloudAuto";  // AMKey(@"_cloudAuto") is AMCloudAutoKey
+    autoBackup.title = @"Back up when the menu opens";
+    autoBackup.display = YES;
+    AMItem *unlink = [AMItem new];
+    unlink.title = @"Unlink this device";
+    unlink.quiet = YES;
+    unlink.onAction = ^(void (^done)(BOOL, NSString *)) { [weak unlink:done]; };
+    for (AMItem *item in @[backup, restore, autoBackup, unlink]) item.section = AMCloudSection;
+    return @[backup, restore, autoBackup, unlink];
+}
+
+// Cloud saves changed (linked, unlinked): rows and the capsule follow.
+- (void)cloudChanged {
+    [self regroup];
+    [self.login show:AMCloudState()[@"account"] busy:NO];
+    [self.tableView reloadData];
+}
+
+// Log in: a one-time code from Accretion, its page opened inside the game (the code already filled in); once the
+// owner signs in and links there, the menu notices, closes the page and shows Cloud saves.
+- (void)logIn {
+    [self.login show:nil busy:YES];
+    AMCloudCall(@"link-start", @{@"bundle": AMCloudBundle(), @"game": AMCloudGame(), @"device": AMCloudDevice()}, ^(NSDictionary *json, NSString *err) {
+        [self.login show:nil busy:NO];
+        if (err) { [self say:err title:@"Could not start the sign-in"]; return; }
+        NSURL *url = [NSURL URLWithString:json[@"approve_url"]];
+        [self openBrowser:url];
+        [self pollLink:json[@"code"] until:[NSDate dateWithTimeIntervalSinceNow:600]];
+    });
+}
+
+- (void)openBrowser:(NSURL *)url {
+    // SafariServices is loaded when needed, so no mod's Makefile has to list it
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ dlopen("/System/Library/Frameworks/SafariServices.framework/SafariServices", RTLD_LAZY); });
+    Class safari = NSClassFromString(@"SFSafariViewController");
+    if (!safari) { [UIApplication.sharedApplication openURL:url options:@{} completionHandler:nil]; return; }
+    UIViewController *page = [(id)[safari alloc] initWithURL:url];
+    page.modalPresentationStyle = UIModalPresentationPageSheet;
+    self.browser = page;
+    [self presentViewController:page animated:YES completion:nil];
+}
+
+- (void)pollLink:(NSString *)code until:(NSDate *)end {
+    [self.linkTimer invalidate];
+    __weak typeof(self) weak = self;
+    self.linkTimer = [NSTimer scheduledTimerWithTimeInterval:2 repeats:YES block:^(NSTimer *timer) {
+        typeof(self) me = weak;
+        if (!me || NSDate.date.timeIntervalSince1970 > end.timeIntervalSince1970) { [timer invalidate]; return; }
+        AMCloudCall(@"link-poll", @{@"code": code}, ^(NSDictionary *json, NSString *err) {
+            if (err || [json[@"status"] isEqual:@"waiting"]) return;
+            [timer invalidate];
+            if (![json[@"status"] isEqual:@"linked"]) { [me say:@"The code expired: tap Log in again" title:@"Not linked"]; return; }
+            NSMutableDictionary *state = AMCloudState();
+            state[@"token"] = json[@"token"];
+            state[@"account"] = json[@"account"];
+            AMCloudSave(state);
+            [[[UINotificationFeedbackGenerator alloc] init] notificationOccurred:UINotificationFeedbackTypeSuccess];
+            if (me.browser.presentingViewController) [me.browser dismissViewControllerAnimated:YES completion:nil];
+            me.browser = nil;
+            [me cloudChanged];
+        });
+    }];
+}
+
+- (void)say:(NSString *)message title:(NSString *)title {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:title message:message preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleCancel handler:nil]];
+    [(self.presentedViewController ?: self) presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)unlink:(void (^)(BOOL, NSString *))done {
+    UIAlertController *ask = [UIAlertController alertControllerWithTitle:@"Unlink this device?"
+        message:@"Your backups stay in your Accretion account. Log in again to use them." preferredStyle:UIAlertControllerStyleAlert];
+    [ask addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction *a) { done(YES, nil); }]];
+    [ask addAction:[UIAlertAction actionWithTitle:@"Unlink" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *a) {
+        AMCloudCall(@"unlink", @{}, ^(NSDictionary *json, NSString *err) {
+            NSMutableDictionary *state = AMCloudState();  // forgotten here even when Accretion could not be reached
+            [state removeObjectForKey:@"token"];
+            [state removeObjectForKey:@"account"];
+            AMCloudSave(state);
+            done(YES, nil);
+            [self cloudChanged];
+        });
+    }]];
+    [self presentViewController:ask animated:YES completion:nil];
+}
+
+// Restore a backup: the account's backups of this game, this device's first, as a list page; a pick asks first.
+- (void)showBackups:(void (^)(BOOL, NSString *))done {
+    AMCloudCall(@"list", @{}, ^(NSDictionary *json, NSString *err) {
+        if (err) { done(NO, err); return; }
+        NSArray *backups = json[@"backups"];
+        if (![backups isKindOfClass:NSArray.class] || !backups.count) { done(NO, @"No backups yet: Back up now first"); return; }
+        done(YES, nil);
+        NSMutableArray *entries = [NSMutableArray new], *ids = [NSMutableArray new];
+        for (NSNumber *mine in @[@YES, @NO]) {
+            for (NSDictionary *b in backups) {
+                if ([b[@"this_device"] boolValue] != mine.boolValue) continue;
+                NSString *detail = [NSString stringWithFormat:@"%@mod %@ · %@", mine.boolValue ? @"" : [NSString stringWithFormat:@"%@ · ", b[@"device"]],
+                                    b[@"mod_version"] ?: @"?", AMCloudSize([b[@"size"] longLongValue])];
+                [entries addObject:@{@"title": AMCloudWhen(b[@"created_at"]), @"detail": detail,
+                                     @"group": mine.boolValue ? @"This device" : @"Other devices"}];
+                [ids addObject:b[@"id"]];
+            }
+        }
+        AMItem *list = [AMItem new];
+        list.title = @"Restore a backup";
+        list.isList = YES;
+        list.entries = ^{ return (NSArray *)entries; };
+        __weak typeof(self) weak = self;
+        list.onPick = ^(NSInteger index) {
+            AMMenuPickResult(true, "Asking first");
+            [weak confirmRestore:ids[index] when:entries[index][@"title"]];
+        };
+        [self.navigationController pushViewController:[[AMListPanel alloc] initWithItem:list] animated:YES];
+    });
+}
+
+- (void)confirmRestore:(NSString *)backupId when:(NSString *)when {
+    UIViewController *top = self.navigationController.topViewController ?: self;
+    UIAlertController *ask = [UIAlertController alertControllerWithTitle:[@"Restore the backup from " stringByAppendingString:when]
+        message:@"Your current save is backed up first. Then the game closes: open it again to play from the backup."
+        preferredStyle:UIAlertControllerStyleAlert];
+    [ask addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [ask addAction:[UIAlertAction actionWithTitle:@"Restore" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        UIAlertController *wait = [UIAlertController alertControllerWithTitle:@"Restoring…" message:nil preferredStyle:UIAlertControllerStyleAlert];
+        [top presentViewController:wait animated:YES completion:nil];
+        AMCloudRestore(backupId, ^(BOOL ok, NSString *text) {
+            [wait dismissViewControllerAnimated:YES completion:^{
+                UIAlertController *end = [UIAlertController alertControllerWithTitle:ok ? @"Restored" : @"Not restored"
+                    message:ok ? @"The game closes now. Open it again to play from the backup." : text preferredStyle:UIAlertControllerStyleAlert];
+                [end addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:^(UIAlertAction *b) {
+                    if (ok) exit(0);  // the staged save goes in place at the next launch (AMCloudApplyRestore)
+                }]];
+                [top presentViewController:end animated:YES completion:nil];
+            }];
+        });
+    }]];
+    [top presentViewController:ask animated:YES completion:nil];
 }
 
 - (BOOL)isOpen:(NSString *)section {
-    if (!self.folds || self.query.length || !section.length || [section isEqualToString:AMDisplaySection]) return YES;
+    if (!self.folds || self.query.length || !section.length || [section isEqualToString:AMDisplaySection] ||
+        [section isEqualToString:AMCloudSection]) return YES;
     return ![[NSUserDefaults.standardUserDefaults arrayForKey:AMFoldedSections] containsObject:section];
 }
 
@@ -1293,14 +1875,25 @@ static NSString *AMGameName(NSString *fallback) {
     titleView.alignment = UIStackViewAlignmentCenter;
     self.navigationItem.titleView = titleView;
     [self refreshAllOff];
-    if (self.items.count - 2 > 12) {
-        self.search = AMSearchField([NSString stringWithFormat:@"Search %lu switches", (unsigned long)(self.items.count - 2)]);
+    if (self.cheats.count > 12) {
+        self.search = AMSearchField([NSString stringWithFormat:@"Search %lu switches", (unsigned long)self.cheats.count]);
         self.search.delegate = self;
         [self.search addTarget:self action:@selector(searchChanged:) forControlEvents:UIControlEventEditingChanged];
-        table.tableHeaderView = [[AMSearchHeader alloc] initWithField:self.search];
-    } else {
-        table.tableHeaderView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 1, 8)];
     }
+    self.login = [AMLoginBar new];
+    [self.login.button addTarget:self action:@selector(logIn) forControlEvents:UIControlEventTouchUpInside];
+    [self.login show:AMCloudState()[@"account"] busy:NO];
+    UIView *head = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 320, self.login.bounds.size.height + (self.search ? 50 : 0))];
+    self.login.frame = CGRectMake(0, 0, 320, self.login.bounds.size.height);
+    self.login.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    [head addSubview:self.login];
+    if (self.search) {
+        AMSearchHeader *field = [[AMSearchHeader alloc] initWithField:self.search];
+        field.frame = CGRectMake(0, self.login.bounds.size.height - 6, 320, 50);
+        field.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+        [head addSubview:field];
+    }
+    table.tableHeaderView = head;
     UIView *foot = [[UIView alloc] initWithFrame:CGRectMake(0, 0, UIScreen.mainScreen.bounds.size.width, 112)];
     self.note = [[UILabel alloc] initWithFrame:CGRectInset(foot.bounds, AMSide + 4, 10)];
     self.note.autoresizingMask = UIViewAutoresizingFlexibleWidth;
@@ -1394,7 +1987,8 @@ static NSString *AMGameName(NSString *fallback) {
     BOOL open = [self isOpen:title];
     head.label.attributedText = AMLabel(title, AM_MUTED);
     head.tap.accessibilityIdentifier = title;
-    head.tap.userInteractionEnabled = self.folds && !self.query.length && ![title isEqualToString:AMDisplaySection];
+    head.tap.userInteractionEnabled = self.folds && !self.query.length && ![title isEqualToString:AMDisplaySection] &&
+                                     ![title isEqualToString:AMCloudSection];
     NSUInteger on = 0;
     for (NSNumber *n in self.shownRows[section]) if (AMItemOn(self.items[n.integerValue])) on++;
     NSMutableAttributedString *r = [NSMutableAttributedString new];
@@ -1403,6 +1997,9 @@ static NSString *AMGameName(NSString *fallback) {
         NSString *tail = [NSString stringWithFormat:@"%@%lu  %@", on ? @" · " : @"", (unsigned long)self.shownRows[section].count, open ? @"▾" : @"›"];
         [r appendAttributedString:AMLabel(tail, AM_MUTED)];
     }
+    if ([title isEqualToString:AMCloudSection] && [AMCloudState()[@"account"] length])
+        r = [[NSMutableAttributedString alloc] initWithString:AMCloudState()[@"account"]
+                                                   attributes:@{NSFontAttributeName: AMMono(11, UIFontWeightRegular), NSForegroundColorAttributeName: AM_MUTED}];
     head.right.attributedText = r;
     head.off.hidden = on == 0;
     head.off.accessibilityIdentifier = title;
@@ -1499,6 +2096,14 @@ static NSString *AMGameName(NSString *fallback) {
         row.title.text = item.title;
         row.icon.image = item.symbol ? [UIImage systemImageNamed:item.symbol] : nil;
         cell = row;
+    } else if (item.onAction) {
+        AMActionCell *row = [tableView dequeueReusableCellWithIdentifier:@"action"]
+            ?: [[AMActionCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"action"];
+        row.title.text = item.title;
+        row.title.textColor = item.quiet ? AM_MUTED : AM_FG;
+        row.right.text = item.label;
+        row.right.textColor = AM_MUTED;
+        cell = row;
     } else {
         AMSwitchCell *row = [tableView dequeueReusableCellWithIdentifier:@"switch"]
             ?: [[AMSwitchCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"switch"];
@@ -1592,7 +2197,24 @@ static NSString *AMGameName(NSString *fallback) {
     AMItem *item = self.items[flat];
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
     if (item.isList) [self.navigationController pushViewController:[[AMListPanel alloc] initWithItem:item] animated:YES];
+    else if (item.onAction) [self runAction:item at:indexPath];
     else if (!item.isSlider) [self flip:flat];
+}
+
+// An action row: "…" while it runs, then the outcome on the row with the glow and haptic of a pick.
+- (void)runAction:(AMItem *)item at:(NSIndexPath *)path {
+    AMActionCell *row = (AMActionCell *)[self.tableView cellForRowAtIndexPath:path];
+    if ([row isKindOfClass:AMActionCell.class]) { row.right.text = @"…"; row.right.textColor = AM_MUTED; }
+    item.onAction(^(BOOL ok, NSString *text) {
+        AMActionCell *now = (AMActionCell *)[self.tableView cellForRowAtIndexPath:path];
+        if (![now isKindOfClass:AMActionCell.class] || ![now.title.text isEqual:item.title]) return;
+        now.right.text = text.length ? [NSString stringWithFormat:@"%@ %@", ok ? @"✓" : @"✕", text] : item.label;
+        now.right.textColor = ok ? AM_ACCENT2 : AM_BAD;
+        if (text.length) {
+            [[[UINotificationFeedbackGenerator alloc] init] notificationOccurred:ok ? UINotificationFeedbackTypeSuccess : UINotificationFeedbackTypeError];
+            if ([now.backgroundView isKindOfClass:AMPanelPiece.class]) [(AMPanelPiece *)now.backgroundView flash:ok ? AM_ACCENT2 : AM_BAD];
+        }
+    });
 }
 
 // The "N on" in a category's header follows its switches.
@@ -2290,6 +2912,12 @@ static NSString *const AMButtonSpot = @"AM__buttonSpot";  // where the button wa
     [[[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight] impactOccurred];
     if (self.onOpenChange) self.onOpenChange(YES);
     AMPanel *panel = [[AMPanel alloc] initWithItems:_items title:AMGameName(self.title)];
+    NSNumber *last = AMCloudState()[@"last_backup"];
+    if (AMCloudLinked() && AMDisplayOn(AMCloudAutoKey) && NSDate.date.timeIntervalSince1970 - last.doubleValue > 3600) {
+        AMCloudBackup(^(BOOL ok, NSString *text) {  // at most hourly, in the background
+            os_log(OS_LOG_DEFAULT, "[AccretionMods] cloud auto backup: %{public}@", text);
+        });
+    }
     UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:panel];
     AMStyleNav(nav);
     // the floating button sits above everything (zPosition): hide it while the menu is open so it covers no row
