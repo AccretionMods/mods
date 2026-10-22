@@ -34,6 +34,10 @@ void AMIl2cppStart(void);
 // switches whose hooks need JIT (hooks.json "needs_jit") when this is false.
 BOOL AMIl2cppHasJIT(void);
 
+// The game's own function behind one of our replacements (what the runtime saved in *original), or NULL when
+// pointer is not a registered replacement. AMIl2cppCall uses it so a pin acts on the game, not on our hook.
+void *AMIl2cppOriginalOf(void *pointer);
+
 // Called once on the main queue when AMIl2cppStart is done, with every log line (one per hook, then the
 // counts). Optional; set it before AMIl2cppStart.
 void AMIl2cppSetReportHandler(void (^handler)(NSString *report));
