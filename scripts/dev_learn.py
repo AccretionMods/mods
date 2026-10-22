@@ -13,8 +13,7 @@ and the phone result ("works" or "fails", set by dev.py mark; unknown until then
   member_boost(store, name, ctype)                   the scan: how much a candidate field looks like one that worked
 
 Nothing here reads the game or the phone; it only keeps what the owner already did, so the next game starts
-from the methods that worked in the last ones. The README rules still apply: methods named for purchases or
-online play are never suggested (find_cheats.LEFT_OUT).
+from the methods that worked in the last ones. Method topics do not exclude learned suggestions.
 """
 
 import json
@@ -23,7 +22,6 @@ import re
 import sys
 from datetime import date
 
-from find_cheats import left_out
 from il2cpp_dump import UNITY_MESSAGES
 
 SCORE_USE, SCORE_WORKS, SCORE_FAILS = 1, 4, -5  # a result counts more than being used
@@ -213,7 +211,7 @@ def suggest(store, methods, used=(), limit=30):
             or "<" in m.class_name
         ):
             continue
-        if left_out(m) or m.name in UNITY_MESSAGES or m.name.startswith("."):
+        if m.name in UNITY_MESSAGES or m.name.startswith("."):
             continue  # Unity callbacks and constructors are hooked for a game's own reasons, not as a pattern
         name = m.name.lower()
         kind = kind_of(m.return_type)

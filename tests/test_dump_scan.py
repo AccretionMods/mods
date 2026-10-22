@@ -110,7 +110,10 @@ class Scan(unittest.TestCase):
         _, rows, flagged = self.rows()
         self.assertEqual(flagged["SkillsManager.set_TokenBalance"]["flag"], "sold in the shop")
         self.assertEqual(flagged["AdvertHandler.TestMode"]["flag"], "ads")
-        self.assertNotIn("SkillsManager.set_TokenBalance", rows)
+        self.assertIn("SkillsManager.set_TokenBalance", rows)
+        self.assertIn("AdvertHandler.TestMode", rows)
+        self.assertIn("score", flagged["SkillsManager.set_TokenBalance"])
+        self.assertIn("value", flagged["SkillsManager.set_TokenBalance"])
 
     def test_marks_what_the_mod_has_and_caches(self):
         tweaks = {"tweaks": [{"key": "pts", "pins": [{"object": "SkillsManager.instance", "setter": "set_SkillPoints"}]},

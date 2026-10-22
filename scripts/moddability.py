@@ -90,14 +90,13 @@ def verdict(facts, scan=None):
     level = "good"
     m = facts["markers"]
     if "multiplayer" in m:
-        level = "limited"
-        lines.append(f"Multiplayer code ({', '.join(m['multiplayer'])}): mod single-player parts only, and never "
-                     "anything other players see.")
+        lines.append(f"Multiplayer code ({', '.join(m['multiplayer'])}): informational marker; "
+                     "check which state is local and which is controlled by the server.")
     if "online services" in m:
         lines.append(f"Online services ({', '.join(m['online services'])}): values the server keeps can't be "
                      "changed on the phone, and cloud saves may undo local changes.")
     if "in-app purchases" in m or "ads" in m:
-        lines.append("Sells things or shows ads: those parts are flagged by the scan and never become switches.")
+        lines.append("Purchases or ads detected: scan labels are informational; these candidates remain available.")
     if scan is not None:
         n, f = len(scan["rows"]), len(scan["flagged"])
         strong = sum(1 for r in scan["rows"] if r.get("score", 0) >= 6 and not r["has"])

@@ -3,6 +3,14 @@ Read first when resuming. Project row in `~/PROJECTS.md`. The handbook rules (`.
 this lives in the AccretionMods/mods repo, so nothing personal, no secrets, neutral commits, PRs with auto-merge.
 
 ## What it is
+Topic restrictions removed locally (2026-10-22): prompt builder and scan ranking allow all feature topics,
+including IAP and full-game unlocks. Scan and learned suggestions include shop/ads/accounts/online candidates;
+labels are informational, Add opens the regular pin form, and Games includes online games by default.
+Technical validation, local-only execution, private-file handling and publication approval remain in place.
+Verified: 181 unit tests (11 skipped), Studio API adds a synthetic full-game pin, JavaScript parses and
+UI logic opens labelled pins directly and includes online games despite the old saved default filter.
+No real game, device, or live Claude run tested for this change. Restart Studio to reload Python modules.
+
 A local web UI for the mod dev loop (`scripts/dev.py`, README "Dev loop for personal mods"): one page on the PC
 that lists the mods, searches a game's dump, adds switches (hooks) and no-JIT pins, builds, signs and installs on
 the phone, and streams the device log. Started 2026-10-22 (owner: "make a UI for it and add it as a new project";

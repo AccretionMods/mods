@@ -53,13 +53,13 @@ class Report(unittest.TestCase):
         self.assertIn("in-app purchases", f["markers"])
         level, lines = moddability.verdict(f)
         self.assertEqual(level, "good")
-        self.assertTrue(any("flagged by the scan" in l for l in lines))
+        self.assertTrue(any("informational" in l for l in lines))
         scan = {"rows": [{"score": 2, "has": False}], "flagged": [], "classes": 3}
         self.assertEqual(moddability.verdict(f, scan)[0], "limited")  # few strong candidates
 
-    def test_multiplayer_is_limited_and_other_engines_or_encrypted_unsupported(self):
+    def test_multiplayer_is_informational_and_other_engines_or_encrypted_unsupported(self):
         f = moddability.inspect_ipa(ipa(self.dir / "m.ipa", metadata=b"Photon..PhotonNetwork"))
-        self.assertEqual(moddability.verdict(f)[0], "limited")
+        self.assertEqual(moddability.verdict(f)[0], "good")
         f = moddability.inspect_ipa(ipa(self.dir / "n.ipa", unity=False))
         self.assertEqual((f["engine"], moddability.verdict(f)[0]), ("native or another engine", "not supported"))
         f = moddability.inspect_ipa(ipa(self.dir / "e.ipa", cryptid=1))

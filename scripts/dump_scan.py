@@ -5,8 +5,8 @@ every half second. So the scan looks, in the game's own assembly (Assembly-CShar
 - objects a pin can reach: a class with a static field of its own type (StatHandler.instance, Pet.p), or
   every live object of a MonoBehaviour class (Enemy[]);
 - on them, number and true/false fields (int, float, long, bool) and property setters with a getter;
-then sorts each into an area by its names, scores it, and flags what must not become a switch (what the game
-sells, ads, accounts, online play: the repo's mod rules). Rows are suggestions: the scan reads names and
+then sorts each into an area by its names, scores it, and adds informational topic labels (shop, ads,
+accounts and online play). Every topic remains a candidate. Rows are suggestions: the scan reads names and
 types, never what the code does, so a phone test (and the menu's status dot) decides.
 
 scan(dump) -> {"rows": [...], "flagged": [...], "classes": N}; cached as scan.json next to dump.cs.
@@ -17,7 +17,7 @@ import os
 import re
 from pathlib import Path
 
-VERSION = 6  # bump when the row format or the scoring changes (the cache is rebuilt)
+VERSION = 7  # topic labels no longer exclude candidates; rebuild older caches
 
 IMAGE = re.compile(r"^// Image \d+: (.+?)(?:\.dll)? - (\d+)\s*$")
 NAMESPACE = re.compile(r"^\s*// Namespace: ?(\S*)")
@@ -43,7 +43,7 @@ AREAS = [  # first match wins; member names count more than class names
     ("Exploration", r"\bdays?\b|hour|night|encounter|travel|location|\bmap\b|speed|explor|distance|journey|"
                     r"weather|\btime\b"),
 ]  # matched against words: "SkillPoints" -> "skill points", so "ill" no longer hits "skill"
-# never switches: sold in the game's shop, ads, accounts, online, telemetry (README rules)
+# Informational labels only: no topic excludes a candidate.
 FLAGS = [
     ("sold in the shop", r"caps|token|gem|coin|currency|purchas|iap|shop|price|cost|premium|vip|subscri|"
                          r"max_?bag|bag_?(size|capacity)|fuel|petrol|van(crate|warranty)|fast_?travel|revive|"
@@ -209,7 +209,6 @@ def build(classes, existing=frozenset(), learned=None):
             if reason:
                 row["flag"] = reason
                 flagged.append(row)
-                continue
             score = reach + (2 if kind == "setter" and getter else 1)
             score += 2 if by_member else (1 if area != "Other" else 0)
             if kind == "field" and (name + "Default") in info["fields"]:

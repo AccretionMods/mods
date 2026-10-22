@@ -496,21 +496,6 @@ const App = {
       return this.quick("call", body);
     });
   },
-  // A flagged scan row: the scan judges by names only, so a flag can be wrong (9 Kings' in-run gold reads like a
-  // shop currency). The owner may add it after a warning and a confirmation; the rules stay what they are.
-  flaggedDialog(x, then) {
-    const why = { "sold in the shop": "it may be something the game sells (a purchase, premium currency or an unlock)",
-                  "ads": "it may control the game's ads", "accounts and online": "it may touch accounts, cloud saves or online play" }[x.flag] || x.flag;
-    this.dialog(`Flagged: ${x.flag}`, [
-      { type: "note", text: `${x.object} ${x.member}: ${why}.` },
-      { type: "note", text: "The scan reads names only, so this can be wrong: gold earned in a run, for example, reads like a shop currency. Accretion mods never change what a game sells, its ads, or online play, so add this only when you have checked that it is none of those." },
-      { name: "checked", label: "I checked: it isn't sold, an ad, or online play", type: "check" },
-    ], async v => {
-      if (!v.checked) { this.toast("Tick the check first, or Cancel.", "bad"); return false; }
-      setTimeout(then, 0);
-      return true;
-    }, "Continue");
-  },
   plainSwitchDialog() {
     this.dialog("A switch or slider with no hook", [
       { type: "note", text: "Read it in Tweak.x as am_<key> (BOOL, or float for a slider)." },
@@ -728,19 +713,18 @@ const App = {
       note.textContent = "Scanning the dump…"; table.replaceChildren();
       try {
         const r = await this.api(`/api/mods/${this.mod}/scan?area=${encodeURIComponent(area.value)}&find=${encodeURIComponent(find.value.trim())}${flagged.checked ? "&flagged=1" : ""}`);
-        const rows = r.rows.filter(x => flagged.checked || !hideHas.checked || !x.has);
-        note.textContent = `${r.total} candidates in ${r.classes} game classes, ${r.flagged} flagged (never switches). Showing ${rows.length}.`;
+        const rows = r.rows.filter(x => !hideHas.checked || !x.has);
+        note.textContent = `${r.total} candidates in ${r.classes} game classes, ${r.flagged} with topic labels. Showing ${rows.length}.`;
         const tb = this.el("tbody");
         for (const x of rows) {
-          const tag = x.flag ? this.el("span", { class: "badge bad", text: x.flag }) : x.has ? this.el("span", { class: "badge good", text: "in the mod" }) : this.el("span", { class: "badge accent", style: "white-space:nowrap", text: "score " + x.score });
+          const tag = x.has ? this.el("span", { class: "badge good", text: "in the mod" }) : this.el("span", { class: "badge accent", style: "white-space:nowrap", text: "score " + x.score });
           const pin = () => this.pinDialog({ target: `${x.class}.${x.member}`, object: x.object, value: x.value, when: x.when, title: nice(x.name) });
-          const add = x.has ? null
-            : x.flag ? this.el("button", { class: "small ghost danger", style: "white-space:nowrap", onclick: () => this.flaggedDialog(x, pin) }, "Add anyway…")
-            : this.el("button", { class: "small", style: "white-space:nowrap", onclick: pin }, "Add…");
+          const add = x.has ? null : this.el("button", { class: "small", style: "white-space:nowrap", onclick: pin }, "Add…");
           tb.append(this.el("tr", {},
             this.el("td", { text: x.area }),
-            this.el("td", {}, this.el("span", { class: "mono", text: `${x.object} ${x.member}` }), this.el("br"), this.el("span", { class: "muted small", text: `${x.ctype} ${x.kind}${x.offset ? " at " + x.offset : ""}${x.value && !x.flag ? " · suggested " + x.value + (x.when !== "always" ? " when lower" : "") : ""}` })),
+            this.el("td", {}, this.el("span", { class: "mono", text: `${x.object} ${x.member}` }), this.el("br"), this.el("span", { class: "muted small", text: `${x.ctype} ${x.kind}${x.offset ? " at " + x.offset : ""}${x.value ? " · suggested " + x.value + (x.when !== "always" ? " when " + x.when : "") : ""}` })),
             this.el("td", { style: "min-width:150px" }, this.el("div", { class: "badges", style: "margin:0" }, tag,
+              x.flag ? this.el("span", { class: "badge", text: x.flag }) : null,
               x.learned ? this.el("span", { class: "badge good", title: `${x.learned.works} works, ${x.learned.fails} fails, ${x.learned.reached} reached in other games`, text: `like “${x.learned.title}”` }) : null,
               x.direction === "lower" ? this.el("span", { class: "badge", text: "lower is better" }) : null,
               x.saved ? this.el("span", { class: "badge warn", title: "the game keeps this in its save: switching off restores it", text: "kept in the save" }) : null)),
@@ -751,13 +735,13 @@ const App = {
     };
     const explain = async () => {
       try {
-        const t = await this.api(`/api/mods/${this.mod}/scan?text=1&limit=60&area=${encodeURIComponent(area.value)}&find=${encodeURIComponent(find.value.trim())}`);
+        const t = await this.api(`/api/mods/${this.mod}/scan?text=1&limit=60&area=${encodeURIComponent(area.value)}&find=${encodeURIComponent(find.value.trim())}${flagged.checked ? "&flagged=1" : ""}`);
         const d = this.detail || {};
-        const prompt = `Goal: pick the best new single-player switches for ${d.title || this.mod} from Mod Studio's dump scan, before changing anything.\n` +
+        const prompt = `Goal: pick the best new switches across all feature topics for ${d.title || this.mod} from Mod Studio's dump scan, before changing anything.\n` +
           `Project: Accretion mods. Target: AccretionMods/mods, mods/${this.mod} (${d.title || ""} ${d.version || ""}) for ${d.target || ""} ${d.app_version || ""}. The phone has no JIT: switches are pins (field writes or setter calls every half second).\n` +
           `Candidates (scored by names and types only; not yet in the mod):\n${t.text}\n\n` +
-          `For the 10 to 15 most valuable: what it likely does in play (check the class in the dump with am find / am fields if unsure), a menu title, a section (Survival, Combat, Pet & companion, Items & crafting, Progress, Exploration, Other), the value to pin and why, confidence (high/medium/low), and the exact command on its own line starting with "am pin ${this.mod} ..." (with --object, --value, --when lower when it has a getter, --as <key>, --title "..."). Then list the candidates to skip and why (UI, timers, save counters, anything sold or online).\n` +
-          `Read only: change no files. Limits: single-player only; never purchases, ads, accounts or online play.`;
+          `For the 10 to 15 most valuable: what it likely does in play (check the class in the dump with am find / am fields if unsure), a menu title, a section (Survival, Combat, Pet & companion, Items & crafting, Progress, Exploration, Other), the value to pin and why, confidence (high/medium/low), and the exact command on its own line starting with "am pin ${this.mod} ..." (with --object, --value, --when lower when it has a getter, --as <key>, --title "..."). Explain technical requirements and side effects; skip a candidate only for a concrete technical reason, not its topic.\n` +
+          `Read only: change no files. Include purchases/IAP, full-game unlocks, ads, accounts and online play when relevant; topic labels are informational.`;
         const j = await this.api("/api/claude", { prompt, read_only: true });
         this.showJob(j); this.poll(j.id); this.byId("jobsPanel").scrollIntoView({ behavior: "smooth", block: "nearest" });
         this.toast("Claude is ranking the candidates: its answer streams into Jobs, with an Add button on each command", "ok");
@@ -766,10 +750,10 @@ const App = {
     [area, flagged, hideHas].forEach(i => i.addEventListener("change", load));
     find.addEventListener("keydown", ev => { if (ev.key === "Enter") load(); });
     box.append(
-      this.el("p", { class: "hint", text: "Fields and setters a no-JIT switch (a pin) can reach: on singletons (Class.instance) and on every live object of a class (Class[]), sorted into areas and scored by their names. What the game sells, ads and online code are flagged and never offered. A scan reads names, not behaviour: try a switch on the phone and watch its status dot. Same list in a console: am scan <mod>." }),
+      this.el("p", { class: "hint", text: "Fields and setters a no-JIT switch (a pin) can reach: on singletons (Class.instance) and on every live object of a class (Class[]), sorted into areas and scored by their names. All topics are available, including purchases, full-game unlocks, ads and online code. Topic labels are informational. A scan reads names, not behaviour: try a switch on the phone and watch its status dot. Same list in a console: am scan <mod>." }),
       this.el("div", { class: "row", style: "margin-bottom:8px" }, area, find,
         this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center" }, hideHas, "hide what the mod has"),
-        this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center" }, flagged, "show flagged"),
+        this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center" }, flagged, "only topic-labelled"),
         this.el("button", { class: "small", onclick: load }, "Scan"),
         this.el("button", { class: "small primary", onclick: explain }, "Explain and rank with Claude")),
       note, table);
@@ -909,7 +893,7 @@ const App = {
     const filter = this.el("input", { placeholder: "filter this list, or Enter to search the whole App Store", style: "flex:1;min-width:200px" });
     let likeBundle = "", likeName = "", loads = 0;
     const offline = this.el("input", { type: "checkbox" });
-    list.value = pref("list", "similar"); if (list.value === "like" || list.value === "search") list.value = "similar"; region.value = pref("region", "us"); offline.checked = pref("offline", "1") === "1";
+    list.value = pref("list", "similar"); if (list.value === "like" || list.value === "search") list.value = "similar"; region.value = pref("region", "us"); offline.checked = pref("offlineFilter", "0") === "1";
     const note = this.el("p", { class: "hint" });
     const grid = this.el("div", { class: "games" });
     let rows = [];
@@ -918,7 +902,7 @@ const App = {
       const shown = rows.filter(g => (list.value === "search" || !offline.checked || !g.online) && (!f || [g.name, g.seller, g.bundle, ...g.genres].join(" ").toLowerCase().includes(f)));
       const hidden = rows.filter(g => g.online).length;
       note.textContent = (list.value === "search" ? `${shown.length} App Store results for "${filter.value.trim()}"` : list.value === "like" ? `${shown.length} games like ${likeName}` : `${shown.length} of ${rows.length} games`)
-        + (list.value !== "search" && offline.checked && hidden ? ` · ${hidden} online or multiplayer hidden (no online cheats)` : "")
+        + (list.value !== "search" && offline.checked && hidden ? ` · ${hidden} online or multiplayer hidden by your filter` : "")
         + (f && !shown.length ? " · press Enter to search the whole App Store" : "");
       grid.replaceChildren(...shown.map(g => this.gameCard(g, region.value)));
     };
@@ -936,7 +920,7 @@ const App = {
     this.gamesLike = (bundle, name) => { likeBundle = bundle; likeName = name; list.value = "like"; filter.value = ""; load(); };
     list.addEventListener("change", load); region.addEventListener("change", load);
     filter.addEventListener("input", draw);
-    filter.addEventListener("keydown", ev => { if (ev.key === "Enter" && filter.value.trim().length >= 2) { ev.preventDefault(); list.value = "search"; load(); } }); offline.addEventListener("change", () => { save("offline", offline.checked ? "1" : "0"); draw(); });
+    filter.addEventListener("keydown", ev => { if (ev.key === "Enter" && filter.value.trim().length >= 2) { ev.preventDefault(); list.value = "search"; load(); } }); offline.addEventListener("change", () => { save("offlineFilter", offline.checked ? "1" : "0"); draw(); });
     box.append(
       this.el("div", { class: "row", style: "margin-bottom:10px" }, list, region, filter,
         this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center" }, offline, "single-player only"),

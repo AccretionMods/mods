@@ -131,6 +131,7 @@ class Games(unittest.TestCase):
                 self.assertIn("our mod wander-plus", text)
                 self.assertIn('"min_ios"', text)
                 self.assertIn('"like": [', text)
+                self.assertIn('"bundle": "com.b.mmo"', text)  # online games included without --all
             finally:
                 dev.ROOT, env, games.urllib.request.urlopen = old
                 if env is None:

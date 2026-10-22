@@ -2461,8 +2461,7 @@ def cmd_games(args):
         data = games_list("like", args.region, bundle=rest[0])
     else:
         data = games_list(what, args.region)
-    rows = data["games"] if args.all or what == "search" else [g for g in data["games"] if not g["online"]]
-    rows = rows[: args.limit]
+    rows = data["games"][: args.limit]
     if args.json:
         print(json.dumps(rows, indent=2, ensure_ascii=False))
         return 0
@@ -2476,7 +2475,7 @@ def cmd_games(args):
     if not rows:
         print("nothing found")
     if hidden > 0 and what != "search":
-        print(f"({hidden} more: online/multiplayer or past --limit; --all shows online ones)")
+        print(f"({hidden} more: raise --limit to see them)")
     return 0
 
 
@@ -2817,7 +2816,7 @@ def build_parser():
     s.add_argument("rest", nargs="*", help="search words, or the bundle ID for like / info")
     s.add_argument("--region", default="us")
     s.add_argument("--limit", type=int, default=50)
-    s.add_argument("--all", action="store_true", help="keep online / multiplayer games in the list")
+    s.add_argument("--all", action="store_true", help="compatibility flag; all game topics are included by default")
     s.add_argument("--games", action="store_true", help="search: games only")
     s.add_argument("--json", action="store_true", help="machine-readable output")
     s.set_defaults(fn=cmd_games)

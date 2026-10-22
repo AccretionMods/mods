@@ -47,7 +47,20 @@ class Api(unittest.TestCase):
         )
         dump_dir = root / "am" / "work" / "dump-game-plus-1.0" / "out"
         dump_dir.mkdir(parents=True)
-        (dump_dir / "dump.cs").write_text(DUMP)
+        (dump_dir / "dump.cs").write_text(DUMP + """
+// Namespace:
+public class PurchaseState : MonoBehaviour // TypeDefIndex: 110
+{
+    public static PurchaseState instance; // 0x0
+    public bool FullGameUnlocked; // 0x20
+    public int Gems; // 0x24
+}
+// Namespace:
+public class OnlineState : MonoBehaviour // TypeDefIndex: 111
+{
+    public int Score; // 0x20
+}
+""")
         (root / "am" / "dev").mkdir(parents=True)
         (root / "am" / "dev" / "game-plus.json").write_text(
             json.dumps({"dump_dir": str(dump_dir.parent)})
@@ -112,6 +125,31 @@ class Api(unittest.TestCase):
         status, data = self.get("/api/mods/game-plus/suggest")
         self.assertEqual(status, 200)
         self.assertIn("rows", data)
+
+    def test_scan_includes_all_topics_and_can_add_a_labelled_pin(self):
+        status, data = self.get("/api/mods/game-plus/scan")
+        self.assertEqual(status, 200, data)
+        rows = {f"{r['class']}.{r['member']}": r for r in data["rows"]}
+        for target in ("PurchaseState.FullGameUnlocked", "PurchaseState.Gems", "OnlineState.Score"):
+            self.assertIn(target, rows)
+            self.assertIn("score", rows[target])
+            self.assertIn("value", rows[target])
+        status, filtered = self.get("/api/mods/game-plus/scan?flagged=1")
+        self.assertEqual(status, 200, filtered)
+        self.assertTrue(filtered["rows"])
+        self.assertTrue(all(r.get("flag") for r in filtered["rows"]))
+        status, text = self.get("/api/mods/game-plus/scan?text=1&find=FullGameUnlocked")
+        self.assertEqual(status, 200, text)
+        self.assertIn("FullGameUnlocked", text["text"])
+        status, added = self.post("/api/mods/game-plus/pin", {
+            "target": "PurchaseState.FullGameUnlocked", "value": "true",
+            "key": "fullGame", "title": "Full game",
+        })
+        try:
+            self.assertEqual(status, 200, added)
+            self.assertTrue(added["ok"])
+        finally:
+            self.post("/api/mods/game-plus/remove", {"what": "fullGame"})
 
     def test_quick_commands_and_errors(self):
         status, data = self.post(
