@@ -172,7 +172,8 @@ def main(argv=None):
     say(f"==> 3/5 adding {len(lines)} switches")
     area = {f"{r['class']}.{r['member']}": r["area"] for r in rows}  # the scan's area becomes the menu section
     sections, added = {}, 0
-    for cmd in lines:
+    for i, cmd in enumerate(lines, 1):
+        say(f"--- switch {i}/{len(lines)}")
         try:
             words = shlex.split(cmd)[1:]
         except ValueError as error:

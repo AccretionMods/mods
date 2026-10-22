@@ -81,11 +81,11 @@ main.card { position: relative; }
 /* the mod menu template's card edge (no corner brackets any more): the outline in `line` with a violet-into-cyan
    light and a bright glint running round it every 6 s; boxes 60% see-through so the drifting lights show */
 @property --edge { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
-main.card::after, .panel::after { content: ""; position: absolute; inset: -1px; border-radius: inherit; padding: 1px; pointer-events: none;
+main.card::after { content: ""; position: absolute; inset: -1px; border-radius: inherit; padding: 1px; pointer-events: none;
   background: conic-gradient(from var(--edge), var(--line) 0deg, var(--accent) 40deg, var(--accent-2) 80deg,
     color-mix(in srgb, var(--accent-2) 30%, #fff) 95deg, var(--accent-2) 110deg, var(--line) 160deg, var(--line) 360deg);
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; }
-@media (prefers-reduced-motion: no-preference) { main.card::after, .panel::after { animation: card-edge 6s linear infinite; } }
+@media (prefers-reduced-motion: no-preference) { main.card::after { animation: card-edge 6s linear infinite; } }
 @keyframes card-edge { to { --edge: 360deg; } }
 .mods { display: flex; flex-direction: column; gap: 8px; }
 .mod { padding: 11px 13px; border: 1px solid var(--line); border-radius: 12px; cursor: pointer; background: var(--surface); transition: border-color .15s, transform .15s; }
@@ -157,6 +157,28 @@ dialog h3 { margin: 0 0 6px; font-family: var(--display); font-weight: 600; }
 @keyframes rise { from { opacity: 0; transform: translate(-50%, 8px); } }
 .toast.ok { border-color: var(--good); }
 .toast.bad { border-color: var(--bad); }
+/* auto-build progress */
+.jobprog { margin: 8px 0; }
+.jobprog-t { font: 12px var(--mono); color: var(--muted); margin-bottom: 5px; }
+.jobprog-bar { height: 5px; border-radius: 3px; background: color-mix(in srgb, var(--muted) 18%, transparent); overflow: hidden; }
+.jobprog-bar i { display: block; height: 100%; width: 0; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .6s ease; }
+.jobprog.going .jobprog-bar i { background-image: linear-gradient(90deg, var(--accent), var(--accent-2), var(--accent)); background-size: 200% 100%; animation: flow 2.4s linear infinite; }
+.jobprog.bad .jobprog-bar i { background: var(--bad); }
+/* Store tab */
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+.tile { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; min-width: 0; }
+.tile .l { font: 500 10.5px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.tile .nn { font: 600 20px var(--mono); margin-top: 2px; }
+.tile .d { font: 11px var(--mono); color: var(--muted); }
+.tile .d.good { color: var(--good); } .tile .d.warn { color: var(--warn); }
+.spark { height: 38px; display: flex; align-items: flex-end; gap: 3px; margin-top: 12px; }
+.spark i { flex: 1; background: linear-gradient(var(--accent-2), var(--accent)); border-radius: 2px; opacity: .85; }
+.store-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 0 14px; }
+.store-scroll { overflow-x: auto; }
+.store-t td:last-child { width: auto; }
+.store-t td, .store-t th { white-space: nowrap; }
+.store-t td:first-child { white-space: normal; min-width: 140px; }
+.store-t th.n, .store-t td.n { text-align: right; font-family: var(--mono); }
 .hint { font-size: 13px; color: var(--muted); margin: 6px 0 10px; }
 .sec { margin-bottom: 18px; }
 .sec h3 { margin: 0 0 10px; font-family: var(--mono); font-size: 11px; font-weight: 500; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
@@ -215,6 +237,7 @@ h2, h3 { font-family: var(--display); }
       <button data-tab="phone">Build &amp; Phone</button>
       <button data-tab="files">Files</button>
       <button data-tab="games">Games</button>
+      <button data-tab="store">Store</button>
       <button data-tab="console">Console</button>
     </div>
     <section id="tab-switches"></section>
@@ -224,6 +247,7 @@ h2, h3 { font-family: var(--display); }
     <section id="tab-phone" class="hidden"></section>
     <section id="tab-files" class="hidden"></section>
     <section id="tab-games" class="hidden"></section>
+    <section id="tab-store" class="hidden"></section>
     <section id="tab-console" class="hidden"></section>
     <section class="sec" id="jobsPanel" style="margin-top:18px;border-top:1px solid var(--line);padding-top:12px">
       <div class="row"><span class="label grow">Jobs</span><button class="small ghost" id="clearJobs">Clear</button></div>
@@ -304,12 +328,13 @@ const App = {
   setTab(tab) {
     this.tab = tab;
     document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
-    for (const s of ["switches", "find", "suggest", "scan", "phone", "files", "games", "console"]) this.byId("tab-" + s).classList.toggle("hidden", s !== tab);
+    for (const s of ["switches", "find", "suggest", "scan", "phone", "files", "games", "store", "console"]) this.byId("tab-" + s).classList.toggle("hidden", s !== tab);
     this.render();
   },
   render() {
+    if (this.tab === "store") return this.renderStore();  // needs no mod
     if (!this.detail) return;
-    ({ switches: this.renderSwitches, find: this.renderFind, suggest: this.renderSuggest, scan: this.renderScan, phone: this.renderPhone, files: this.renderFiles, games: this.renderGames, console: this.renderConsole })[this.tab].call(this);
+    ({ switches: this.renderSwitches, find: this.renderFind, suggest: this.renderSuggest, scan: this.renderScan, phone: this.renderPhone, files: this.renderFiles, games: this.renderGames, store: this.renderStore, console: this.renderConsole })[this.tab].call(this);
   },
 
   // ---------------------------------------------------------------- switches
@@ -697,6 +722,7 @@ const App = {
     const st = this.byId("jobst-" + j.id); st.textContent = j.status; st.className = "badge " + (j.status === "done" ? "good" : ["queued", "running"].includes(j.status) ? "accent" : "bad");
     const out = this.byId("jobout-" + j.id);
     if (j.lines && j.lines.length) { out.textContent += (out.textContent ? "\n" : "") + j.lines.join("\n"); out.scrollTop = out.scrollHeight; }
+    if (j.command === "autobuild") this.autobuildProgress(j, det, out.textContent);
     if (["claude", "aider", "codex"].includes(j.command) && j.status !== "running" && !this.byId("jobcmds-" + j.id)) {
       const text = (this.byId("jobout-" + j.id) || {}).textContent || "";
       const cmds = [...new Set(text.split("\n").map(l => l.trim().replace(/^[`$>\s]+|`+$/g, "")).filter(l => /^am (pin|call|add|tweak|remove|gen|mark|build|update|new|dump|check|scan|find|fields) \S+/.test(l)))];
@@ -715,6 +741,36 @@ const App = {
         this.byId("job-" + j.id).append(list);
       }
     }
+  },
+  // the auto-build's step from its own output lines: "==> n/5", "--- batch k/N", "--- switch i/N", "$ am <step>"
+  autobuildProgress(j, det, text) {
+    const steps = ["Scanning the dump", "The model reads the candidates", "Adding the switches", "Generating and building", "Installing and watching the log"];
+    let step = 0, pct = 0, detail = "";
+    for (const line of text.split("\n")) {
+      let m;
+      if ((m = line.match(/^==> (\d)\/5/))) { step = +m[1]; pct = [0, 2, 5, 60, 75, 90][step]; detail = ""; }
+      else if ((m = line.match(/^--- batch (\d+)\/(\d+)/))) { pct = 5 + 55 * (m[1] - 1) / m[2]; detail = `batch ${m[1]} of ${m[2]}`; }
+      else if ((m = line.match(/^--- switch (\d+)\/(\d+)/))) { pct = 60 + 15 * (m[1] - 1) / m[2]; detail = `switch ${m[1]} of ${m[2]}`; }
+      else if (/^\$ am gen /.test(line)) { pct = 76; detail = "generating the menu"; }
+      else if (/^\$ am build /.test(line)) { pct = 78; detail = "building the .ipa"; }
+      else if (/^\$ am sign /.test(line)) { pct = 91; detail = "signing and installing"; }
+      else if (/^\$ am log /.test(line)) { pct = 94; detail = "game opened, reading the log (45 s)"; }
+      else if (/^==> (done|built but)/.test(line)) { pct = 100; detail = ""; }
+    }
+    const running = ["queued", "running", "stopping"].includes(j.status);
+    if (j.status === "done") pct = 100;
+    let box = this.byId("jobprog-" + j.id);
+    if (!box) {
+      box = this.el("div", { class: "jobprog", id: "jobprog-" + j.id }, this.el("div", { class: "jobprog-t" }), this.el("div", { class: "jobprog-bar" }, this.el("i")));
+      det.querySelector("summary").after(box);
+    }
+    const label = !running ? (j.status === "done" ? "Finished" : `Stopped at step ${step || 1} of 5 (${j.status})`)
+      : step ? `Step ${step} of 5 · ${steps[step - 1]}${detail ? " · " + detail : ""}` : "Starting";
+    const secs = Math.max(0, Math.round((j.ended || j.finished || Date.now() / 1000) - j.started));
+    box.firstChild.textContent = `${label} · ${Math.round(pct)}% · ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
+    box.lastChild.firstChild.style.width = Math.round(pct) + "%";
+    box.classList.toggle("bad", !running && j.status !== "done");
+    box.classList.toggle("going", running);
   },
   poll(id, since) {
     since = since || 0;
@@ -1025,6 +1081,158 @@ const App = {
   },
 
   // ---------------------------------------------------------------- games
+  // ---------------------------------------------------------------- store
+  // The store in one place: its numbers (public, and admin through the one-time link), our mods in it, every
+  // endpoint we depend on, keys and sign-ins (secret names and ages, never values) and the publishing workflows.
+  loadStore(parts) {
+    this.store = this.store || {};
+    for (const p of parts || ["link", "public", "admin", "endpoints", "keys", "runs"]) {
+      this.store[p] = { loading: true, ...(this.store[p] && this.store[p].data ? { data: this.store[p].data } : {}) };
+      this.api("/api/store/" + p).then(data => { this.store[p] = { data, at: Date.now() }; })
+        .catch(e => { this.store[p] = { error: e.message }; })
+        .finally(() => { if (this.tab === "store") this.renderStore(); });
+    }
+    if (this.tab === "store") this.renderStore();
+  },
+  async storeLink() {
+    try {
+      const r = await this.api("/api/store/link/start", {});
+      window.open(r.approve_url, "_blank", "noopener");
+      this.store.link = { data: { status: "waiting", code: r.code, approve_url: r.approve_url } };
+      this.renderStore();
+      const until = Date.now() + 10 * 60e3;
+      const poll = async () => {
+        if (Date.now() > until) return;
+        const s = await this.api("/api/store/link/poll", {}).catch(() => null);
+        if (s && s.status === "linked") { this.toast("Mod Studio linked as admin", "ok"); this.loadStore(["link", "admin", "keys"]); return; }
+        if (s && s.status === "expired") { this.toast("The code expired: link again", "bad"); this.loadStore(["link"]); return; }
+        setTimeout(poll, 3000);
+      };
+      setTimeout(poll, 3000);
+    } catch (e) { this.toast(e.message, "bad"); }
+  },
+  renderStore() {
+    const box = this.byId("tab-store");
+    if (!this.store) return this.loadStore();
+    const S = this.store, el = this.el.bind(this);
+    const n = v => v === null || v === undefined || v === "" ? "—" : typeof v === "number" ? v.toLocaleString() : String(v);
+    const ago = iso => { if (!iso) return "—"; const s = (Date.now() - new Date(iso).getTime()) / 1000; return s < 90 ? "just now" : s < 5400 ? Math.round(s / 60) + " min ago" : s < 129600 ? Math.round(s / 3600) + " h ago" : Math.round(s / 86400) + " d ago"; };
+    const mb = b => b ? (b / 1048576).toFixed(b < 10485760 ? 1 : 0) + " MB" : "—";
+    const badge = (text, kind) => el("span", { class: "badge " + (kind || ""), text });
+    const panel = (title, right, ...body) => el("div", { class: "panel" }, el("div", { class: "panel-h" }, el("span", { text: title }), right || null), el("div", { class: "panel-b" }, ...body));
+    const state = p => S[p] && S[p].loading && !S[p].data ? el("p", { class: "hint", text: "Loading…" }) : S[p] && S[p].error ? el("p", { class: "hint", text: "Could not load: " + S[p].error }) : null;
+    const table = (head, rows, numeric) => el("div", { class: "store-scroll" }, el("table", { class: "store-t" },
+      el("tr", {}, head.map((h, i) => el("th", { class: numeric && numeric.includes(i) ? "n" : "", text: h }))),
+      rows.map(r => el("tr", {}, r.map((c, i) => el("td", { class: numeric && numeric.includes(i) ? "n" : "" }, c))))));
+    const pub = (S.public || {}).data || {}, st = pub.stats || {};
+    const admin = (S.admin || {}).data || {}, sec = admin.sections || {};
+    const linked = ((S.link || {}).data || {}).status === "linked" || admin.linked;
+    const okSec = k => sec[k] && !sec[k].error ? sec[k] : null;
+    box.replaceChildren();
+
+    // header row
+    box.append(el("div", { class: "row", style: "margin-bottom:12px" },
+      el("span", { class: "hint grow", style: "margin:0", text: "Read only. Numbers refresh when you open this tab or press Refresh." }),
+      el("button", { class: "small", onclick: () => this.loadStore() }, "Refresh all")));
+
+    // admin link
+    const link = (S.link || {}).data || {};
+    const linkBody = link.status === "linked" || admin.linked
+      ? el("div", { class: "row" }, el("span", { class: "hint grow", style: "margin:0", text: "Linked once with a code approved on getaccretion.app. The admin token stays on this PC (AM_ROOT/studio/admin.json) and only goes to the store's own functions." }),
+          el("button", { class: "small ghost", onclick: async () => { if (!confirm("Unlink Mod Studio from your Accretion admin account?")) return; await this.api("/api/store/link/unlink", {}).catch(e => this.toast(e.message, "bad")); this.store.admin = { data: { linked: false } }; this.loadStore(["link", "keys"]); } }, "Unlink"))
+      : link.status === "waiting"
+        ? el("div", { class: "row" }, el("span", { class: "grow" }, "Approve code ", el("b", { class: "mono", text: link.code || "" }), " on getaccretion.app while signed in as an admin. Studio checks every few seconds."),
+            link.approve_url ? el("button", { class: "small", onclick: () => window.open(link.approve_url, "_blank", "noopener") }, "Open the approve page") : null,
+            el("button", { class: "small ghost", onclick: () => this.storeLink() }, "New code"))
+        : el("div", { class: "row" }, el("span", { class: "hint grow", style: "margin:0", text: "Link once to see the admin numbers (downloads, accounts, community, cloud saves, share links). Studio shows a code; approve it on getaccretion.app signed in as an admin." }),
+            el("button", { class: "primary small", onclick: () => this.storeLink() }, "Link Mod Studio"));
+    box.append(panel("Accretion admin", linked ? badge(`signed in · ${admin.account || link.account || "admin"} · admin`, "good") : link.status === "waiting" ? badge("waiting for approval", "warn") : badge("not linked"),
+      linkBody, admin.error ? el("p", { class: "hint", text: admin.error }) : null));
+
+    // the store's tiles
+    const acc = okSec("accounts"), dl = okSec("downloads"), cs = okSec("cloud_saves");
+    const tile = (label, value, sub, kind) => el("div", { class: "tile" }, el("div", { class: "l", text: label }), el("div", { class: "nn", text: n(value) }), sub ? el("div", { class: "d " + (kind || ""), text: sub }) : null);
+    const tiles = el("div", { class: "tiles" },
+      tile("apps", st.apps, st.new_30d !== undefined ? `+${n(st.new_30d)} in 30 days` : null),
+      tile("curated", st.curated_apps, st.developers ? `${n(st.developers)} developers` : null),
+      tile("sources", st.sources_total, st.sources_failed ? `${st.sources_failed} failing` : "none failing", st.sources_failed ? "warn" : "good"),
+      tile("updated 7d", st.updated_7d, st.updated_30d ? `${n(st.updated_30d)} in 30 days` : null),
+      tile("downloads 7d", dl ? dl.total_7d : null, dl ? `${n(dl.total_30d)} in 30 days` : linked ? null : "link to see"),
+      tile("accounts", acc ? acc.total : null, acc ? `+${n(acc.new_7d)} this week` : linked ? null : "link to see"),
+      tile("cloud saves", cs ? cs.backups : null, cs ? `${n(cs.devices)} devices · ${mb(cs.bytes)}` : linked ? null : "link to see"),
+      tile("links removed", st.dead_links_removed, st.links_on_hold ? `${st.links_on_hold} on hold` : null));
+    const spark = dl && dl.per_day ? (() => { const max = Math.max(1, ...dl.per_day.map(d => d.n));
+      return el("div", {}, el("div", { class: "spark" }, dl.per_day.map(d => el("i", { title: `${d.day}: ${d.n}`, style: `height:${Math.max(3, Math.round(d.n / max * 100))}%` }))),
+        el("div", { class: "hint", style: "margin:4px 0 0", text: "downloads per day, 14 days" + (dl.via ? " · " + Object.entries(dl.via).map(([k, v]) => `${k} ${n(v)}`).join(" · ") : "") })); })() : null;
+    box.append(panel("The store", el("span", { class: "fig", text: st.built_at ? `built ${ago(st.built_at)} · ${st.size_mb || "?"} MB` : "" }), state("public"), tiles, spark));
+
+    // our mods
+    const ours = pub.ours || [], appsSec = okSec("apps") || {}, perApp = (dl && dl.per_app) || {};
+    const saves = id => cs && cs.per_game ? Object.entries(cs.per_game).filter(([b]) => b === id || b.startsWith(id + ".")).reduce((s, [, g]) => s + g.backups, 0) : null;
+    const rows = ours.map(o => { const a = (appsSec.ours || {})[o.id] || {};
+      const here = !o.here ? badge("not here") : o.here === o.live ? badge(o.here, "good") : badge(o.here + " here", "warn");
+      return [el("span", {}, o.name || o.mod, " ", el("span", { class: "muted small", text: o.kind })), o.live || "—", here, n(a.views_7d), n((perApp[o.id] || {}).d7), n(a.installs_7d), n(a.likes), a.rating ? a.rating + ` (${a.ratings})` : "—", n(a.comments), n(saves(o.id)), ago(o.date)]; });
+    box.append(panel("Our mods in the store", el("span", { class: "fig", text: "7 days" }), state("public"),
+      ours.length ? table(["Mod", "Live", "Here", "Views", "Downloads", "Installs", "Likes", "Rating", "Comments", "Cloud saves", "Published"], rows, [3, 4, 5, 6, 7, 8, 9]) : null,
+      (pub.unlisted || []).length ? el("p", { class: "hint", text: "Not in the store (personal or not published): " + pub.unlisted.map(u => `${u.mod} ${u.version}`).join(", ") }) : null,
+      !linked && ours.length ? el("p", { class: "hint", text: "Views, downloads, likes and the rest need the admin link." }) : null));
+
+    // trending + community
+    if (linked) {
+      const tr = (okSec("apps") || {}).trending || [], com = okSec("community"), srch = okSec("searches"), sl = okSec("share_links");
+      const names = Object.fromEntries(ours.map(o => [o.id, o.name]));
+      box.append(el("div", { class: "store-grid" },
+        panel("Trending in the store", el("span", { class: "fig", text: "3×searches + 2×installs + views, 7 days" }),
+          tr.length ? table(["#", "App", "Views", "Installs", "Score"], tr.map((t, i) => [String(i + 1), names[t.id] || t.id, n(t.views_7d), n(t.installs_7d), n(t.score)]), [2, 3, 4]) : el("p", { class: "hint", text: sec.apps && sec.apps.error ? sec.apps.error : "No views yet." })),
+        panel("Community", com && com.reports_open ? badge(`${com.reports_open} reports waiting`, "warn") : null,
+          com ? table(["", ""], [["Posts this week", n(com.posts_7d)], ["Hidden posts", n(com.posts_hidden)], ["Open reports", n(com.reports_open)], ["Install reports (7 days)", n(com.install_reports_7d)],
+            ["Searches with no result", srch ? n(srch.missing_top.length) : "—"], ["Share links (active)", sl ? `${n(sl.active)} · ${n(sl.downloads)} downloads` : "—"],
+            ["Moderators and admins", acc ? n(acc.moderators) : "—"], ["Banned accounts", acc ? n(acc.banned) : "—"]], [1]) : el("p", { class: "hint", text: (sec.community || {}).error || "" }),
+          el("div", { class: "row", style: "margin-top:8px" }, el("button", { class: "small", onclick: () => window.open("https://getaccretion.app/#/mod", "_blank", "noopener") }, "Open the moderation page ›")))));
+      const ir = (com && com.install_reports_recent) || [], miss = (srch && srch.missing_top) || [];
+      box.append(el("div", { class: "store-grid" },
+        panel("Searches with no result", el("span", { class: "fig", text: "7 days" }),
+          miss.length ? table(["Search", "Times"], miss.slice(0, 12).map(m => [m.query, n(m.hits)]), [1]) : el("p", { class: "hint", text: "None this week." })),
+        panel("Latest install reports", null,
+          ir.length ? table(["App", "Stage", "iOS", "App version", "When"], ir.map(r => [names[r.bundle_id] || r.bundle_id || "—", r.stage || "—", r.ios || "—", r.app_version || "—", ago(r.created_at)])) : el("p", { class: "hint", text: "None." }))));
+      const links = (sl && sl.links) || [], builds = (okSec("builds") || {}).latest || {};
+      box.append(el("div", { class: "store-grid" },
+        panel("Share links", sl ? el("span", { class: "fig", text: `${n(sl.active)} active` }) : null,
+          links.length ? table(["Name", "Downloads", "Last", "Expires"], links.map(l => [l.name || l.note || l.id, n(l.downloads), ago(l.last_download_at), new Date(l.expires_at).toLocaleDateString()]), [1]) : el("p", { class: "hint", text: "No active links." })),
+        panel("Cloud saves by game", cs ? el("span", { class: "fig", text: `${n(cs.backups_7d)} backups this week` }) : null,
+          cs && Object.keys(cs.per_game).length ? table(["Game", "Devices", "Backups", "Size"], Object.entries(cs.per_game).map(([, g]) => [g.game || "—", n(g.devices), n(g.backups), mb(g.bytes)]), [1, 2, 3]) : el("p", { class: "hint", text: "No backups yet." }))));
+      if (Object.keys(builds).length) box.append(panel("Hosted builds", el("span", { class: "fig", text: `${Object.keys(builds).length} apps` }),
+        table(["App", "Latest", "Size", "Builds kept", "Added"], Object.entries(builds).sort((a, b) => String(b[1].created_at).localeCompare(String(a[1].created_at))).slice(0, 15).map(([id, b]) => [names[id] || id, b.version, mb(b.size), n(b.builds), ago(b.created_at)]), [2, 3])));
+    }
+
+    // endpoints
+    const ep = (S.endpoints || {}).data || {}, eps = ep.endpoints || [];
+    const down = eps.filter(e => !e.ok).length, slow = eps.filter(e => e.ok && e.slow).length;
+    box.append(panel("Endpoints", el("span", { class: "row" }, eps.length ? badge(down ? `${down} down` : slow ? `${slow} slow` : "all answering", down ? "bad" : slow ? "warn" : "good") : null,
+      el("button", { class: "small ghost", onclick: () => this.loadStore(["endpoints"]) }, "Check again")), state("endpoints"),
+      eps.length ? table(["Service", "Answer", "Time", ""], eps.map(e => [el("span", {}, e.name, el("div", { class: "muted small mono", text: e.url })), e.status ? String(e.status) : "no answer", e.ms + " ms",
+        badge(!e.ok ? "down" : e.slow ? "slow" : "ok", !e.ok ? "bad" : e.slow ? "warn" : "good")]), [2]) : null,
+      eps.length ? el("p", { class: "hint", text: "Each check expects the answer the service gives when it works (a function without a token answers 401). Checked " + ago(new Date(ep.checked_at * 1000).toISOString()) + "." }) : null));
+
+    // keys and sign-ins
+    const k = (S.keys || {}).data || {}, checks = k.checks || [], secrets = k.secrets || [];
+    const old = secrets.filter(s => s.old).length;
+    box.append(panel("Keys and sign-ins", el("span", { class: "row" }, checks.length ? badge(checks.every(c => c.ok) ? "all valid" : `${checks.filter(c => !c.ok).length} to look at`, checks.every(c => c.ok) ? "good" : "warn") : null,
+      el("button", { class: "small ghost", onclick: () => this.loadStore(["keys"]) }, "Revalidate")), state("keys"),
+      checks.length ? table(["Check", "Result", ""], checks.map(c => [c.name, el("span", { class: "small", text: c.detail }), badge(c.ok ? "valid" : "check", c.ok ? "good" : "warn")])) : null,
+      secrets.length ? el("details", { class: "feature-more", style: "margin-top:10px" }, el("summary", { text: `GitHub secrets: ${secrets.filter(s => s.name).length} across ${new Set(secrets.map(s => s.repo)).size} repos${old ? ` · ${old} older than 180 days` : " · none older than 180 days"}` }),
+        table(["Repo", "Secret", "Updated", ""], secrets.map(s => [s.repo.split("/")[1], s.name || el("span", { class: "muted", text: s.error }), s.updated ? ago(s.updated) : "—",
+          s.name ? el("a", { href: `https://github.com/${s.repo}/settings/secrets/actions/${s.name}`, target: "_blank", rel: "noopener", class: "small" }, s.old ? "Rotate ›" : "Update ›") : ""]))) : null,
+      el("p", { class: "hint", text: "Names and dates only: secret values never leave GitHub. Update opens GitHub's own page for that secret." })));
+
+    // workflows
+    const runs = ((S.runs || {}).data || {}).runs || [];
+    const rk = r => r.status && r.status !== "completed" ? ["running", "accent"] : r.conclusion === "success" ? ["success", "good"] : r.conclusion ? [r.conclusion, "bad"] : ["never run", ""];
+    box.append(panel("Publishing and automation", el("span", { class: "row" }, el("span", { class: "fig", text: "GitHub Actions" }), el("button", { class: "small ghost", onclick: () => this.loadStore(["runs"]) }, "Refresh")), state("runs"),
+      runs.length ? table(["Workflow", "Last run", "When", ""], runs.map(r => [el("span", {}, r.label, r.title && r.title !== r.label && !r.label.endsWith(r.title.replace(/^[^:]+: /, "")) ? el("div", { class: "muted small", text: r.title }) : null), badge(...rk(r)), ago(r.at),
+        r.url ? el("a", { href: r.url, target: "_blank", rel: "noopener", class: "small" }, "Open ›") : ""])) : null));
+  },
+
   renderGames() {
     const box = this.byId("tab-games");
     if (box.childElementCount) return;  // built once; Refresh reloads the list

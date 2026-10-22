@@ -56,6 +56,7 @@ import gen_tweaks
 import ipa_fetch
 import jobs_state
 import scan_view
+import store_view
 import workspace
 
 LOCK = threading.Lock()  # dev.py writes files and caches; one quick command at a time
@@ -145,6 +146,7 @@ class Job:
         self.status = "queued"
         self.code = None
         self.started = time.time()
+        self.ended = None  # when it finished: the auto-build bar shows the run time
         self.proc = None
         self.cancelled = threading.Event()
         self.resources = job_resources(command, argv)
@@ -191,6 +193,7 @@ class Job:
             self.lines.append(jobs_state.redact(f"Job failed: {error}"))
             self.status, self.code = "failed", -1
         finally:
+            self.ended = time.time()
             COORDINATOR.release(self.resources)
             self.persist()
 
@@ -278,6 +281,7 @@ class Job:
             "status": self.status,
             "code": self.code,
             "started": self.started,
+            **({"ended": self.ended} if self.ended else {}),
             "interactive": self.interactive,
             "resources": self.resources,
             "lines": self.lines[since:],
@@ -943,6 +947,44 @@ def suggest(name, limit):
     }
 
 
+def store_apps():
+    """Our mods' store ids: the catalogue's and every local mod's bundle id."""
+    ids = []
+    for meta in (ROOT / "mods").glob("*/mod.json"):
+        try:
+            bundle = json.loads(meta.read_text(encoding="utf-8")).get("bundle_id")
+        except (OSError, ValueError):
+            continue
+        for value in (bundle, "io.github.accretionmods." + meta.parent.name):
+            if value and value not in ids:
+                ids.append(value)
+    return ids
+
+
+def store_get(rest):
+    """The Store tab's reads: public, admin, endpoints, keys, runs, link."""
+    root = dev.am_root()
+    if rest == ["public"]:
+        return store_view.public(ROOT)
+    if rest == ["admin"]:
+        return store_view.admin_summary(root, store_apps())
+    if rest == ["endpoints"]:
+        return store_view.endpoints(root)
+    if rest == ["keys"]:
+        try:
+            sign = dev.plumesign()
+        except dev.DevError:
+            sign = None
+        return store_view.keys(root, ROOT, sign, lambda: fetch_client().account())
+    if rest == ["runs"]:
+        return store_view.runs()
+    if rest == ["link"]:
+        state = store_view.admin_state(root)
+        return {"status": "linked" if state.get("token") else ("waiting" if state.get("pending") else "none"),
+                "account": state.get("account"), "code": state.get("pending")}
+    raise dev.DevError("unknown store request")
+
+
 def fetch_client():
     return ipa_fetch.Client(dev.am_root())
 
@@ -1160,6 +1202,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(
                 dev.games_info(q.get("bundle", ""), q.get("region", "us"))
             )
+        if parts[1:2] == ["store"]:
+            return self.send_json(store_get(parts[2:]))
         if parts[1:] == ["fetch", "account"]:
             return self.send_json(fetch_client().account())
         if parts[1:] == ["fetch", "search"]:
@@ -1309,6 +1353,13 @@ class Handler(BaseHTTPRequestHandler):
         if parts == ["api", "console"]:
             self.local_only()
             return self.send_json(console(str(body.get("line", ""))).view())
+        if len(parts) == 4 and parts[:3] == ["api", "store", "link"] and parts[3] in ("start", "poll", "unlink"):
+            self.local_only()
+            act = {"start": store_view.link_start, "poll": store_view.link_poll, "unlink": store_view.unlink}[parts[3]]
+            try:
+                return self.send_json(act(dev.am_root()))
+            except RuntimeError as e:
+                raise dev.DevError(str(e)) from e
         if len(parts) == 4 and parts[:2] == ["api", "mods"] and parts[3] == "autobuild":
             self.local_only()
             return self.send_json(start_autobuild(self.mod_name(parts[2]), str(body.get("engine", "claude")),
