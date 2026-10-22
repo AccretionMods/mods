@@ -55,7 +55,9 @@ import zipfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-ROOT = Path(os.environ["AM_REPO"]) if os.environ.get("AM_REPO") else HERE.parent  # AM_REPO: the tests point it at a temp repo
+ROOT = (
+    Path(os.environ["AM_REPO"]) if os.environ.get("AM_REPO") else HERE.parent
+)  # AM_REPO: the tests point it at a temp repo
 sys.path.insert(0, str(HERE))
 
 import dev_learn
@@ -1114,14 +1116,29 @@ def plumesign():
     )
 
 
+def tool_path(name):
+    """A tool on PATH, or in uv's bin folder (~/.local/bin), which a server started outside a login shell may lack."""
+    found = shutil.which(name)
+    if found:
+        return found
+    exe = Path.home() / ".local" / "bin" / (name + (".exe" if WINDOWS else ""))
+    return str(exe) if exe.is_file() else None
+
+
+def pymobiledevice3_cli():
+    exe = tool_path("pymobiledevice3")
+    if not exe:
+        raise DevError("pymobiledevice3 not found (uv tool install pymobiledevice3)")
+    return exe
+
+
 def pymobiledevice3_python():
     """The Python of the installed pymobiledevice3 (uv tool, or the one next to the pymobiledevice3 on PATH)."""
     candidates = []
+    uv = tool_path("uv")
     r = (
-        subprocess.run(
-            ["uv", "tool", "dir"], capture_output=True, text=True, check=False
-        )
-        if shutil.which("uv")
+        subprocess.run([uv, "tool", "dir"], capture_output=True, text=True, check=False)
+        if uv
         else None
     )
     if r and r.returncode == 0 and r.stdout.strip():
@@ -1131,7 +1148,16 @@ def pymobiledevice3_python():
             / ("Scripts" if WINDOWS else "bin")
             / ("python.exe" if WINDOWS else "python")
         )
-    exe = shutil.which("pymobiledevice3")
+    if WINDOWS:
+        candidates.append(
+            Path(os.environ.get("APPDATA", ""))
+            / "uv"
+            / "tools"
+            / "pymobiledevice3"
+            / "Scripts"
+            / "python.exe"
+        )
+    exe = tool_path("pymobiledevice3")
     if exe:
         candidates.append(
             Path(exe).resolve().parent / ("python.exe" if WINDOWS else "python")
@@ -1207,7 +1233,7 @@ def cmd_sign(args):
             )
             if (
                 subprocess.run(
-                    ["pymobiledevice3", "apps", "install", str(out)],
+                    [pymobiledevice3_cli(), "apps", "install", str(out)],
                     stdin=subprocess.DEVNULL,
                     check=False,
                 ).returncode
@@ -1222,7 +1248,7 @@ def cmd_sign(args):
 def installed_bundles(prefix):
     """Bundle IDs on the USB phone that start with prefix (an Apple ID-signed copy carries a team suffix)."""
     r = subprocess.run(
-        ["pymobiledevice3", "apps", "list"],
+        [pymobiledevice3_cli(), "apps", "list"],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -1244,7 +1270,7 @@ def launch_app(bundle):
     """Opens an app on the USB phone through the developer tunnel (Developer Mode on, phone unlocked)."""
     print(f"==> launching {bundle}")
     r = subprocess.run(
-        ["pymobiledevice3", "developer", "dvt", "launch", bundle],
+        [pymobiledevice3_cli(), "developer", "dvt", "launch", bundle],
         stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
@@ -1286,7 +1312,7 @@ def cmd_install(args):
     if not ipa.is_file():
         raise DevError(f"no file at {ipa}")
     r = subprocess.run(
-        ["pymobiledevice3", "apps", "install", str(ipa)],
+        [pymobiledevice3_cli(), "apps", "install", str(ipa)],
         stdin=subprocess.DEVNULL,
         check=False,
     )
@@ -1312,7 +1338,7 @@ def cmd_log(args):
         )
     pattern = f"\\[{re.escape(tag)}\\]|AccretionMods"
     cmd = [
-        "pymobiledevice3",
+        pymobiledevice3_cli(),
         "syslog",
         "live",
         "-e",

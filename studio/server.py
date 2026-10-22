@@ -75,6 +75,10 @@ class Job:
             self.command,
         ] + self.argv
         env = dict(os.environ, PYTHONUTF8="1", PYTHONUNBUFFERED="1", AM_REPO=str(ROOT))
+        # a server started outside a login shell may lack uv and pymobiledevice3 on PATH
+        local_bin = str(Path.home() / ".local" / "bin")
+        if local_bin not in env.get("PATH", ""):
+            env["PATH"] = local_bin + os.pathsep + env.get("PATH", "")
         try:
             self.proc = subprocess.Popen(
                 cmd,
@@ -347,7 +351,8 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "ModStudio/1"
 
     def log_message(self, fmt, *args):  # quieter console
-        if "/api/jobs/" not in (args[0] if args else ""):
+        # send_error logs with an HTTPStatus as the first argument, not the request line
+        if "/api/jobs/" not in str(args[0] if args else ""):
             sys.stderr.write(f"{self.address_string()} - {fmt % args}\n")
 
     def send_json(self, data, status=HTTPStatus.OK):
@@ -465,7 +470,8 @@ class Handler(BaseHTTPRequestHandler):
         if parts == ["api", "jobs"]:
             command = body.get("command", "")
             argv = []
-            if command != "new":
+            # sign and install take a file, not a mod; new makes the mod
+            if command not in ("new", "sign", "install"):
                 argv.append(self.mod_name(str(body.get("mod", ""))))
             argv += [str(a) for a in body.get("args", [])]
             job = start_job(command, argv)
