@@ -315,3 +315,24 @@ void AMIl2cppEvery(double seconds, void (^block)(void)) {
     dispatch_resume(timer);
     [timers addObject:timer];
 }
+
+void AMIl2cppPauseGame(bool pause) {
+    static const char *time = "UnityEngine.CoreModule:UnityEngine.Time";
+    static float saved = 1;
+    static bool paused;
+    if (pause == paused) return;
+    void *boxed = NULL;
+    float *now = AMIl2cppCall(NULL, time, "get_timeScale", 0, NULL, &boxed) ? AMIl2cppUnbox(boxed) : NULL;
+    if (!now) return;
+    if (pause) {
+        saved = *now;
+        float zero = 0;
+        void *argv[1] = {&zero};
+        paused = AMIl2cppCall(NULL, time, "set_timeScale", 1, argv, NULL);
+    } else {
+        paused = false;
+        if (*now != 0) return;  // the game set its own scale while the menu was open: keep it
+        void *argv[1] = {&saved};
+        AMIl2cppCall(NULL, time, "set_timeScale", 1, argv, NULL);
+    }
+}

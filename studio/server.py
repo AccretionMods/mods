@@ -71,6 +71,8 @@ JOB_COMMANDS = {
     "report",
     "post",
     "push",
+    "test",
+    "share",
 }
 QUICK = {"add", "pin", "call", "tweak", "remove", "gen", "mark"}
 MOD_NAME = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
@@ -168,7 +170,7 @@ def start_job(command, argv, interactive=False):
 
 # Claude Code runs from the prompt builder. dev.py through uv: python on this PC can be the Store stub.
 DEV = "uv run --no-project --python 3.12 scripts/dev.py"
-READ_ONLY_DEV = ("status", "find", "fields", "suggest", "check", "games", "help")
+READ_ONLY_DEV = ("status", "find", "fields", "scan", "report", "suggest", "check", "games", "help")
 CLAUDE_NOTE = (
     "This is a headless run started from Mod Studio's prompt builder in the AccretionMods/mods repo. "
     "Project: Accretion (record it with: echo \"[[project: Accretion]]\"); don't ask which project. "
@@ -176,7 +178,10 @@ CLAUDE_NOTE = (
     "Nobody can answer questions during this run: when a choice is the owner's, stop and list the options. "
     "You already run in the repo: one command per Bash call, no cd, no && or ; chains, no pipes (| head): "
     "anything else is refused and wastes a turn. Shorten output with the commands' own options "
-    "(am find --limit N, am scan --limit N, am fields <mod> <Class>), or use the Grep/Read tools on the dump."
+    "(am find --limit N, am scan --limit N, am fields <mod> <Class>). Which class holds a value: "
+    "am find <mod> <regex> --fields (Namespace.Class.field, about a second). Class names may carry a namespace "
+    "(Core.PlayerLife); am fields and am pin take them. Grep or Read only dump.cs itself, never its folder: "
+    "il2cpp.h and script.json there are 200 MB and time the search out."
 )
 
 

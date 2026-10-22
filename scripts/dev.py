@@ -8,6 +8,7 @@ it); signing and device logs need the phone on USB and run on Windows (plumesign
   dev.py dump <mod> [--base file.ipa] [--force]                  Il2CppDumper -> work/dump-<mod>-<ver>/dump.cs
   dev.py find <mod> <regex> [--limit N]                          methods whose Class.method matches
   dev.py find <mod> --class <Class>                              every method of one class
+  dev.py find <mod> <regex> --fields                             fields whose Namespace.Class.field matches
   dev.py fields <mod> <Class>                                    the class's fields with offsets
   dev.py add <mod> <Class.method> [--as key] [--title T]         hook a method: hooks.json + tweaks.json + code
          [--action skip|return|multiply|arg|custom] [--value V] [--index I] [--args N]
@@ -31,6 +32,9 @@ it); signing and device logs need the phone on USB and run on Windows (plumesign
   dev.py pick <mod> <regex>                                      numbered find; type a number, answer 2-3 questions
   dev.py suggest <mod>                                           this game's methods that match what worked before
   dev.py mark <mod> <key> --works|--fails                        the phone result; feeds the suggestions
+  dev.py share <mod> [--file x.ipa] [--signed]                   private 15-minute download link for a build
+  dev.py test <mod> [--section S | --keys a,b] [--seconds 20]    switches on from the PC a section at a time;
+                                                                 which reach the game (off again after)
   dev.py learn <mod>                                             import an existing mod's hooks.json into the patterns
   dev.py fetch <bundle-id | name | --mod M> [--region us]        a decrypted .ipa from the decrypt site into intake/
          [--platform iphone] [--force]                           (AM_DECRYPT_URL; default decrypt.34306.lol, a third party)
@@ -387,7 +391,41 @@ def describe(m):
     return f"{m.full_name}({', '.join(m.params)}) -> {static}{m.return_type}  [{m.assembly}]  RVA {m.rva}{slot}{jit}"
 
 
+def field_rows(mod):
+    """[(Namespace.Class, static?, type, field)] for every number, bool and object field in dump.cs, one pass."""
+    rows, cls, ns, depth = [], None, "", 0
+    with open(dump_path(mod), encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            if cls is None:
+                if line.startswith("// Namespace:"):
+                    ns = line[13:].strip()
+                    continue
+                m = TYPE_KIND.match(line)
+                if m:
+                    name = m.group(2).split("<")[0]
+                    cls, depth = (f"{ns}.{name}" if ns else name), 0
+                continue
+            depth += line.count("{") - line.count("}")
+            if depth < 0 or "// Properties" in line or "// Methods" in line:
+                cls = None  # fields come first; the rest of the class is not needed
+                continue
+            m = FIELD.match(line)
+            if m:
+                rows.append((cls, "static" in m.group(1), m.group(2).strip(), m.group(3)))
+    return rows
+
+
 def cmd_find(args):
+    if args.fields:
+        rx = re.compile(args.pattern, re.IGNORECASE)
+        rows = [r for r in field_rows(args.mod)
+                if "<" not in r[0] and not r[3].startswith("<>") and rx.search(f"{r[0]}.{r[3]}")]
+        # left out: compiler-made iterator and lambda classes; kept: property backing fields (<Currency>k__...)
+        for cls, static, typ, name in rows[: args.limit]:
+            print(f"  {cls}.{name}  {'static ' if static else ''}{typ}")
+        more = len(rows) - args.limit
+        print(f"{len(rows)} fields" + (f" ({more} more: --limit)" if more > 0 else ""))
+        return 0
     found = dump_methods(args.mod)
     if args.class_name:
         rows = [
@@ -880,7 +918,7 @@ def pin_problems_in_dump(mod):
             if info is None and not methods.get((cls, ".ctor")) and not any(k[0] == cls for k in methods):
                 out.append(("error", key, f"no class {cls} in the dump"))
                 continue
-            if "." in obj and not obj.endswith("[]") and info is not None:
+            if "." in obj and not obj.endswith("[]") and info is not None and not p.get("class"):
                 static = obj.rpartition(".")[2]
                 if static not in info.get("statics", []):
                     out.append(("warn", key, f"{obj}: not a static field of {cls}'s own type in the dump"))
@@ -1442,6 +1480,23 @@ def cmd_install(args):
     return r.returncode
 
 
+def push_live(mod, bundle, test=None):
+    """The mod's pinned tweaks (and an am test block) to the phone as Documents/live_tweaks.json."""
+    folder = mod_dir(mod)
+    tweaks = load_tweaks(folder, read_json(folder / "mod.json"))
+    live = {"title": tweaks.get("title"), "tweaks": [t for t in tweaks.get("tweaks", []) if t.get("pins")]}
+    if test:
+        live["test"] = test
+    tmp = am_root() / "work" / f"live_tweaks-{mod}.json"
+    tmp.parent.mkdir(parents=True, exist_ok=True)
+    tmp.write_text(json.dumps(live), encoding="utf-8")
+    r = subprocess.run([pymobiledevice3_cli(), "apps", "push", bundle, str(tmp), "Documents/live_tweaks.json"],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        raise DevError(f"push failed: {(r.stderr or r.stdout).strip()[-300:]}")
+    return live
+
+
 def cmd_push(args):
     """tweaks.json into the installed app as Documents/live_tweaks.json: the build's runtime (AMLivePins.h) reads
     it within 2 s, runs its pins instead of the compiled ones, and adds new switches to the menu. --off removes
@@ -1462,15 +1517,7 @@ def cmd_push(args):
         print_pin_problems(problems)
         if any(p[0] == "error" for p in problems):
             raise DevError("pins that can't work (above): fix them, or push anyway with --no-check")
-    tweaks = load_tweaks(folder, meta)
-    live = {"title": tweaks.get("title"), "tweaks": [t for t in tweaks.get("tweaks", []) if t.get("pins")]}
-    tmp = am_root() / "work" / f"live_tweaks-{args.mod}.json"
-    tmp.parent.mkdir(parents=True, exist_ok=True)
-    tmp.write_text(json.dumps(live), encoding="utf-8")
-    r = subprocess.run([cli, "apps", "push", found[0], str(tmp), "Documents/live_tweaks.json"],
-                       capture_output=True, text=True)
-    if r.returncode != 0:
-        raise DevError(f"push failed: {(r.stderr or r.stdout).strip()[-300:]}")
+    live = push_live(args.mod, found[0])
     print(f"==> {len(live['tweaks'])} switches pushed to {found[0]}: the game picks them up within 2 s, no rebuild")
     if args.launch:
         launch_app(found[0])
@@ -1487,6 +1534,22 @@ def cmd_log(args):
                 f"{meta['bundle_id']} is not on the phone (dev.py sign <ipa> --install)"
             )
         launch_app(found[0])
+    lines = stream_log(args.mod, args.seconds, print)
+    print(
+        f"==> {lines} lines"
+        + (
+            ""
+            if lines
+            else " (no line from the mod: is the game open? the hook report repeats 20 s after launch)"
+        )
+    )
+    return 0
+
+
+def stream_log(mod, seconds, on_line, quiet=False):
+    """The mod's device-log lines for `seconds`, each to on_line(text); returns how many."""
+    folder = mod_dir(mod)
+    meta = read_json(folder / "mod.json")
     tag = meta.get("display_name") or meta["name"]
     if (folder / "tweaks.json").is_file():
         tag = (
@@ -1502,7 +1565,8 @@ def cmd_log(args):
         "-e",
         pattern,
     ]  # case-sensitive: the bundle ID has "accretionmods" too
-    print(f"==> {' '.join(cmd)}  (for {args.seconds} s; Ctrl+C stops)")
+    if not quiet:
+        print(f"==> {' '.join(cmd)}  (for {seconds} s; Ctrl+C stops)")
     try:
         p = subprocess.Popen(
             cmd,
@@ -1529,7 +1593,7 @@ def cmd_log(args):
         q.put(None)
 
     threading.Thread(target=reader, daemon=True).start()
-    end = time.time() + args.seconds
+    end = time.time() + seconds
     lines = 0
     try:
         while time.time() < end:
@@ -1539,21 +1603,142 @@ def cmd_log(args):
                 continue
             if line is None:
                 break
-            print(line.rstrip())
+            on_line(line.rstrip())
             lines += 1
     except KeyboardInterrupt:
         pass
     finally:
         if p.poll() is None:
             p.kill()
-    print(
-        f"==> {lines} lines"
-        + (
-            ""
-            if lines
-            else " (no line from the mod: is the game open? the hook report repeats 20 s after launch)"
-        )
-    )
+    return lines
+
+
+STATUS_LINE = re.compile(r"status (\S+) (ok|off|waiting: (.*))$")
+
+
+def test_results(lines, keys):
+    """{key: "reached" | "waiting: <why>" | "no report"} from the device-log lines of one am test round.
+    A switch that reached the game once in the round counts as reached."""
+    out = {k: "no report" for k in keys}
+    for line in lines:
+        m = STATUS_LINE.search(line)
+        if not m or m.group(1) not in out:
+            continue
+        key, state = m.group(1), m.group(2)
+        if state == "ok":
+            out[key] = "reached"
+        elif state != "off" and out[key] != "reached":
+            out[key] = "waiting: " + m.group(3)
+    return out
+
+
+def test_rounds(tweaks, section=None, keys=None):
+    """[(section title, [keys])]: one round per menu section, or the chosen ones."""
+    pinned = [t for t in tweaks.get("tweaks", []) if t.get("pins")]
+    if keys:
+        wanted = [k.strip() for k in keys.split(",") if k.strip()]
+        unknown = [k for k in wanted if k not in {t["key"] for t in pinned}]
+        if unknown:
+            raise DevError(f"no pinned switch {', '.join(unknown)} in tweaks.json")
+        return [("chosen", wanted)]
+    rounds = {}
+    for t in pinned:
+        rounds.setdefault(t.get("section") or "Other", []).append(t["key"])
+    if section:
+        match = [r for r in rounds if r.lower() == section.lower()]
+        if not match:
+            raise DevError(f"no section {section!r}: {', '.join(rounds)}")
+        return [(match[0], rounds[match[0]])]
+    return list(rounds.items())
+
+
+def newest_build(mod, signed=False):
+    """The newest built .ipa of a mod in the builds folder: <mod>_<game>-mod<version>_accretion.ipa, or the
+    _signed copy (that one installs on this PC's phone only)."""
+    suffix = "_signed.ipa" if signed else "_accretion.ipa"
+    found = sorted((am_root() / "builds").glob(f"{mod}_*{suffix}"), key=lambda f: f.stat().st_mtime)
+    if not found:
+        raise DevError(f"no {suffix} build of {mod} in {am_root() / 'builds'} (dev.py build {mod} --ipa)")
+    return found[-1]
+
+
+def cmd_share(args):
+    """A private download link for one build: the .ipa goes to Accretion's private storage (by its sha256, like
+    a private base; uploaded once) and the link works for 15 minutes. For the owner's own devices: never posted,
+    never in a source. The file saves under its sha256 name: rename it to the .ipa name printed here."""
+    import urllib.request
+
+    import base
+    from publish import FUNCTIONS, call, upload_key
+
+    ipa = Path(args.file) if args.file else newest_build(args.mod, args.signed)
+    if not ipa.is_file():
+        raise DevError(f"{ipa} not found")
+    sha = base.sha256_of(ipa)
+    key = upload_key()
+
+    def link():
+        return call(f"{FUNCTIONS}/upload?base=get", key, {"sha256": sha})["signedUrl"]
+
+    stored = False
+    try:
+        with urllib.request.urlopen(urllib.request.Request(link(), headers={"Range": "bytes=0-0"}), timeout=60):
+            stored = True
+    except Exception:
+        pass
+    if not stored:
+        print(f"==> uploading {ipa.name} ({ipa.stat().st_size / 1e6:.1f} MB) to private storage")
+        base.put(str(ipa))
+    print(f"==> {ipa.name}")
+    print(f"    sha256 {sha}")
+    print(f"    link (15 minutes, private; saves as the sha256, rename it to {ipa.name}):")
+    print(f"    {link()}")
+    print("    A new link any time: dev.py share " + (f"--file \"{ipa}\"" if args.file else args.mod))
+    return 0
+
+
+def cmd_test(args):
+    """Turns switches on from the PC (live_tweaks.json "test" block) one menu section at a time, reads their status
+    lines from the device log, turns them off again, and records which reached the game. Reached means the pin
+    found its object and wrote it; whether the cheat does what its title says is still for play (am mark)."""
+    import uuid
+
+    folder = mod_dir(args.mod)
+    meta = read_json(folder / "mod.json")
+    tweaks = load_tweaks(folder, meta)
+    found = installed_bundles(meta["bundle_id"])
+    if not found:
+        raise DevError(f"{meta['bundle_id']} is not on the phone (dev.py run {args.mod})")
+    rounds = test_rounds(tweaks, args.section, args.keys)
+    titles = {t["key"]: t["title"] for t in tweaks["tweaks"]}
+    results = {}
+    print(f"==> {sum(len(k) for _, k in rounds)} switches in {len(rounds)} round(s) of {args.seconds} s. Keep the game "
+          "open in a save (or in a fight, for combat switches); every switch goes off again after its round.")
+    try:
+        for title, keys in rounds:
+            test_id = uuid.uuid4().hex[:8]
+            push_live(args.mod, found[0], {"id": test_id, "on": keys})
+            seen = []
+            stream_log(args.mod, args.seconds, seen.append, quiet=True)
+            got = test_results(seen, keys)
+            results.update(got)
+            ok = sum(1 for v in got.values() if v == "reached")
+            print(f"  {title}: {ok} of {len(keys)} reached the game")
+            for k in keys:
+                if got[k] != "reached":
+                    print(f"      {k} ({titles.get(k, k)}): {got[k]}")
+    finally:
+        push_live(args.mod, found[0])  # no test block: the app turns the test switches off and restores values
+    ok = sum(1 for v in results.values() if v == "reached")
+    print(f"==> {ok} of {len(results)} reached the game; all test switches are off again")
+    record = am_root() / "dev" / f"{args.mod}-tests.json"
+    record.parent.mkdir(parents=True, exist_ok=True)
+    past = json.loads(record.read_text(encoding="utf-8")) if record.is_file() else {}
+    stamp = time.strftime("%Y-%m-%d %H:%M", time.gmtime())
+    for k, v in results.items():
+        past[k] = {"result": v, "app_version": meta.get("tested_app_version"), "date": stamp}
+    record.write_text(json.dumps(past, indent=2), encoding="utf-8")
+    print(f"==> {record}. Reached is not the same as working in play: try them, then am mark <key> --works")
     return 0
 
 
@@ -2272,6 +2457,7 @@ def build_parser():
     s.add_argument("mod")
     s.add_argument("pattern", nargs="?", default=".")
     s.add_argument("--class", dest="class_name")
+    s.add_argument("--fields", action="store_true", help="search field names (Namespace.Class.field) instead")
     s.add_argument("--limit", type=int, default=40)
     s.set_defaults(fn=cmd_find)
 
@@ -2467,6 +2653,19 @@ def build_parser():
     s.add_argument("--launch", action="store_true", help="(re)open the game after pushing")
     s.add_argument("--no-check", action="store_true", help="push even when a pin fails the dump check")
     s.set_defaults(fn=cmd_push)
+
+    s = sub.add_parser("share", help="a private 15-minute download link for a build (your own devices)")
+    s.add_argument("mod")
+    s.add_argument("--file", help="this .ipa instead of the newest build")
+    s.add_argument("--signed", action="store_true", help="the copy signed for this PC's phone")
+    s.set_defaults(fn=cmd_share)
+
+    s = sub.add_parser("test", help="switches on from the PC, a section at a time: which reach the game")
+    s.add_argument("mod")
+    s.add_argument("--section", help="one menu section only (\"Combat\")")
+    s.add_argument("--keys", help="these switches only, comma separated")
+    s.add_argument("--seconds", type=int, default=20, help="how long each round listens (default 20)")
+    s.set_defaults(fn=cmd_test)
 
     s = sub.add_parser("post", help="the release post, once every switch is marked works (written locally)")
     s.add_argument("mod")

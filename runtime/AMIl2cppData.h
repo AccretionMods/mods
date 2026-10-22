@@ -66,6 +66,10 @@ void *AMIl2cppNewString(const char *utf8);
 // A repeating main-queue timer (kept alive for the life of the process). The usual home of a no-JIT switch.
 void AMIl2cppEvery(double seconds, void (^block)(void));
 
+// Pauses a Unity game (Time.timeScale 0) or resumes it at the scale it had. Resuming leaves the scale alone when
+// the game changed it meanwhile. AMMenu calls it as the menu opens and closes (AMMenu.onOpenChange).
+void AMIl2cppPauseGame(bool pause);
+
 #ifdef __cplusplus
 }
 #endif
