@@ -127,6 +127,7 @@ th, td { text-align: left; padding: 8px 8px; border-bottom: 1px solid var(--line
 th:first-child, td:first-child { overflow-wrap: anywhere; }
 th:not(:first-child), td:not(:first-child) { white-space: nowrap; width: 1%; }
 td .row { flex-wrap: nowrap; }
+#findOut, #tab-scan, #tab-suggest { overflow-x: auto; }  /* a narrow window scrolls the table, never cuts its buttons */
 tbody tr { transition: background .15s; }
 tbody tr:hover { background: color-mix(in srgb, var(--raised) 60%, transparent); }
 .muted { color: var(--muted); }
