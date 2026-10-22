@@ -533,14 +533,18 @@ class Pins(unittest.TestCase):
         _, m = gen_tweaks.render(PIN_TWEAKS, HOOKS, "game-plus")
         # every pinned switch reports each tick: reached its object, or why not
         self.assertIn('if (tried) AMMenuStatus("keepStats", reached, why);', m)
-        self.assertIn('why = "no StatHandler in the game right now"', m)
-        self.assertIn('why = "StatHandler.set_Hunger could not be read or written"', m)
+        self.assertIn('why = "Waiting for the game: load a save first"', m)
+        self.assertIn('why = "Needs an update for this game version (StatHandler.set_Hunger): run am check"', m)
+        hinted = json.loads(json.dumps(PIN_TWEAKS))
+        hinted["tweaks"][1]["waiting"] = "Open a lock to see it work"
+        _, mh = gen_tweaks.render(hinted, HOOKS, "game-plus")
+        self.assertIn('why = "Open a lock to see it work"', mh)
         self.assertIn('if (tried) AMMenuStatus("lock", reached, why);', m)
         _, m = gen_tweaks.render(TWEAKS, HOOKS, "game-plus")
         # a hook that runs with its switch on says so; a hook-only switch needs JIT
         self.assertIn('if (am_noDamage) AMMenuStatus("noDamage", true, NULL);', m)
         self.assertIn(
-            'if (am_noDamage) AMMenuStatus("noDamage", AMIl2cppHasJIT(), "needs JIT, and this phone has none");', m
+            'if (am_noDamage) AMMenuStatus("noDamage", AMIl2cppHasJIT(), "Needs JIT, and this phone has none");', m
         )
         own = json.loads(json.dumps(TWEAKS))
         for t in own["tweaks"]:
@@ -548,6 +552,16 @@ class Pins(unittest.TestCase):
                 t["jit_label"] = False  # the mod has its own no-JIT code and reports itself
         _, m = gen_tweaks.render(own, HOOKS, "game-plus")
         self.assertNotIn('AMMenuStatus("noDamage", AMIl2cppHasJIT()', m)
+
+    def test_sections(self):
+        grouped = json.loads(json.dumps(TWEAKS))
+        for t, sec in zip(grouped["tweaks"], ["Other", "Combat", "Combat", "Combat", "Other", "Combat"]):
+            t["section"] = sec
+        _, m = gen_tweaks.render(grouped, HOOKS, "game-plus")
+        # a header only where the section changes; the menu itself joins the two "Other" runs
+        self.assertEqual(m.count('[menu addSection:@"Combat"];'), 2)
+        self.assertEqual(m.count('[menu addSection:@"Other"];'), 2)
+        self.assertLess(m.index('[menu addSection:@"Other"];'), m.index('addSwitch:@"keepAwake"'))
 
     def pin(self, pin, kind="switch"):
         return gen_tweaks.pin_problems(pin, kind)

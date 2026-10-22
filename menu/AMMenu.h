@@ -13,6 +13,10 @@ NS_ASSUME_NONNULL_BEGIN
 @property (class, readonly) AMMenu *shared;
 @property (nonatomic, copy) NSString *title;
 
+// Items added after this go under a section header with this title. Adding a title used before puts the
+// next items back in that section (after what it already has), so related items can be added from anywhere.
+- (void)addSection:(NSString *)title;
+
 + (BOOL)boolForKey:(NSString *)key;
 + (float)floatForKey:(NSString *)key;
 

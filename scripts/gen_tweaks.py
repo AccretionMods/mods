@@ -25,6 +25,15 @@ tweaks.json:
   }
 A tweak with no hooks is a plain value for code in Tweak.x (a ticker that writes fields, for example).
 
+Menu sections: "section" ("Combat", "Items & crafting"...) groups tweaks under a header, in the order each
+section first appears; related tweaks go next to each other in the file. Tweak.x can add to a section with
+[AMMenu.shared addSection:@"..."] before its own items.
+
+Menu status (AMMenuStatus): each pinned tweak reports every tick whether it reached its object. "waiting" is
+what the player reads under the red dot when the object is not there ("Start a fight to see it work"; the
+default is "Waiting for the game: load a save first"). "jit_label": false means the mod has its own no-JIT
+code for a hook-only tweak: no "(JIT)" title, and Tweak.x reports its status itself.
+
 Actions, while the tweak is on (a slider counts as on when its value is not its default):
   skip      a void method is not called
   return    the method returns "value" (bool, int or float) instead of running
@@ -442,16 +451,16 @@ def pin_value(pin, var, ctype_, cls, state):
     return [], c_value(value, ctype_)
 
 
-def render_pin(pin, var, kind, key, index):
+def render_pin(pin, var, kind, key, index, waiting=None):
     """C lines (inside am_pin_<key>) that apply one pin to its object(s) once."""
     state = f"s_{key}_{index}"
     what = pin.get("field") or pin.get("setter") or pin.get("call")
     lines = [f"    {{  // pin {index}: {pin['object']} {what}"]
     objects, closers, cls = pin_objects(pin)
     # the menu's status dot (AMMenuStatus): tried this tick, found the object, reached (read or wrote) it
-    holder = pin["object"][:-2] if pin["object"].endswith("[]") else pin["object"].split(".")[0]
-    missing = c_string(f"no {holder} in the game right now")
-    unreachable = c_string(f"{cls}.{what} could not be read or written")
+    # what the player reads under a red dot: the tweak's own hint ("Start a fight to see it work"), or a default
+    missing = c_string(waiting or "Waiting for the game: load a save first")
+    unreachable = c_string(f"Needs an update for this game version ({cls}.{what}): run am check")
     status_start = f"            tried = true; if (!why) why = {missing};"
     status_found = f"            found = true; why = {unreachable};"
     if pin.get("call"):
@@ -748,7 +757,7 @@ def render(tweaks, hooks, mod_name):
             "    static bool logged; bool applied = false, tried = false, found = false, reached = false; const char *why = NULL;"
         )
         for i, pin in enumerate(t["pins"]):
-            m += render_pin(pin, var, kind, t["key"], i)
+            m += render_pin(pin, var, kind, t["key"], i, t.get("waiting"))
         m.append(
             f'    if (applied && !logged) {{ logged = true; AMIl2cppLog(@"pin {t["key"]} applied"); }}'
         )
@@ -767,7 +776,7 @@ def render(tweaks, hooks, mod_name):
                 and t.get("jit_label", True)):
             m.append(
                 f"    if (am_{t['key']}) AMMenuStatus({c_string(t['key'])}, AMIl2cppHasJIT(), "
-                f"\"needs JIT, and this phone has none\");"
+                f"\"Needs JIT, and this phone has none\");"
             )
     if tweaks.get("watch"):
         m.append("    am_watch();")
@@ -780,10 +789,15 @@ def render(tweaks, hooks, mod_name):
         '    NSString *jit = AMIl2cppHasJIT() ? @"" : @" (JIT)";',
         "    (void)jit;",
     ]
+    section = None
     for t in tweaks["tweaks"]:
         kind = t.get("kind", "switch")
         var = f"am_{t['key']}"
         key = c_string(t["key"])
+        # menu groups: the menu keeps a section's items together in the order they come, wherever they are
+        if t.get("section", "") != section:
+            section = t.get("section", "")
+            m.append(f"    [menu addSection:@{c_string(section)}];")
         needs_jit = [
             bool(by_name[hk["method"]].get("needs_jit")) for hk in t.get("hooks", [])
         ]
