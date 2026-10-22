@@ -51,7 +51,11 @@ label { display: block; font-size: 13px; color: var(--muted); margin: 8px 0 3px;
 /* the uppercase mono label of the design system: panel titles, table heads, tabs */
 .label, th, .tabs button, .panel-h { font-family: var(--mono); font-size: 11px; font-weight: 500; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
 header { position: sticky; top: 0; z-index: 5; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 12px 20px; background: color-mix(in srgb, var(--bg) 82%, transparent); backdrop-filter: blur(12px); }
-header::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 1px; background: linear-gradient(90deg, var(--accent), var(--accent-2)); opacity: .7; }
+/* the hairline under the header: violet into cyan, with a light that travels along it every 6 s */
+header::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 1px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2), color-mix(in srgb, var(--accent-2) 30%, white), var(--accent-2), var(--accent));
+  background-size: 300% 100%; animation: flow 6s linear infinite; opacity: .85; }
+@keyframes flow { from { background-position: 100% 0; } to { background-position: -200% 0; } }
 .brand { display: flex; align-items: center; gap: 9px; font-family: var(--mono); font-size: 12px; color: var(--muted); white-space: nowrap; }
 .brand b { color: var(--fg); letter-spacing: .2em; font-weight: 500; }
 .live { width: 8px; height: 8px; border-radius: 50%; background: var(--good); animation: pulse 2.4s ease-in-out infinite; }
