@@ -180,6 +180,34 @@ class Api(unittest.TestCase):
         self.assertEqual(status, 200, job)
         self.assertEqual(job["args"], ["C:/no/such.ipa", "--install"])
         self.post(f"/api/jobs/{job['id']}/stop", {})
+        # Claude Code runs: read-only gets reading tools and read-only dev commands only
+        old_exe = server.claude_exe
+        server.claude_exe = lambda: "claude"
+        try:
+            ro = server.claude_command("Goal: explore", True)
+            rw = server.claude_command("Goal: fix", False)
+        finally:
+            server.claude_exe = old_exe
+        self.assertEqual(ro[:3], ["claude", "-p", "Goal: explore"])
+        allowed_ro = ro[ro.index("--allowedTools") + 1 : ro.index("--permission-mode")]
+        self.assertNotIn("Edit", allowed_ro)
+        self.assertNotIn(f"Bash({server.DEV}:*)", allowed_ro)
+        self.assertIn(f"Bash({server.DEV} find:*)", allowed_ro)
+        self.assertIn("--disallowedTools", ro)
+        self.assertIn("acceptEdits", rw)
+        self.assertIn(f"Bash({server.DEV}:*)", rw)
+        self.assertFalse(any(a in ("Bash", "Bash(*)") for a in rw))  # never any shell command
+        lines = server.claude_lines(json.dumps({"type": "assistant", "message": {"content": [
+            {"type": "text", "text": "Found it.\nTwo ways."},
+            {"type": "tool_use", "name": "Bash", "input": {"command": "uv run ... find x Hp"}}]}}))
+        self.assertEqual(lines[:2], ["Found it.", "Two ways."])
+        self.assertTrue(lines[2].startswith("  » Bash uv run"))
+        done = server.claude_lines(json.dumps({"type": "result", "subtype": "success", "num_turns": 3,
+                                               "duration_ms": 4000, "total_cost_usd": 0.12}))
+        self.assertIn("3 turns, 4 s, $0.12", done[-1])
+        self.assertEqual(server.claude_lines("not json"), ["not json"])
+        status, data = self.post("/api/claude", {"prompt": "hi", "read_only": True})
+        self.assertEqual(status, 400)
         # prompt builder: every {fact} a task uses is one the context gives
         status, ctx = self.get("/api/mods/game-plus/context")
         self.assertEqual(status, 200, ctx)

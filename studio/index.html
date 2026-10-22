@@ -602,7 +602,15 @@ const App = {
     const out = this.el("textarea", { rows: "11", style: "width:100%;margin-top:8px", spellcheck: "false" });
     const copy = this.el("button", { class: "primary", onclick: () => navigator.clipboard.writeText(out.value).then(() => this.toast("prompt copied: paste it into Claude Code", "ok")).catch(() => { out.select(); this.toast("select and copy the prompt", "bad"); }) }, "Copy prompt");
     const refresh = this.el("button", { class: "small", title: "read the mod's facts again (after a log, build or mark)", onclick: async () => { try { ctx = await this.api(`/api/mods/${this.mod}/context`); build(); this.toast("facts updated", "ok"); } catch (e) { this.toast(e.message, "bad"); } } }, "Refresh facts");
-    box.append(this.el("div", { class: "row" }, task, ask, tags, refresh), hints, out, this.el("div", { class: "row", style: "margin-top:6px" }, copy, this.el("span", { class: "muted small", text: "You can edit the prompt above before copying." })));
+    const runBtn = this.el("button", { class: "small", onclick: async () => {
+      const t = conf && (conf.tasks.find(x => x.id === task.value) || conf.tasks[0]); if (!t) return;
+      const readOnly = !!t.read_only;
+      if (!readOnly && !confirm("This task may change files: Claude Code can edit this repo and run any am command (build, sign, install on the phone). It cannot push, publish or run other shell commands. Run it?")) return;
+      try { const j = await this.api("/api/claude", { prompt: out.value, read_only: readOnly }); this.showJob(j); this.poll(j.id); this.byId("jobsPanel").scrollIntoView({ behavior: "smooth", block: "nearest" }); this.toast("Claude Code is working: its answer streams into Jobs", "ok"); }
+      catch (e) { this.toast(e.message, "bad"); }
+    } }, "Run with Claude Code");
+    const runNote = this.el("span", { class: "muted small" });
+    box.append(this.el("div", { class: "row" }, task, ask, tags, refresh), hints, out, this.el("div", { class: "row", style: "margin-top:6px" }, copy, runBtn, runNote));
     let conf = null, ctx = null;
     const fill = (text, facts) => text.replace(/\{(\w+)\}/g, (m, k) => (k in facts ? String(facts[k]) : m));
     const build = () => {
@@ -615,6 +623,8 @@ const App = {
       facts.where = fill(conf.where, facts);
       out.value = t.lines.map(l => fill(l, facts)).join("\n");
       tags.replaceChildren(t.read_only ? this.el("span", { class: "badge good", text: "read only" }) : this.el("span", { class: "badge warn", text: "changes files" }));
+      runBtn.textContent = t.read_only ? "Run with Claude Code (read only)" : "Run with Claude Code…";
+      runNote.textContent = t.read_only ? "Claude reads the repo and runs read-only am commands; it changes nothing." : "Asks first: Claude may edit files and run am commands (no push, no publish).";
       const missing = [];
       if ((t.needs || []).includes("ask") && !line) missing.push([`Type the one line: ${t.ask}`]);
       if (t.id === "port" && line && !/^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+){2,}$/.test(line)) missing.push(["Use the game's bundle ID (Games tab or am games search shows it)."]);

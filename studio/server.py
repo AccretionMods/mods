@@ -18,6 +18,8 @@ command's options as JSON (the same names as dev.py's flags, dashes as underscor
 {"command": "build", "mod": "...", "args": ["--ipa"]}, GET /api/jobs/<id>?since=N, POST /api/jobs/<id>/stop.
 Console: POST /api/console {"line": "find my-mod \"Damage|Hp\""} runs any dev.py command as a job (this PC only),
 GET /api/console/commands, POST /api/jobs/<id>/input {"text": "2"} answers a console job's prompt.
+POST /api/claude {"prompt", "read_only"} runs Claude Code headless (claude -p) on the prompt builder's prompt and
+streams its text and tool calls as a job (this PC only); read-only runs get reading tools only.
 
 Binds 127.0.0.1: only this PC. --host 0.0.0.0 shows it to the Wi-Fi with no login, for a trusted network.
 """
@@ -29,6 +31,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import threading
@@ -68,9 +71,11 @@ MOD_NAME = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 
 class Job:
-    def __init__(self, command, argv, interactive=False):
+    def __init__(self, command, argv, interactive=False, cmd=None, parse=None):
         self.id = f"{int(time.time() * 1000):x}{len(JOBS):x}"
         self.interactive = interactive  # console jobs take typed answers (pick, plumesign's 2FA code)
+        self.cmd = cmd  # a whole command line instead of dev.py (the Claude Code runs)
+        self.parse = parse  # turns each output line into the lines shown (Claude's stream-json)
         self.command = command
         self.argv = argv
         self.lines = []
@@ -80,7 +85,7 @@ class Job:
         self.proc = None
 
     def run(self):
-        cmd = [
+        cmd = self.cmd or [
             sys.executable,
             str(HERE.parent / "scripts" / "dev.py"),
             self.command,
@@ -107,7 +112,8 @@ class Job:
             self.status, self.code = "failed", -1
             return
         for line in self.proc.stdout:
-            self.lines.append(line.rstrip("\n"))
+            line = line.rstrip("\n")
+            self.lines.extend(self.parse(line) if self.parse else [line])
         self.code = self.proc.wait()
         self.status = (
             "done"
@@ -149,6 +155,91 @@ def start_job(command, argv, interactive=False):
         if not isinstance(a, str) or "\n" in a:
             raise dev.DevError("bad argument")
     job = Job(command, argv, interactive)
+    JOBS[job.id] = job
+    threading.Thread(target=job.run, daemon=True).start()
+    return job
+
+
+# Claude Code runs from the prompt builder. dev.py through uv: python on this PC can be the Store stub.
+DEV = "uv run --no-project --python 3.12 scripts/dev.py"
+READ_ONLY_DEV = ("status", "find", "fields", "suggest", "check", "games", "help")
+CLAUDE_NOTE = (
+    "This is a headless run started from Mod Studio's prompt builder in the AccretionMods/mods repo. "
+    "Project: Accretion (record it with: echo \"[[project: Accretion]]\"); don't ask which project. "
+    f"Run the mod commands written as `am <command>` as `{DEV} <command>`. "
+    "Nobody can answer questions during this run: when a choice is the owner's, stop and list the options."
+)
+
+
+def claude_exe():
+    found = shutil.which("claude") or shutil.which("claude", path=str(Path.home() / ".local" / "bin"))
+    if not found:
+        raise dev.DevError("Claude Code (claude) is not installed or not on PATH")
+    return found
+
+
+def claude_command(prompt, read_only):
+    """The claude -p command line for a builder prompt. Read-only: reading tools and the read-only dev.py
+    commands only, no edits. Otherwise: edits accepted, any dev.py command, no other shell commands."""
+    if read_only:
+        allowed = ["Read", "Grep", "Glob"] + [f"Bash({DEV} {c}:*)" for c in READ_ONLY_DEV]
+        mode = ["--permission-mode", "default", "--disallowedTools", "Edit", "Write", "NotebookEdit"]
+    else:
+        allowed = ["Read", "Grep", "Glob", "Edit", "Write", f"Bash({DEV}:*)", 'Bash(echo "[[project:*)']
+        mode = ["--permission-mode", "acceptEdits"]
+    if read_only:
+        allowed.append('Bash(echo "[[project:*)')
+    return [
+        claude_exe(), "-p", prompt,
+        "--output-format", "stream-json", "--verbose",
+        "--append-system-prompt", CLAUDE_NOTE,
+        "--allowedTools", *allowed, *mode,
+    ]
+
+
+def claude_lines(raw):
+    """One stream-json event from claude -p as readable lines: Claude's text, the tools it uses, the result."""
+    try:
+        ev = json.loads(raw)
+    except ValueError:
+        return [raw] if raw.strip() else []
+    kind = ev.get("type")
+    if kind == "assistant":
+        out = []
+        for part in (ev.get("message") or {}).get("content") or []:
+            if part.get("type") == "text" and part.get("text", "").strip():
+                out += part["text"].rstrip().split("\n")
+            elif part.get("type") == "tool_use":
+                args = part.get("input") or {}
+                what = args.get("command") or args.get("file_path") or args.get("pattern") or ""
+                out.append(f"  » {part.get('name')} {str(what)[:160]}")
+        return out
+    if kind == "user":
+        out = []
+        for part in (ev.get("message") or {}).get("content") or []:
+            if isinstance(part, dict) and part.get("type") == "tool_result" and part.get("is_error"):
+                text = part.get("content")
+                text = text if isinstance(text, str) else json.dumps(text)[:300]
+                out.append(f"  ! {text.strip()[:300]}")
+        return out
+    if kind == "result":
+        cost = ev.get("total_cost_usd")
+        secs = (ev.get("duration_ms") or 0) / 1000
+        return ["", f"== Claude finished: {ev.get('subtype', '')}, {ev.get('num_turns', '?')} turns, {secs:.0f} s"
+                + (f", ${cost:.2f}" if isinstance(cost, (int, float)) else "")]
+    if kind == "system" and ev.get("subtype") == "init":
+        return [f"== Claude Code ({ev.get('model', '')}) in {ev.get('cwd', '')}"]
+    return []
+
+
+def start_claude(prompt, read_only):
+    prompt = (prompt or "").strip()
+    if len(prompt) < 10:
+        raise dev.DevError("the prompt is empty")
+    if len(prompt) > 20000:
+        raise dev.DevError("the prompt is too long (20,000 characters at most)")
+    job = Job("claude", ["(read only)" if read_only else "(may change files)"], cmd=claude_command(prompt, read_only),
+              parse=claude_lines)
     JOBS[job.id] = job
     threading.Thread(target=job.run, daemon=True).start()
     return job
@@ -569,6 +660,9 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         parts = [p for p in url.path.split("/") if p]
         body = self.body_json()
+        if parts == ["api", "claude"]:
+            self.local_only()
+            return self.send_json(start_claude(str(body.get("prompt", "")), bool(body.get("read_only", True))).view())
         if parts == ["api", "console"]:
             self.local_only()
             return self.send_json(console(str(body.get("line", ""))).view())

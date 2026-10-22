@@ -196,7 +196,10 @@ feature, narrow down the best approach, explore the dump, fix a switch or crash,
 start a mod for another game, check before publishing), type one line, and it writes a prompt for Claude
 Code with the mod's facts (versions, dump, switches and their phone results, the last log errors Studio saw)
 in the goal / target / done when / limits shape, says which detail is missing (with a button that gets it),
-and copies it. The tasks are in `studio/prompts.json`, editable. The console answers only this PC, even with `--host 0.0.0.0`. The Switches tab has
+and copies it, or **Run with Claude Code** runs it headless on this PC (`claude -p`) and streams Claude's text and
+tool calls into Jobs. Read-only tasks get reading tools and the read-only `am` commands (status, find,
+fields, suggest, check, games) and no edits; other tasks ask first, then may edit files and run any `am`
+command, but no other shell command (no push, no publish). The tasks are in `studio/prompts.json`, editable. The console answers only this PC, even with `--host 0.0.0.0`. The Switches tab has
 Build .ipa, Sign + install and Build, sign, install, open, log; job output shows under every tab. Quick commands
 run through `dev.py`'s own functions; long ones run `dev.py` as a subprocess. The first Apple ID
 sign-in (2FA) must be done once from a console, then the page's phone buttons work. The server binds
