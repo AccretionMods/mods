@@ -61,23 +61,23 @@
       "screenshots": [],
       "versions": [
         {
-          "version": "10.1-mod1.0.7",
-          "date": "2026-10-21T16:55:31Z",
-          "size": 81605508,
-          "downloadURL": "https://bbcjpinhvlxocjxlyplt.supabase.co/functions/v1/download?app=io.github.accretionmods.thewandererplus&version=10.1-mod1.0.7",
+          "version": "10.1-mod1.0.8",
+          "date": "2026-10-22T18:39:27Z",
+          "size": 81647945,
+          "downloadURL": "https://bbcjpinhvlxocjxlyplt.supabase.co/functions/v1/download?app=io.github.accretionmods.thewandererplus&version=10.1-mod1.0.8",
           "minOSVersion": "15.0",
-          "localizedDescription": "Mod 1.0.7 for The Wanderer+ 10.1."
+          "localizedDescription": "Mod 1.0.8 for The Wanderer+ 10.1."
         }
       ],
-      "version": "10.1-mod1.0.7",
-      "versionDate": "2026-10-21T16:55:31Z",
-      "versionDescription": "Mod 1.0.7 for The Wanderer+ 10.1.",
-      "downloadURL": "https://bbcjpinhvlxocjxlyplt.supabase.co/functions/v1/download?app=io.github.accretionmods.thewandererplus&version=10.1-mod1.0.7",
-      "size": 81605508,
+      "version": "10.1-mod1.0.8",
+      "versionDate": "2026-10-22T18:39:27Z",
+      "versionDescription": "Mod 1.0.8 for The Wanderer+ 10.1.",
+      "downloadURL": "https://bbcjpinhvlxocjxlyplt.supabase.co/functions/v1/download?app=io.github.accretionmods.thewandererplus&version=10.1-mod1.0.8",
+      "size": 81647945,
       "accretionMod": {
         "id": "thewanderer-plus",
         "kind": "tweak",
-        "modVersion": "1.0.7"
+        "modVersion": "1.0.8"
       }
     }
   ],

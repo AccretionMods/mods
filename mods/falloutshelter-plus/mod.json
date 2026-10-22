@@ -1,11 +1,11 @@
 {
   "name": "Fallout Shelter+",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "kind": "tweak",
   "category": "games",
   "personal": true,
   "subtitle": "Single-player switches, resource and dweller boosts, item picker.",
-  "description": "Tweak for Fallout Shelter: inject it into your own decrypted copy (Accretion offers it when you sign Fallout Shelter). No game files are hosted here; prebuilt .ipa files are never published.\n\nMod menu (tap the floating button). Everything works without JIT:\n• Dwellers take no combat damage\n• Incidents do no damage\n• Weapon damage ×1-10\n• Production and crafting speed ×1-10\n• Training speed ×1-10\n• Wasteland speed ×1-10\n• Rushes always succeed\n• Room output ×1-10\n• Game speed ×1-5\n• No damage from other sources\n• No radiation\n• No fires or infestations\n• Caps gained ×1-10\n• Keep food, water and power full\n• Dwellers always happy\n• Max SPECIAL for every dweller\n• Fast level-ups\n• Explorers return instantly\n• Add a weapon / Add an outfit (rare and legendary)\n• Keep screen awake\n\nAlso fixes a re-signed copy's main menu (it loads twice), so vaults open, and answers iCloud, Game Center, keychain and age-range requests that a re-signed copy can't get.\n\nChecked against Fallout Shelter 2.7.0; on other versions missing hooks stay off.",
+  "description": "Tweak for Fallout Shelter: inject it into your own decrypted copy (Accretion offers it when you sign Fallout Shelter). No game files are hosted here; prebuilt .ipa files are never published.\n\nMod menu (tap the floating button). Everything works without JIT:\n• Dwellers take no combat damage\n• Incidents do no damage\n• Weapon damage ×1-10\n• Production and crafting speed ×1-10\n• Training speed ×1-10\n• Wasteland speed ×1-10\n• Rushes always succeed\n• Room output ×1-10\n• Game speed ×1-5\n• No damage from other sources\n• No radiation\n• No fires or infestations\n• Caps gained ×1-10\n• Keep food, water and power full\n• Dwellers always happy\n• Max SPECIAL for every dweller\n• Fast level-ups\n• Explorers return instantly\n• Babies arrive and grow up fast\n• Add a weapon / Add an outfit (every quality tier)\n• Keep screen awake\n\nAlso fixes a re-signed copy's main menu (it loads twice), so vaults open, and answers iCloud, Game Center, keychain and age-range requests that a re-signed copy can't get.\n\nChecked against Fallout Shelter 2.7.0; on other versions missing hooks stay off.",
   "target_bundle_id": "com.bethsoft.falloutshelter",
   "bundle_id": "io.github.accretionmods.falloutshelterplus",
   "display_name": "Fallout Shelter+",

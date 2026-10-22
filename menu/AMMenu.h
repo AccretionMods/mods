@@ -4,8 +4,10 @@
 // Values are saved in the app's own NSUserDefaults under "AM_<key>", so they survive
 // relaunches and stay inside the app's sandbox.
 //
-// The look follows Accretion's design system (dark first, violet-black grounds, surface cards on hairlines,
-// calm status colours). Long menus fold their sections and get a search field.
+// The official mod menu template (owner, 2026-10-22): every mod uses this menu as it is; mods add items, never
+// restyle it. The rules are in README "The mod menu (official template)". The look follows Accretion's design
+// system (dark first, violet-black grounds, one outlined box per category, calm status colours); categories
+// start expanded and long menus get a search field.
 
 #import <UIKit/UIKit.h>
 
@@ -51,8 +53,10 @@ NS_ASSUME_NONNULL_BEGIN
          onChange:(nullable void (^)(float value))block;
 
 // A row that opens a list page. `entries` is asked for the rows each time the page opens (so a mod can build
-// them from the running game): dictionaries with "title" and optionally "symbol" (an SF Symbol name) and
-// "detail". Tapping a row calls `block` with its index; the page stays open so several picks are easy.
+// them from the running game): dictionaries with "title" and optionally "symbol" (an SF Symbol name),
+// "detail" and "group". Entries with a "group" (a quality tier: "Legendary", "Rare", ...) are shown one box per
+// group, in the order they first appear, so list the best tier first; known tier names get their colour. Tapping a
+// row calls `block` with its index in `entries`; the page stays open so several picks are easy.
 - (void)addList:(NSString *)title
          symbol:(nullable NSString *)symbol
         entries:(NSArray<NSDictionary<NSString *, NSString *> *> *(^)(void))entries
@@ -78,5 +82,13 @@ void AMMenuStatus(const char *key, bool ok, const char *_Nullable reason);
 extern "C"
 #endif
 void AMMenuNote(const char *key, const char *_Nullable note);
+
+// What a list page's pick did, called from inside its onPick block: ok and a few words ("Added", "Load a vault
+// first"). The row then lights up cyan with "✓ Added" or red with the reason. Without a call the row says "✓ Sent":
+// the mod did not say whether the game took it.
+#ifdef __cplusplus
+extern "C"
+#endif
+void AMMenuPickResult(bool ok, const char *_Nullable text);
 
 NS_ASSUME_NONNULL_END

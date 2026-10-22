@@ -320,14 +320,19 @@ static NSArray<NSDictionary<NSString *, NSString *> *> *buildCatalogue(void) {
             NSString *name = il2cppString(nameObject) ?: il2cppString(*(void **)(it + 0x20)) ?: @"(unnamed)";
             BOOL weapon = it[0x101] || it[0x122], ammo = it[0x102] || it[0x11D], wearable = it[0x103];
             BOOL material = it[0x104] || it[0x110], water = it[0x129], consumable = it[0x100];
-            NSString *symbol = weapon ? @"scope" : ammo ? @"circle.grid.3x3.fill" : wearable ? @"tshirt.fill"
+            BOOL medical = it[0x111] || it[0x112] || it[0x114] || it[0x115];  // Bandage, MedPack, ZCure, BloodBag
+            NSString *symbol = weapon ? @"scope" : ammo ? @"circle.grid.3x3.fill" : wearable ? @"tshirt.fill" : medical ? @"cross.case.fill"
                              : water ? @"drop.fill" : consumable ? @"fork.knife" : material ? @"hammer.fill" : @"shippingbox.fill";
-            NSString *kind = weapon ? @"weapon" : ammo ? @"ammo" : wearable ? @"wearable"
-                           : water ? @"water" : consumable ? @"consumable" : material ? @"material" : @"misc";
-            [pairs addObject:@[@{@"title": name, @"symbol": symbol, @"detail": kind}, [NSValue valueWithPointer:it]]];
+            NSString *kind = weapon ? @"Weapons" : ammo ? @"Ammo" : wearable ? @"Wearables" : medical ? @"Medical"
+                           : water ? @"Water" : consumable ? @"Food & drink" : material ? @"Materials" : @"Misc";
+            [pairs addObject:@[@{@"title": name, @"symbol": symbol, @"group": kind}, [NSValue valueWithPointer:it]]];
         }
     }
+    // one box per kind in the menu (weapons first, misc last), by name inside a kind
+    NSArray *kinds = @[@"Weapons", @"Ammo", @"Wearables", @"Medical", @"Food & drink", @"Water", @"Materials", @"Misc"];
     [pairs sortUsingComparator:^NSComparisonResult(NSArray *a, NSArray *b) {
+        NSUInteger ka = [kinds indexOfObject:a[0][@"group"]], kb = [kinds indexOfObject:b[0][@"group"]];
+        if (ka != kb) return ka < kb ? NSOrderedAscending : NSOrderedDescending;
         return [a[0][@"title"] localizedCaseInsensitiveCompare:b[0][@"title"]];
     }];
     for (NSArray *pair in pairs) { [rows addObject:pair[0]]; [sCatalogue addObject:pair[1]]; }
@@ -343,6 +348,9 @@ static void spawnItem(NSInteger index) {
     void *argv[4] = {item, &exploring, &amount, &showText};
     BOOL ok = callMethod(item, "Items", "AddItem", 4, argv);
     os_log(OS_LOG_DEFAULT, "[The Wanderer+] spawn item %{public}ld x%{public}d: %{public}s", (long)index, amount, ok ? "ok" : "failed");
+    char text[48];
+    snprintf(text, sizeof text, ok ? "Added x%d" : "The game refused it", amount);
+    AMMenuPickResult(ok, text);
 }
 
 // InventoryData.GiveRandomItem(int level = -1) / GiveRandomWeapon(int level = -1): the game's own debug buttons.

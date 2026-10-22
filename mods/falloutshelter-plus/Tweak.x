@@ -25,7 +25,7 @@ static BOOL sRushWins, sNoStatDamage, sNoRadiation, sNoIncidents;
 static float sOutput = 1, sSpeed = 1;
 // extras (no JIT needed): caps multiplier, full resources, dweller boosts, instant returns
 static float sCaps = 1;
-static BOOL sFullResources, sHappy, sMaxSpecial, sFastLevels, sInstantReturn;
+static BOOL sFullResources, sHappy, sMaxSpecial, sFastLevels, sInstantReturn, sFastBabies;
 static float sGameTimeScale = 1;  // what the game itself last asked for (pause sets 0)
 
 // IL2CPP methods take self (instance methods), the C# arguments, then a MethodInfo pointer. The runtime
@@ -124,8 +124,9 @@ static void *il2cpp(const char *name) { return dlsym(RTLD_DEFAULT, name); }
 // EnableJoystickButtonStatesForView before it handles a tap, and the game's ExceptionHandler turns that into a
 // quit (why entering a vault closed the game, 1.0 and 2.0). And when a vault loads, the game removes only the
 // first, registered menu, so the second stayed drawn over the vault.
-// Fix: give the second menu its button table, built the way OnAwake builds it, and destroy it once the game has
-// removed the first. Running OnAwake again, or making the second menu the singleton, crashed the game (segfault).
+// Fix: give the second menu its button table, built the way OnAwake builds it, and hide it (its GameObject
+// inactive): with both copies on screen a new player saw the vault list and the number picker drawn over each
+// other and had to tap blindly (2026-10-22). It is destroyed once the game has removed the first. Running OnAwake again, or making the second menu the singleton, crashed the game (segfault).
 
 // Field offsets below come from the 2.7.0 dump. Hooks are found by name and simply stay off when a version lacks
 // them, but raw offsets on another version would read or write the wrong memory, so everything that uses them
@@ -208,7 +209,11 @@ static void repairMenus(void) {
         wbarrier(m, (void **)(m + 0x218), table);
         sDuplicateMenu = m;
         duplicateAlive = YES;
-        logMenu("second copy given its button table");
+        void *go = invoke(klass("UnityEngine.CoreModule", "UnityEngine", "Component"), "get_gameObject", 0, m, NULL);
+        uint8_t off = 0;
+        void *hide[1] = {&off};
+        if (go) invoke(klass("UnityEngine.CoreModule", "UnityEngine", "GameObject"), "SetActive", 1, go, hide);
+        logMenu(go ? "second copy given its button table and hidden" : "second copy given its button table");
     }
     if (sDuplicateMenu && duplicateAlive && !originalAlive) {
         void *root = invoke(klass("UnityEngine.CoreModule", "UnityEngine", "Component"), "get_gameObject", 0, sDuplicateMenu, NULL);
@@ -268,6 +273,24 @@ static void applyNoJitSwitches(void) {
     if (rp) {
         *(float *)(rp + 0x4C) = baseNoRush * sOutput;
         *(float *)(rp + 0x40) = baseRush * sOutput;
+    }
+
+    // fast babies: GameParameters.m_dweller (0x20) -> DwellerParameters m_childhoodDuration 0xC4,
+    // m_breedingCycleTime 0xC8, m_relationshipMakeBabyTime 0xE4, m_relationshipBabyBirthTime 0xE8 (seconds) are
+    // capped at 10 s while on and put back when off. Timers already running keep their length.
+    static const int babyOffsets[4] = {0xC4, 0xC8, 0xE4, 0xE8};
+    static char *dwellerParams;
+    static float babyBase[4];
+    static BOOL babiesFast;
+    char *dp = gp ? *(char **)(gp + 0x20) : NULL;
+    if (dp && dp != dwellerParams) {
+        dwellerParams = dp;
+        for (int k = 0; k < 4; k++) babyBase[k] = *(float *)(dp + babyOffsets[k]);
+        babiesFast = NO;
+    }
+    if (dp && (sFastBabies || babiesFast)) {
+        for (int k = 0; k < 4; k++) *(float *)(dp + babyOffsets[k]) = sFastBabies ? fminf(babyBase[k], 10) : babyBase[k];
+        babiesFast = sFastBabies;
     }
 
     if (sNoStatDamage || sNoRadiation) {
@@ -411,6 +434,9 @@ static NSString *nsString(void *s) {
 static NSMutableArray<NSString *> *sItemIds;
 static NSMutableArray<NSNumber *> *sItemTypes;
 
+// Every weapon or outfit the game defines, one group per quality tier (EItemRarity: Legendary 4, Rare 3,
+// Normal 2, Common 1), best first; weapons by their top damage inside a tier, outfits by name. The menu shows
+// one box per tier.
 static NSArray *itemEntries(BOOL weapons) {
     if (!offsetsMatch()) return @[];
     NSMutableArray *entries = [NSMutableArray array];
@@ -421,17 +447,30 @@ static NSArray *itemEntries(BOOL weapons) {
     char *items = gp ? *(char **)(gp + 0x28) : NULL;
     char *array = items ? *(char **)(items + (weapons ? 0xB0 : 0x10)) : NULL;
     int32_t n = array ? *(int32_t *)(array + 0x18) : 0;
-    for (int rarity = 4; rarity >= 3; rarity--) {
+    NSArray *tiers = @[@"", @"Common", @"Normal", @"Rare", @"Legendary"];
+    for (int rarity = 4; rarity >= 1; rarity--) {
+        NSMutableArray<NSArray *> *tier = [NSMutableArray array];  // {entry, item id, sort key}
         for (int32_t i = 0; i < n; i++) {
             char *item = ((char **)(array + 0x20))[i];
             if (!item || *(int32_t *)(item + 0x20) != rarity || *(uint8_t *)(item + 0x48)) continue;
             NSString *itemId = nsString(*(void **)(item + (weapons ? 0x88 : 0x98)));
             if (!itemId.length) continue;
-            NSString *detail = rarity == 4 ? @"Legendary" : @"Rare";
-            if (weapons) detail = [detail stringByAppendingFormat:@" · damage %d-%d", *(int32_t *)(item + 0x90), *(int32_t *)(item + 0x94)];
             NSString *name = nsString(*(void **)(item + 0x10));
-            [entries addObject:@{@"title": name.length ? name : itemId, @"detail": detail}];
-            [sItemIds addObject:itemId];
+            NSMutableDictionary *entry = [@{@"title": name.length ? name : itemId, @"group": tiers[rarity]} mutableCopy];
+            int32_t top = 0;
+            if (weapons) {
+                top = *(int32_t *)(item + 0x94);
+                entry[@"detail"] = [NSString stringWithFormat:@"%d-%d", *(int32_t *)(item + 0x90), top];
+            }
+            [tier addObject:@[entry, itemId, @(top)]];
+        }
+        [tier sortUsingComparator:^NSComparisonResult(NSArray *a, NSArray *b) {
+            if (weapons && [a[2] intValue] != [b[2] intValue]) return [b[2] compare:a[2]];
+            return [a[0][@"title"] localizedCaseInsensitiveCompare:b[0][@"title"]];
+        }];
+        for (NSArray *row in tier) {
+            [entries addObject:row[0]];
+            [sItemIds addObject:row[1]];
             [sItemTypes addObject:@(weapons ? 2 : 1)];  // EItemType: Outfit 1, Weapon 2
         }
     }
@@ -443,10 +482,19 @@ static void addItem(NSInteger index) {
     void *(*string_new)(const char *) = il2cpp("il2cpp_string_new");
     char *vault = theVault();
     char *inventory = vault ? *(char **)(vault + 0x158) : NULL;
-    if (!string_new || !inventory) return;
+    if (!string_new || !inventory) { AMMenuPickResult(false, "Open a vault first"); return; }
     int32_t type = sItemTypes[index].intValue, count = 1;
     void *args[3] = {&type, string_new(sItemIds[index].UTF8String), &count};
-    invoke(klass("Assembly-CSharp", "", "Inventory"), "AddAndRecordDwellerItem", 3, inventory, args);
+    // AddAndRecordDwellerItem is declared on VaultInventory (Vault.m_inventory's class), not on Inventory: looked up
+    // on Inventory it was never found and nothing was added (2026-10-22)
+    void *(*method_from_name)(void *, const char *, int) = il2cpp("il2cpp_class_get_method_from_name");
+    void *(*runtime_invoke)(void *, void *, void **, void **) = il2cpp("il2cpp_runtime_invoke");
+    void *m = method_from_name ? method_from_name(klass("Assembly-CSharp", "", "VaultInventory"), "AddAndRecordDwellerItem", 3) : NULL;
+    void *exception = NULL;
+    if (m && runtime_invoke) runtime_invoke(m, inventory, args, &exception);
+    os_log(OS_LOG_DEFAULT, "[Fallout Shelter+] add item %{public}@: %{public}s", sItemIds[index],
+           !m ? "method not found" : exception ? "the game threw" : "added");
+    AMMenuPickResult(m && !exception, !m ? "Not found in this game version" : exception ? "The game refused it" : "Added to storage");
 }
 
 // Hooked to learn the table's class from the menu whose OnAwake finished, and to start the repair.
@@ -540,6 +588,7 @@ static void registerHooks(void) {
     [menu addSwitch:@"maxSpecial" title:@"Max SPECIAL for every dweller" defaultValue:NO onChange:^(BOOL on) { sMaxSpecial = on; }];
     [menu addSwitch:@"fastLevels" title:@"Fast level-ups" defaultValue:NO onChange:^(BOOL on) { sFastLevels = on; }];
     [menu addSwitch:@"instantReturn" title:@"Explorers return instantly" defaultValue:NO onChange:^(BOOL on) { sInstantReturn = on; }];
+    [menu addSwitch:@"fastBabies" title:@"Babies arrive and grow up fast" defaultValue:NO onChange:^(BOOL on) { sFastBabies = on; }];
     [menu addList:@"Add a weapon" symbol:@"scope" entries:^NSArray *{ return itemEntries(YES); } onPick:^(NSInteger i) { addItem(i); }];
     [menu addList:@"Add an outfit" symbol:@"tshirt" entries:^NSArray *{ return itemEntries(NO); } onPick:^(NSInteger i) { addItem(i); }];
 
@@ -561,6 +610,7 @@ static void registerHooks(void) {
     sMaxSpecial = [AMMenu boolForKey:@"maxSpecial"];
     sFastLevels = [AMMenu boolForKey:@"fastLevels"];
     sInstantReturn = [AMMenu boolForKey:@"instantReturn"];
+    sFastBabies = [AMMenu boolForKey:@"fastBabies"];
     sSpeed = MAX([AMMenu floatForKey:@"speed"], 1);
 
     registerHooks();
