@@ -70,6 +70,7 @@ JOB_COMMANDS = {
     "start",
     "report",
     "post",
+    "push",
 }
 QUICK = {"add", "pin", "call", "tweak", "remove", "gen", "mark"}
 MOD_NAME = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")

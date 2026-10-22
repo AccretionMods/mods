@@ -656,6 +656,7 @@ def render(tweaks, hooks, mod_name):
         '#import "menu/AMMenu.h"',
         '#import "runtime/AMIl2cpp.h"',
         '#import "runtime/AMIl2cppData.h"',
+        '#import "runtime/AMLivePins.h"',
         "",
         f"NSString *const AMTweaksTitle = @{c_string(title)};",
         f"NSString *const AMTweaksLogTag = @{c_string(tag)};",
@@ -757,6 +758,7 @@ def render(tweaks, hooks, mod_name):
         )
         m.append(f"static void am_pin_{t['key']}(void) {{")
         m.append(f"    if (!{on}) return;")
+        m.append(f"    if (AMLivePinsHas({c_string(t['key'])})) return;  // the pushed live_tweaks.json has this switch")
         m.append(
             "    static bool logged; bool applied = false, tried = false, found = false, reached = false; const char *why = NULL;"
         )
@@ -779,9 +781,10 @@ def render(tweaks, hooks, mod_name):
         if (t.get("hooks") and not t.get("pins") and t.get("kind", "switch") == "switch"
                 and t.get("jit_label", True)):
             m.append(
-                f"    if (am_{t['key']}) AMMenuStatus({c_string(t['key'])}, AMIl2cppHasJIT(), "
+                f"    if (am_{t['key']} && !AMLivePinsHas({c_string(t['key'])})) AMMenuStatus({c_string(t['key'])}, AMIl2cppHasJIT(), "
                 f"\"Needs JIT, and this phone has none\");"
             )
+    m.append("    AMLivePinsTick();  // switches pushed as live_tweaks.json (dev.py push): no rebuild")
     if tweaks.get("watch"):
         m.append("    am_watch();")
     m.append("}")
@@ -832,6 +835,7 @@ def render(tweaks, hooks, mod_name):
         m.append(
             f"    AMIl2cppRegister({c_string(full)}, (void *)hook_{name}, (void **)&orig_{name});"
         )
+    m.append("    AMLivePinsLoad();  // a pushed live_tweaks.json: its new switches join the menu")
     m.append("}")
     m.append("")
     if customs:

@@ -546,6 +546,11 @@ static NSString *const AMButtonSpot = @"AM__buttonSpot";  // where the button wa
     return [NSUserDefaults.standardUserDefaults floatForKey:AMKey(key)];
 }
 
+- (BOOL)hasItem:(NSString *)key {
+    for (AMItem *item in _items) if ([item.key isEqualToString:key]) return YES;
+    return NO;
+}
+
 - (void)addSection:(NSString *)title {
     _section = [title copy];
 }
