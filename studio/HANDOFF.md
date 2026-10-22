@@ -13,7 +13,10 @@ chose a local web app in this repo over a desktop app, a Claude panel or an iOS 
 - `studio/index.html`: the page (vanilla JS, Accretion's design tokens, dark/light).
 - Binds 127.0.0.1 by default. `--host 0.0.0.0` exposes it on the LAN with no login: trusted Wi-Fi only.
 - Apple ID prompts (2FA) can't be answered through the page: sign in once from a console (`am sign ... --install`).
-- **Games tab** (2026-10-22): `studio/games.py` + `/api/games?list=&region=`: App Store charts (RSS genre 6014,
+- **Games search + CLI** (2026-10-22): `scripts/games.py` (moved from studio/) adds search, info, like one game;
+  `dev.py games` (`am games ...`, `--json`) and `/api/games?list=search|like`, `/api/games/info`; Enter in the tab's
+  box searches the App Store, Like this on cards; newer list wins over a slow older one. Checked: 9 Kings found and liked.
+- **Games tab** (2026-10-22): `scripts/games.py` + `/api/games?list=&region=`: App Store charts (RSS genre 6014,
   new feeds filtered to games), "like the games we mod" (themes from name/description + sub-genres, iTunes
   Search), cards with our-mod / .ipa-ready / online badges, Get .ipa and New mod (no copy: opens Get .ipa).
   Checked in the page: similar list (wasteland/survival RPGs), Top free, New mod -> Get .ipa. First load ~10 s.
