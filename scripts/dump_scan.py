@@ -151,7 +151,8 @@ def _suggest(member, ctype, has_getter):
     return {"value": value, "when": "lower" if has_getter else "always"}
 
 
-def build(classes, existing=frozenset()):
+def build(classes, existing=frozenset(), learned=None):
+    """learned(name, ctype, cls) -> (bonus, use or None): dev_learn.member_boost, what worked in other games."""
     rows, flagged = [], []
     for cls, info in classes.items():
         if info["statics"]:
@@ -188,8 +189,17 @@ def build(classes, existing=frozenset()):
                 score -= 1
             if obj.endswith("[]") and area == "Other":
                 score -= 2
-            row["score"] = score
             row.update(_suggest(name, ctype, getter))
+            if learned:
+                bonus, p = learned(name, ctype, cls)
+                if p:  # the best-proven use elsewhere: its title and value, and how it went
+                    score += bonus
+                    row["learned"] = {k: p.get(k) for k in ("title", "member", "class", "game", "works", "fails", "reached")}
+                    if isinstance(p.get("value"), (int, float)):  # bools too: "true" / "false"
+                        row["value"] = str(p["value"]).lower()  # the value that was used there
+                    if p.get("when") in ("always", "lower", "higher") and (kind == "field" or getter):
+                        row["when"] = p["when"]
+            row["score"] = score
             rows.append(row)
     rows.sort(key=lambda r: (-r["score"], r["area"], r["class"], r["member"]))
     flagged.sort(key=lambda r: (r["flag"], r["class"], r["member"]))
@@ -213,7 +223,7 @@ def existing_targets(tweaks):
     return out
 
 
-def scan(dump, tweaks=None):
+def scan(dump, tweaks=None, learned=None):
     """Rows for a dump.cs, cached in scan.json beside it (rebuilt when the dump or VERSION changes)."""
     dump = Path(dump)
     cache = dump.with_name("scan.json")
@@ -233,14 +243,16 @@ def scan(dump, tweaks=None):
         tmp.write_text(json.dumps(data), encoding="utf-8")
         os.replace(tmp, cache)
     classes = {k: dict(v, getters=set(v["getters"])) for k, v in data["data"].items()}
-    rows, flagged = build(classes, existing_targets(tweaks))
+    rows, flagged = build(classes, existing_targets(tweaks), learned)
     return {"rows": rows, "flagged": flagged, "classes": data["classes"]}
 
 
 def as_text(rows, limit=60):
     """A compact list for a prompt: one candidate per line."""
-    lines = ["area | object | member | type | kind | suggested value | already in the mod"]
+    lines = ["area | object | member | type | kind | suggested value | already in the mod | learned elsewhere"]
     for r in rows[:limit]:
+        lr = r.get("learned")
+        seen = f"like \"{lr['title']}\": {lr['works']} works, {lr['fails']} fails" if lr else ""
         lines.append(f"{r['area']} | {r['object']} | {r['member']} | {r['ctype']} | {r['kind']} | "
-                     f"{r.get('value', '')} {r.get('when', '')} | {'yes' if r['has'] else 'no'}")
+                     f"{r.get('value', '')} {r.get('when', '')} | {'yes' if r['has'] else 'no'} | {seen}")
     return "\n".join(lines)
