@@ -1,10 +1,11 @@
 """Auto-build a mod's menu with the model picked in Mod Studio (Claude Code, Codex or aider), as one Studio job.
 
-  python studio/autobuild.py <mod> [--engine claude|codex|aider] [--limit 10] [--no-install]
+  python studio/autobuild.py <mod> [--engine claude|codex|aider] [--limit N] [--no-install]
 
 1. the scan's best no-JIT candidates not yet in the mod, without the topic-labelled ones (what the game sells,
    ads, accounts, online play) and without inspect-only rows;
-2. the model picks up to --limit and answers with `am pin <mod> ...` lines only (read only: it changes nothing);
+2. the model goes through every candidate, BATCH rows at a time, and answers with an `am pin <mod> ...` line for
+   each one worth a switch (read only: it changes nothing); no top N unless --limit caps it;
 3. each line runs through dev.py pin (which checks it against the dump); the new switches get the scan's area as
    their menu section;
 4. dev.py gen, then dev.py build <mod> --ipa --bump;
@@ -43,21 +44,26 @@ def say(text):
     print(text, flush=True)
 
 
-def candidates(mod, limit):
+BATCH = 50  # candidate rows per question: the whole scan in one prompt is too long for a model to read well
+
+
+def candidates(mod):
+    """Every scan candidate a pin can reach, best first, without what the mod has, topic labels, inspect-only
+    rows and networked classes."""
     _, rows = dev.scan_rows(mod)
-    fresh = [r for r in rows if not r.get("has") and not r.get("flag") and not r.get("inspect_only")
-             and r.get("area") != "In-app purchases" and not ONLINE.search(f"{r['class']} {r['object']}")]
-    return fresh[:limit]
+    return [r for r in rows if not r.get("has") and not r.get("flag") and not r.get("inspect_only")
+            and r.get("area") != "In-app purchases" and not ONLINE.search(f"{r['class']} {r['object']}")]
 
 
-def prompt_for(mod, meta, rows, limit):
+def prompt_for(mod, meta, rows):
     return (
-        f"Goal: pick the {limit} most useful new menu switches for {meta.get('display_name') or meta['name']} "
+        f"Goal: make a menu switch from every candidate below that is worth one, for {meta.get('display_name') or meta['name']} "
         f"(mod {mod}, game {meta['target_bundle_id']} {meta.get('tested_app_version', '')}) from Mod Studio's dump "
         "scan below. The phone has no JIT: every switch is a pin, a field write or setter call on live objects "
         "every half second.\n"
         f"Candidates (scored by names and types only):\n{dev.dump_scan.as_text(rows, len(rows))}\n\n"
-        f"Answer with up to {limit} lines and nothing else, each exactly:\n"
+        "Answer with one line per useful candidate (as many as there are, none when none are) and nothing "
+        "else, each exactly:\n"
         f"am pin {mod} <Class.member or Class.set_X> --object <object column> --value <value> "
         "[--when lower|higher] --as <camelCaseKey> --title \"<short menu title>\"\n"
         "Use only rows from the list, the object column as --object, a value that helps the player (a cap, a "
@@ -113,33 +119,52 @@ def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("mod")
     p.add_argument("--engine", choices=server.ENGINES, default="claude")
-    p.add_argument("--limit", type=int, default=10)
+    p.add_argument("--limit", type=int, default=0, help="at most this many switches (0: every usable one)")
     p.add_argument("--no-install", action="store_true", help="stop after the build")
     args = p.parse_args(argv)
-    mod, limit = args.mod, max(1, min(args.limit, 25))
+    mod, limit = args.mod, max(0, args.limit)
     folder = dev.mod_dir(mod)
     meta = dev.read_json(folder / "mod.json")
     if not (folder / "tweaks.json").is_file():
         say(f"{mod} has a hand-written menu (no tweaks.json): auto-build adds pins to tweaks.json mods only")
         return 1
 
-    say(f"==> 1/5 scan: the best no-JIT candidates for {mod}")
-    rows = candidates(mod, 40)
+    say(f"==> 1/5 scan: every no-JIT candidate for {mod}")
+    rows = candidates(mod)
     if not rows:
         say("nothing new to add: every scan candidate is in the mod already, labelled, or inspect-only")
         return 1
     say(f"    {len(rows)} candidates")
 
     who = {"aider": "aider (free model)", "codex": "Codex (GPT)"}.get(args.engine, "Claude Code")
-    say(f"==> 2/5 {who} picks up to {limit}")
-    answer = ask(args.engine, prompt_for(mod, meta, rows, limit))
-    lines = []
-    for line in answer:
-        cmd = line.strip().strip("`").lstrip("$> ").strip()
-        m = PIN.match(cmd)
-        if m and m.group(1) == mod and "<" not in m.group(2).split(" --")[0] and "--object <" not in cmd and cmd not in lines:
-            lines.append(cmd)
-    lines = lines[:limit]
+    batches = [rows[i:i + BATCH] for i in range(0, len(rows), BATCH)]
+    say(f"==> 2/5 {who} goes through all {len(rows)} in {len(batches)} batch(es) of up to {BATCH}")
+    lines, targets, keys = [], set(), set()
+    for n, batch in enumerate(batches, 1):
+        say(f"--- batch {n}/{len(batches)}")
+        for line in ask(args.engine, prompt_for(mod, meta, batch)):
+            cmd = line.strip().strip("`").lstrip("$> ").strip()
+            m = PIN.match(cmd)
+            if not m or m.group(1) != mod or "<" in m.group(2).split(" --")[0] or "--object <" in cmd:
+                continue
+            try:
+                words = shlex.split(cmd)
+            except ValueError:
+                continue
+            target = words[3] if len(words) > 3 else ""
+            if target in targets:
+                continue  # one switch per field or setter
+            if "--as" in words[:-1]:  # the same key from two batches: number the second
+                i = words.index("--as") + 1
+                base, k = words[i], 2
+                while words[i] in keys:
+                    words[i] = f"{base}{k}"
+                    k += 1
+                keys.add(words[i])
+            targets.add(target)
+            lines.append(shlex.join(words))
+    if limit:
+        lines = lines[:limit]
     if not lines:
         say("the model gave no am pin line for this mod: nothing added, nothing built")
         return 1

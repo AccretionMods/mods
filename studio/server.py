@@ -582,7 +582,7 @@ def start_autobuild(mod, engine, limit):
         if RESTARTING.is_set():
             raise dev.DevError("Studio is restarting; reconnect before starting jobs")
         job = Job("autobuild", [mod, engine], cmd=[sys.executable, str(HERE / "autobuild.py"), mod, "--engine", engine,
-                                                   "--limit", str(max(1, min(int(limit), 25)))])
+                                                   "--limit", str(max(0, int(limit)))])  # 0: every usable switch
         JOBS[job.id] = job
     job.persist()
     threading.Thread(target=job.run, daemon=True).start()
