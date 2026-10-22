@@ -32,7 +32,8 @@ it); signing and device logs need the phone on USB and run on Windows (plumesign
   dev.py pick <mod> <regex>                                      numbered find; type a number, answer 2-3 questions
   dev.py suggest <mod>                                           this game's methods that match what worked before
   dev.py mark <mod> <key> --works|--fails                        the phone result; feeds the suggestions
-  dev.py share <mod> [--file x.ipa] [--signed]                   private 15-minute download link for a build
+  dev.py share <mod> [--months 6|12 | --days N] [--file x.ipa]  private download link (dl.getaccretion.app/s/<id>)
+  dev.py share --list | --renew <id> [--months N] | --revoke <id> same link, new expiry; or end it
   dev.py test <mod> [--section S | --keys a,b] [--seconds 20]    switches on from the PC a section at a time;
                                                                  which reach the game (off again after)
   dev.py learn <mod>                                             import an existing mod's hooks.json into the patterns
@@ -1662,38 +1663,105 @@ def newest_build(mod, signed=False):
     return found[-1]
 
 
+SHARE_ORIGIN = "https://dl.getaccretion.app/s/"
+
+
+def share_name(meta):
+    """The name a shared build saves as: "The-Wanderer-Plus-dev_1.0.15.ipa" (the download proxy's rule:
+    letters, digits and dashes, "_", the mod's version, ".ipa")."""
+    title = (meta.get("display_name") or meta.get("name") or "Mod").replace("+", " Plus ")
+    words = re.findall(r"[A-Za-z0-9]+", title)
+    name = "-".join(words)[:64].strip("-") or "Mod"
+    version = re.sub(r"[^A-Za-z0-9.-]", "", str(meta.get("version", "0")))[:32] or "0"
+    return f"{name}_{version}.ipa"
+
+
+def share_call(mode, body):
+    """The upload function's share modes (upload key); a refusal becomes a DevError with its message."""
+    import urllib.error
+
+    from publish import FUNCTIONS, call, upload_key
+
+    try:
+        return call(f"{FUNCTIONS}/upload?share={mode}", upload_key(), body)
+    except urllib.error.HTTPError as e:
+        try:
+            message = json.loads(e.read()).get("message", "")
+        except ValueError:
+            message = ""
+        raise DevError(f"share {mode}: {message or e.code}") from None
+
+
+def share_days(args):
+    days = args.days if args.days else round(args.months * 30.44) if args.months else 180
+    if not 1 <= days <= 400:
+        raise DevError("a link lasts 1 to 400 days (--days) or 1 to 13 months (--months)")
+    return days
+
+
 def cmd_share(args):
-    """A private download link for one build: the .ipa goes to Accretion's private storage (by its sha256, like
-    a private base; uploaded once) and the link works for 15 minutes. For the owner's own devices: never posted,
-    never in a source. The file saves under its sha256 name: rename it to the .ipa name printed here."""
+    """A private download link for one build, for the owner's own devices: never posted, never in a source.
+    The .ipa goes to Accretion's private storage by its sha256 (uploaded once). The link,
+    dl.getaccretion.app/s/<id>, saves the file under the mod's name and works until its expiry (180 days unless
+    --days/--months, up to 400 days); --renew keeps the same link with a new expiry, --revoke ends it.
+    --quick gives a plain 15-minute storage link instead (it saves under the sha256 name)."""
     import urllib.request
 
     import base
-    from publish import FUNCTIONS, call, upload_key
 
+    if args.list:
+        links = share_call("list", {})["links"]
+        for link in links:
+            state = "revoked" if link["revoked"] else ("expired" if link["expires_at"] < time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()) else "on")
+            print(f"  {SHARE_ORIGIN}{link['id']}  {link['name']}  {state} until {link['expires_at'][:10]}"
+                  f"  {link['downloads']} downloads" + (f"  ({link['note']})" if link.get("note") else ""))
+        print(f"{len(links)} share links")
+        return 0
+    if args.renew:
+        done = share_call("renew", {"id": args.renew, "days": share_days(args)})
+        print(f"==> {SHARE_ORIGIN}{done['id']} renewed: works until {done['expires_at'][:10]} (same link)")
+        return 0
+    if args.revoke:
+        share_call("revoke", {"id": args.revoke})
+        print(f"==> {SHARE_ORIGIN}{args.revoke} revoked: it no longer downloads")
+        return 0
+    if not args.mod:
+        raise DevError("which mod? dev.py share <mod> (or --list, --renew <id>, --revoke <id>)")
+    meta = read_json(mod_dir(args.mod) / "mod.json")
     ipa = Path(args.file) if args.file else newest_build(args.mod, args.signed)
     if not ipa.is_file():
         raise DevError(f"{ipa} not found")
     sha = base.sha256_of(ipa)
-    key = upload_key()
+    stored_link = None
+    from publish import FUNCTIONS, call, upload_key
 
-    def link():
-        return call(f"{FUNCTIONS}/upload?base=get", key, {"sha256": sha})["signedUrl"]
+    def storage_link():
+        return call(f"{FUNCTIONS}/upload?base=get", upload_key(), {"sha256": sha})["signedUrl"]
 
-    stored = False
     try:
-        with urllib.request.urlopen(urllib.request.Request(link(), headers={"Range": "bytes=0-0"}), timeout=60):
-            stored = True
+        with urllib.request.urlopen(urllib.request.Request(storage_link(), headers={"Range": "bytes=0-0"}), timeout=60):
+            stored_link = True
     except Exception:
         pass
-    if not stored:
+    if not stored_link:
         print(f"==> uploading {ipa.name} ({ipa.stat().st_size / 1e6:.1f} MB) to private storage")
         base.put(str(ipa))
-    print(f"==> {ipa.name}")
-    print(f"    sha256 {sha}")
-    print(f"    link (15 minutes, private; saves as the sha256, rename it to {ipa.name}):")
-    print(f"    {link()}")
-    print("    A new link any time: dev.py share " + (f"--file \"{ipa}\"" if args.file else args.mod))
+    if args.quick:
+        print(f"==> {ipa.name}: 15-minute link (saves as the sha256; rename it to {ipa.name}):")
+        print(f"    {storage_link()}")
+        return 0
+    name = share_name(meta)
+    days = share_days(args)
+    made = share_call("create", {"sha256": sha, "name": name, "days": days, "note": args.note or ipa.name})
+    record = am_root() / "dev" / "shares.json"
+    past = json.loads(record.read_text(encoding="utf-8")) if record.is_file() else []
+    past.append({"id": made["id"], "mod": args.mod, "file": ipa.name, "sha256": sha, "name": name, "expires_at": made["expires_at"]})
+    record.parent.mkdir(parents=True, exist_ok=True)
+    record.write_text(json.dumps(past, indent=2), encoding="utf-8")
+    print(f"==> {SHARE_ORIGIN}{made['id']}")
+    print(f"    {ipa.name}, saves as {name}; works until {made['expires_at'][:10]} ({days} days)")
+    print(f"    Same link, new expiry: dev.py share --renew {made['id']} --months 12   End it: dev.py share --revoke {made['id']}")
+    print("    Private: anyone with the link can download until then, so keep it to your own devices.")
     return 0
 
 
@@ -2654,10 +2722,18 @@ def build_parser():
     s.add_argument("--no-check", action="store_true", help="push even when a pin fails the dump check")
     s.set_defaults(fn=cmd_push)
 
-    s = sub.add_parser("share", help="a private 15-minute download link for a build (your own devices)")
-    s.add_argument("mod")
+    s = sub.add_parser("share", help="a private, renewable download link for a build (your own devices)")
+    s.add_argument("mod", nargs="?")
     s.add_argument("--file", help="this .ipa instead of the newest build")
     s.add_argument("--signed", action="store_true", help="the copy signed for this PC's phone")
+    s.add_argument("--days", type=int, help="how long the link works (default 180, at most 400)")
+    s.add_argument("--months", type=int, help="the same in months (6, 12)")
+    s.add_argument("--note", help="a note kept with the link (default: the file name)")
+    s.add_argument("--quick", action="store_true", help="a plain 15-minute storage link instead")
+    g = s.add_mutually_exclusive_group()
+    g.add_argument("--list", action="store_true", help="every share link, its expiry and downloads")
+    g.add_argument("--renew", metavar="ID", help="same link, new expiry (--days or --months, from today)")
+    g.add_argument("--revoke", metavar="ID", help="end a link for good")
     s.set_defaults(fn=cmd_share)
 
     s = sub.add_parser("test", help="switches on from the PC, a section at a time: which reach the game")
