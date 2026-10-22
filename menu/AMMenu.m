@@ -1037,11 +1037,25 @@ static UITextField *AMSearchField(NSUInteger count) {
 @property (nonatomic) BOOL folds;  // long menus fold their categories
 @property (nonatomic, strong, nullable) UITextField *search;
 @property (nonatomic, strong) UILabel *note;
+@property (nonatomic, strong) UIButton *more;  // "More at getaccretion.app", under the note
 @property (nonatomic, strong, nullable) NSTimer *statusTimer;
 @property (nonatomic, copy, nullable) void (^onClose)(void);  // the whole menu went away (Done or swipe down)
 @end
 
 static NSString *const AMOpenSections = @"AM__openSections";
+static NSString *const AMSite = @"https://getaccretion.app";
+
+// The menu's title: the game's own name as the phone shows it under its icon, the same rule for every mod. The
+// mod's title (with "+") only when the app has no name.
+static NSString *AMGameName(NSString *fallback) {
+    NSDictionary *info = NSBundle.mainBundle.infoDictionary;
+    for (NSString *key in @[@"CFBundleDisplayName", @"CFBundleName"]) {
+        NSString *name = [info[key] isKindOfClass:NSString.class] ? info[key] : nil;
+        name = [name stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        if (name.length) return name;
+    }
+    return fallback;
+}
 
 @implementation AMPanel
 
@@ -1157,13 +1171,23 @@ static NSString *const AMOpenSections = @"AM__openSections";
     } else {
         table.tableHeaderView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 1, 8)];
     }
-    UIView *foot = [[UIView alloc] initWithFrame:CGRectMake(0, 0, UIScreen.mainScreen.bounds.size.width, 90)];
+    UIView *foot = [[UIView alloc] initWithFrame:CGRectMake(0, 0, UIScreen.mainScreen.bounds.size.width, 112)];
     self.note = [[UILabel alloc] initWithFrame:CGRectInset(foot.bounds, AMSide + 4, 10)];
     self.note.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     self.note.numberOfLines = 0;
     self.note.font = AMMono(11, UIFontWeightRegular);
     self.note.textColor = AM_MUTED;
     [foot addSubview:self.note];
+    self.more = [UIButton buttonWithType:UIButtonTypeSystem];
+    NSMutableAttributedString *more = [[NSMutableAttributedString alloc] initWithString:@"More at "
+        attributes:@{NSFontAttributeName: AMMono(11, UIFontWeightRegular), NSForegroundColorAttributeName: AM_MUTED}];
+    [more appendAttributedString:[[NSAttributedString alloc] initWithString:@"getaccretion.app ›"
+        attributes:@{NSFontAttributeName: AMMono(11, UIFontWeightMedium), NSForegroundColorAttributeName: AM_ACCENT_TEXT}]];
+    [self.more setAttributedTitle:more forState:UIControlStateNormal];
+    self.more.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
+    self.more.accessibilityLabel = @"More at getaccretion.app";
+    [self.more addTarget:self action:@selector(openSite) forControlEvents:UIControlEventTouchUpInside];
+    [foot addSubview:self.more];
     table.tableFooterView = foot;
     [self showNote];
 }
@@ -1181,7 +1205,9 @@ static NSString *const AMOpenSections = @"AM__openSections";
         else self.tableView.tableFooterView = v;
     }
     CGFloat side = AMInset(width) + 4;
-    self.note.frame = CGRectMake(side, 10, MAX(width - 2 * side, 0), self.note.superview.bounds.size.height - 20);
+    CGFloat footH = self.note.superview.bounds.size.height;
+    self.note.frame = CGRectMake(side, 8, MAX(width - 2 * side, 0), footH - 46);
+    self.more.frame = CGRectMake(side, footH - 36, MAX(width - 2 * side, 0), 28);
 }
 
 // The flowing hairline under the title bar (the bar's own shadow line is cleared for it).
@@ -1201,6 +1227,10 @@ static NSString *const AMOpenSections = @"AM__openSections";
     self.note.text = self.shownTitles.count
         ? @"Made by Accretion. Settings stay on this device; the game pauses while this menu is open. A dot by a switch that is on: green when it reaches the game, red with what to do."
         : [NSString stringWithFormat:@"No switch matches “%@”.", self.query];
+}
+
+- (void)openSite {
+    [UIApplication.sharedApplication openURL:[NSURL URLWithString:AMSite] options:@{} completionHandler:nil];
 }
 
 - (void)close {
@@ -1803,7 +1833,7 @@ static NSString *const AMButtonSpot = @"AM__buttonSpot";  // where the button wa
     [self shield:YES window:sender.window];
     [[[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight] impactOccurred];
     if (self.onOpenChange) self.onOpenChange(YES);
-    AMPanel *panel = [[AMPanel alloc] initWithItems:_items title:self.title];
+    AMPanel *panel = [[AMPanel alloc] initWithItems:_items title:AMGameName(self.title)];
     UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:panel];
     AMStyleNav(nav);
     // the floating button sits above everything (zPosition): hide it while the menu is open so it covers no row

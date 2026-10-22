@@ -11,7 +11,7 @@ AMTweaksRegister(), which Tweak.x calls in %ctor before AMIl2cppStart().
 
 tweaks.json:
   {
-    "title": "My Game+",                       menu title; also the device-log tag
+    "title": "My Game+",                       the mod's name (the menu shows the game's own name); also the device-log tag
     "tweaks": [
       {"key": "noDamage", "title": "Player takes no damage", "kind": "switch",
        "hooks": [{"method": "PlayerHealth.TakeDamage", "action": "skip"}]},
