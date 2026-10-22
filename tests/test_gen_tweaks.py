@@ -696,10 +696,10 @@ class Pins(unittest.TestCase):
         _h, m = gen_tweaks.render(PIN_TWEAKS, HOOKS, "game-plus")
         self.assertIn('if ((am_dmg != 1.0f)) { if (s_dmg_0_set) AMNoteValue("dmg", (double)s_dmg_0_base); return; }', m)
         self.assertIn("        am_note_dmg();\n", m)
-        self.assertIn("menu.onOpenChange = ^(BOOL open) { AMIl2cppPauseGame(open); };", m)
-        data = dict(PIN_TWEAKS, pause_menu=False)
+        self.assertNotIn("AMIl2cppPauseGame", m)  # the game keeps running by default
+        data = dict(PIN_TWEAKS, pause_menu=True)
         _h, m = gen_tweaks.render(data, HOOKS, "game-plus")
-        self.assertNotIn("AMIl2cppPauseGame", m)
+        self.assertIn("menu.onOpenChange = ^(BOOL open) { AMIl2cppPauseGame(open); };", m)
 
     def test_pins_drop_the_jit_label(self):
         data = {

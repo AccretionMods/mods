@@ -99,6 +99,11 @@ never copy, restyle or replace it. Change the look only in `menu/AMMenu.m`, so e
   light with a bright glint runs around each open box's edge every 6 s. Faint hairlines (7%) sit between rows.
 - **Switch rows:** 13 pt text, about 30 pt tall. A small outlined line toggle: grey off, cyan on, red when on and
   not reaching the game. Tap anywhere on the row. No checkmarks anywhere.
+- **Slider rows:** the value (cyan while on) and the same line toggle on the title line, the slider below. Tapping
+  the row turns it off (the game's own value comes back, the slider dims and keeps its value) and on again (that
+  value comes back); dragging turns it on. Within 3% of the range from its default it snaps to the default (off)
+  with a tick.
+- **The game keeps running** while the menu is open. A mod pauses it only with `"pause_menu": true` in tweaks.json.
 - **Status:** the dot left of the title while a switch is on: steady green when it works, red pulsing when not,
   with the reason in small red text under the title ("Start a fight to see it work"). Report it with
   `AMMenuStatus`.
@@ -114,7 +119,8 @@ never copy, restyle or replace it. Change the look only in `menu/AMMenu.m`, so e
 - **Cloud saves:** a "Log in · back up your saves" capsule under the title (moving edge) opens Accretion's sign-in in
   iOS's sign-in sheet with a one-time code; once linked (the sheet closes by itself) a Cloud saves category above
   Display has Back up now, Restore a backup (newest first, any device), Back up when the menu opens (only after a
-  first manual backup or restore) and Unlink. A backup is a zip of the game's saved settings, Documents and
+  first manual backup or restore) and Unlink. Back up now shows "Last saved: 5 min ago" ("Saving…" while a backup
+  runs, including the one when the menu opens). A backup is a zip of the game's saved settings, Documents and
   Application Support (50 MB at most, the newest 5 per game, unchanged saves not uploaded again); a restore keeps
   the current save first and is put in place at the next launch. The store's `saves` function and #/link page
   (getaccretion.github.io) are the other side.
