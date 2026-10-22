@@ -69,6 +69,8 @@ def ask(engine, prompt):
     """The model's answer, line by line, echoed into the job as it comes."""
     if engine == "aider":
         cmd, parse = server.aider_command(prompt), None
+    elif engine == "codex":
+        cmd, parse = server.codex_command(prompt, True), None
     else:
         cmd, parse = server.claude_command(prompt, True), server.claude_lines
     env = dict(os.environ, COLUMNS="4000", PYTHONUTF8="1")  # aider wraps its answer at the terminal width
@@ -112,7 +114,8 @@ def main(argv=None):
         return 1
     say(f"    {len(rows)} candidates")
 
-    say(f"==> 2/4 {'aider (free model)' if args.engine == 'aider' else 'Claude Code'} picks up to {limit}")
+    who = {"aider": "aider (free model)", "codex": "Codex (GPT)"}.get(args.engine, "Claude Code")
+    say(f"==> 2/4 {who} picks up to {limit}")
     answer = ask(args.engine, prompt_for(mod, meta, rows, limit))
     lines = []
     for line in answer:

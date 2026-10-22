@@ -121,7 +121,7 @@ def job_resources(command, argv):
         and command not in {"games", "fetch", "sign", "install"}
     ):
         resources.append("mod:" + argv[0])
-    if command == "claude" and argv != ["(read only)"]:
+    if command in ("claude", "codex") and argv != ["(read only)"]:
         resources += ["device", "intake"] + [
             "mod:" + p.parent.name for p in (ROOT / "mods").glob("*/mod.json")
         ]
@@ -457,7 +457,7 @@ def claude_lines(raw):
 # no commits, no repo map, no shell commands. Read only: ask mode, only the prompt leaves this PC. Changing files:
 # it edits the selected mod's own files (tweaks.json, hooks.json, mod.json, Tweak.x), which are sent with the
 # prompt; a snapshot is taken first (Files tab restores it). The am commands it proposes become buttons in Jobs.
-ENGINES = ("claude", "aider")
+ENGINES = ("claude", "aider", "codex")
 AIDER_FILES = ("tweaks.json", "hooks.json", "mod.json", "Tweak.x")
 AIDER_NOTE = (
     "\n\nYou cannot run commands or read other files. Where the task needs an am command (am pin, am add, am gen, "
@@ -468,6 +468,25 @@ AIDER_EDIT_NOTE = (
     " You may edit the files you were given; keep tweaks.json valid JSON and run nothing yourself. After an edit "
     "of tweaks.json, end with the line: am gen {mod}"
 )
+
+
+# Codex (GPT): OpenAI's CLI (npm @openai/codex), signed in with the owner's ChatGPT account like the Codex app.
+# codex exec runs headless in the repo like Claude Code: read only in its read-only sandbox, otherwise in
+# workspace-write (edits in the repo, am commands that stay on this PC; no network, so signing and installing stay
+# Studio's Run). The prompt goes as one argument to node, not through codex.cmd (cmd.exe cuts at 8191 chars).
+def codex_command(prompt, read_only):
+    node = shutil.which("node")
+    script = Path(os.environ.get("APPDATA", "")) / "npm" / "node_modules" / "@openai" / "codex" / "bin" / "codex.js"
+    if node and script.is_file():
+        head = [node, str(script)]
+    elif shutil.which("codex"):
+        head = [shutil.which("codex")]
+    else:
+        raise dev.DevError("Codex CLI is not installed (npm install -g @openai/codex, then codex login)")
+    note = CLAUDE_NOTE + (" Read only: change no files." if read_only else
+                          " Signing and installing need the network your sandbox lacks: leave those to the owner's Run.")
+    return [*head, "exec", "--sandbox", "read-only" if read_only else "workspace-write", "--skip-git-repo-check",
+            "--ephemeral", "-C", str(ROOT), note + "\n\n" + prompt]
 
 
 def aider_exe():
@@ -598,7 +617,10 @@ def start_claude(prompt, read_only, engine="claude", mod=""):
     with SESSION_LOCK:
         if RESTARTING.is_set():
             raise dev.DevError("Studio is restarting; reconnect before starting jobs")
-        if engine == "aider" and read_only:
+        if engine == "codex":
+            job = Job("codex", ["(read only)" if read_only else "(may change files)"],
+                      cmd=codex_command(prompt, read_only))
+        elif engine == "aider" and read_only:
             job = Job("aider", ["(read only)"], cmd=aider_command(prompt))
         elif engine == "aider":
             job = Job("aider", [mod, "(may change files)"], cmd=aider_command(prompt, mod))
