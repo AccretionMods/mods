@@ -303,6 +303,7 @@ static UIBarButtonItem *AMBarText(NSString *title, id target, SEL action) {
 // an action row (Cloud saves): runs on tap, then says what happened on the row (✓ text in cyan, or red)
 @property (nonatomic, copy) void (^onAction)(void (^done)(BOOL ok, NSString *text));
 @property (nonatomic, copy) NSString *label;  // the action row's right side before it runs ("›")
+@property (nonatomic, copy) NSString *(^liveLabel)(void);  // or a right side that changes (Last saved: …)
 @property (nonatomic) BOOL quiet;  // a muted title (Unlink)
 @end
 
@@ -313,6 +314,26 @@ static BOOL AMItemOn(AMItem *item) {
     if (item.isList || item.display || item.onAction) return NO;
     if (item.isSlider) return [NSUserDefaults.standardUserDefaults floatForKey:AMKey(item.key)] != item.defaultValue;
     return [NSUserDefaults.standardUserDefaults boolForKey:AMKey(item.key)];
+}
+
+// A slider is on while its value is not its default. Off keeps the value it had (AM_<key>__last), so its toggle
+// brings it back; the slider then shows that value dimmed.
+static NSString *AMLastKey(AMItem *item) { return [AMKey(item.key) stringByAppendingString:@"__last"]; }
+
+static void AMSliderSet(AMItem *item, float value) {
+    NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
+    float now = [d floatForKey:AMKey(item.key)];
+    if (value == item.defaultValue && now != item.defaultValue) [d setFloat:now forKey:AMLastKey(item)];
+    if (value != item.defaultValue) [d setFloat:value forKey:AMLastKey(item)];
+    [d setFloat:value forKey:AMKey(item.key)];
+    if (item.onSlider) item.onSlider(value);
+}
+
+// what the slider shows: its value while on, the kept value (or the default) while off
+static float AMSliderShown(AMItem *item) {
+    NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
+    if (AMItemOn(item)) return [d floatForKey:AMKey(item.key)];
+    return [d objectForKey:AMLastKey(item)] ? [d floatForKey:AMLastKey(item)] : item.defaultValue;
 }
 
 static void AMStyleNav(UINavigationController *nav) {
@@ -1014,14 +1035,27 @@ static UITextField *AMSearchField(NSString *placeholder) {
 
 @end
 
-// A slider: the title on its own line (never squeezed), the value in mono on the right (accent when it is not
-// the default), the game's own value under the title, the slider full width below.
+// A slider: the title on its own line (never squeezed), the value in mono on the right (accent while on) and the
+// line toggle after it, the game's own value under the title, the slider full width below (dimmed while off).
+// Tapping the row turns it off and on; dragging turns it on.
 @interface AMSliderCell : AMRowCell
 @property (nonatomic, strong) UILabel *title, *value, *note;
 @property (nonatomic, strong) UISlider *slider;
+@property (nonatomic, strong) AMLineToggle *toggle;
+- (void)showToggle:(BOOL)show;
 @end
 
-@implementation AMSliderCell
+@implementation AMSliderCell {
+    NSLayoutConstraint *_byToggle, *_byEdge;  // where the value ends: before the toggle, or at the edge
+}
+
+- (void)showToggle:(BOOL)show {
+    if (self.toggle.hidden == !show) return;
+    self.toggle.hidden = !show;
+    (show ? _byEdge : _byToggle).active = NO;
+    (show ? _byToggle : _byEdge).active = YES;
+}
+
 
 - (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier {
     if ((self = [super initWithStyle:style reuseIdentifier:reuseIdentifier])) {
@@ -1040,16 +1074,23 @@ static UITextField *AMSearchField(NSString *placeholder) {
         _slider = [UISlider new];
         _slider.minimumTrackTintColor = AM_ACCENT;
         _slider.maximumTrackTintColor = AM_LINE;  // `raised` vanished on the panel's surface
-        for (UIView *v in @[_title, _value, _note, _slider]) {
+        _toggle = [AMLineToggle new];
+        for (UIView *v in @[_title, _value, _note, _slider, _toggle]) {
             v.translatesAutoresizingMaskIntoConstraints = NO;
             [self.contentView addSubview:v];
         }
         UILayoutGuide *m = self.contentView.layoutMarginsGuide;
+        _byToggle = [_value.trailingAnchor constraintEqualToAnchor:_toggle.leadingAnchor constant:-10];
+        _byEdge = [_value.trailingAnchor constraintEqualToAnchor:m.trailingAnchor];
         [NSLayoutConstraint activateConstraints:@[
             [_title.topAnchor constraintEqualToAnchor:m.topAnchor constant:2],
             [_title.leadingAnchor constraintEqualToAnchor:m.leadingAnchor constant:AMDotColumn],
             [_title.trailingAnchor constraintLessThanOrEqualToAnchor:_value.leadingAnchor constant:-12],
-            [_value.trailingAnchor constraintEqualToAnchor:m.trailingAnchor],
+            _byToggle,
+            [_toggle.widthAnchor constraintEqualToConstant:34],
+            [_toggle.heightAnchor constraintEqualToConstant:20],
+            [_toggle.trailingAnchor constraintEqualToAnchor:m.trailingAnchor],
+            [_toggle.centerYAnchor constraintEqualToAnchor:_value.centerYAnchor],
             [_value.firstBaselineAnchor constraintEqualToAnchor:_title.firstBaselineAnchor],
             [_note.topAnchor constraintEqualToAnchor:_title.bottomAnchor constant:2],
             [_note.leadingAnchor constraintEqualToAnchor:_title.leadingAnchor],
@@ -1472,7 +1513,26 @@ static NSData *AMCloudPack(NSString **why, NSString **hash) {
 }
 
 // Back up now: pack, ask for a place, upload, confirm. text: "Backed up · 2.3 MB" or why not.
-static void AMCloudBackup(void (^done)(BOOL ok, NSString *text)) {
+// "Last saved: 5 min ago" on the Back up now row (or "Saving…" while a backup runs); the open panel redraws it
+// every second
+static BOOL AMCloudSaving;
+
+static NSString *AMCloudLastText(void) {
+    if (AMCloudSaving) return @"Saving…";
+    NSNumber *last = AMCloudState()[@"last_backup"];
+    if (!last) return @"Not saved yet";
+    long s = (long)MAX(0, NSDate.date.timeIntervalSince1970 - last.doubleValue);
+    NSString *ago = s < 60 ? @"a few seconds ago" : s < 3600 ? [NSString stringWithFormat:@"%ld min ago", s / 60]
+        : s < 86400 ? [NSString stringWithFormat:@"%ld h ago", s / 3600] : [NSString stringWithFormat:@"%ld d ago", s / 86400];
+    return [@"Last saved: " stringByAppendingString:ago];
+}
+
+static void AMCloudBackup(void (^reply)(BOOL ok, NSString *text)) {
+    AMCloudSaving = YES;
+    void (^done)(BOOL, NSString *) = ^(BOOL ok, NSString *text) {
+        AMCloudSaving = NO;
+        reply(ok, text);
+    };
     // reading and zipping the save takes a moment (a 2 MB save is tens of milliseconds): off the main thread, so
     // the menu never stutters (Back up now, and the backup when the menu opens)
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
@@ -1480,7 +1540,13 @@ static void AMCloudBackup(void (^done)(BOOL ok, NSString *text)) {
         NSData *zip = AMCloudPack(&why, &hash);
         dispatch_async(dispatch_get_main_queue(), ^{
             if (!zip) { done(NO, why); return; }
-            if ([AMCloudState()[@"last_hash"] isEqual:hash]) { done(YES, @"Already backed up"); return; }
+            if ([AMCloudState()[@"last_hash"] isEqual:hash]) {  // the cloud copy is this save: it counts as saved now
+                NSMutableDictionary *state = AMCloudState();
+                state[@"last_backup"] = @((long long)NSDate.date.timeIntervalSince1970);
+                AMCloudSave(state);
+                done(YES, @"Already backed up");
+                return;
+            }
             NSString *game, *mod;
             AMCloudVersions(&game, &mod);
             AMCloudCall(@"backup-start", @{@"size": @(zip.length), @"mod_version": mod, @"game_version": game}, ^(NSDictionary *json, NSString *err) {
@@ -1687,6 +1753,7 @@ static NSString *AMGameName(NSString *fallback) {
     AMItem *backup = [AMItem new];
     backup.title = @"Back up now";
     backup.onAction = ^(void (^done)(BOOL, NSString *)) { AMCloudBackup(done); };
+    backup.liveLabel = ^NSString *{ return AMCloudLastText(); };
     AMItem *restore = [AMItem new];
     restore.title = @"Restore a backup";
     restore.label = @"›";
@@ -2021,7 +2088,7 @@ static NSString *AMGameName(NSString *fallback) {
 
 - (void)showNote {
     self.note.text = self.shownTitles.count
-        ? @"Made by Accretion. Settings stay on this device; the game pauses while this menu is open. A dot by a switch that is on: green when it reaches the game, red with what to do."
+        ? @"Made by Accretion. Settings stay on this device. A dot by a switch that is on: green when it reaches the game, red with what to do."
         : [NSString stringWithFormat:@"No switch matches “%@”.", self.query];
 }
 
@@ -2103,8 +2170,7 @@ static NSString *AMGameName(NSString *fallback) {
         if (!AMItemOn(item)) continue;
         count++;
         if (item.isSlider) {
-            [d setFloat:item.defaultValue forKey:AMKey(item.key)];
-            if (item.onSlider) item.onSlider(item.defaultValue);
+            AMSliderSet(item, item.defaultValue);  // keeps its value for its toggle
         } else {
             [d setBool:NO forKey:AMKey(item.key)];
             if (item.onSwitch) item.onSwitch(NO);
@@ -2145,7 +2211,6 @@ static NSString *AMGameName(NSString *fallback) {
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     NSInteger flat = [self flatIndexAt:indexPath];
     AMItem *item = self.items[flat];
-    NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
     AMRowCell *cell;
     if (item.isSlider) {
         AMSliderCell *row = [tableView dequeueReusableCellWithIdentifier:@"slider"];
@@ -2157,7 +2222,7 @@ static NSString *AMGameName(NSString *fallback) {
         row.title.text = item.title;
         row.slider.minimumValue = item.min;
         row.slider.maximumValue = item.max;
-        row.slider.value = [d floatForKey:AMKey(item.key)];
+        row.slider.value = AMSliderShown(item);
         row.slider.tag = flat;
         row.note.text = AMNoteFor(item.key).lowercaseString;
         [self showValueOf:item inRow:row];
@@ -2172,7 +2237,7 @@ static NSString *AMGameName(NSString *fallback) {
             ?: [[AMActionCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"action"];
         row.title.text = item.title;
         row.title.textColor = item.quiet ? AM_MUTED : AM_FG;
-        row.right.text = item.label;
+        row.right.text = item.liveLabel ? item.liveLabel() : item.label;
         row.right.textColor = AM_MUTED;
         cell = row;
     } else {
@@ -2191,8 +2256,13 @@ static NSString *AMGameName(NSString *fallback) {
 
 - (void)showValueOf:(AMItem *)item inRow:(AMSliderCell *)row {
     float v = row.slider.value;
+    BOOL on = AMItemOn(item), toggles = AMDisplayOn(AMTogglesKey);
     row.value.text = fabsf(v) >= 100 || v == roundf(v) ? [NSString stringWithFormat:@"%.0f", v] : [NSString stringWithFormat:@"%.1f", v];
-    row.value.textColor = v != item.defaultValue ? AM_ACCENT_TEXT : AM_MUTED;
+    row.value.textColor = on ? AM_ACCENT_TEXT : AM_MUTED;
+    row.title.textColor = toggles || on ? AM_FG : AM_MUTED;
+    row.slider.alpha = on ? 1 : 0.45;
+    [row showToggle:toggles];
+    if (row.toggle.on != on) [row.toggle setOn:on bad:NO animated:YES];
 }
 
 - (void)showStatusOf:(AMItem *)item inRow:(AMSwitchCell *)row animated:(BOOL)animated {
@@ -2235,6 +2305,9 @@ static NSString *AMGameName(NSString *fallback) {
             BOOL had = row.detail.text.length > 0;
             [self showStatusOf:item inRow:row animated:YES];
             if (had != (row.detail.text.length > 0)) resize = YES;
+        } else if ([cell isKindOfClass:AMActionCell.class] && item.liveLabel) {
+            AMActionCell *row = (AMActionCell *)cell;  // not over a fresh outcome (✓ Backed up)
+            if (![row.right.text hasPrefix:@"✓"] && ![row.right.text hasPrefix:@"✕"] && ![row.right.text isEqual:@"…"]) row.right.text = item.liveLabel();
         }
     }
     if (resize) {
@@ -2269,7 +2342,23 @@ static NSString *AMGameName(NSString *fallback) {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
     if (item.isList) [self.navigationController pushViewController:[[AMListPanel alloc] initWithItem:item] animated:YES];
     else if (item.onAction) [self runAction:item at:indexPath];
-    else if (!item.isSlider) [self flip:flat];
+    else if (item.isSlider) [self flipSlider:flat];
+    else [self flip:flat];
+}
+
+// A slider row's tap: off puts the default back (the game's own value) and keeps the value; on brings it back.
+- (void)flipSlider:(NSInteger)flat {
+    AMItem *item = self.items[flat];
+    BOOL on = !AMItemOn(item);
+    float kept = AMSliderShown(item);
+    if (on && kept == item.defaultValue) on = NO;  // nothing kept yet: drag to pick a value
+    else AMSliderSet(item, on ? kept : item.defaultValue);
+    NSIndexPath *path = [self pathOfFlat:flat];
+    AMSliderCell *row = path ? (AMSliderCell *)[self.tableView cellForRowAtIndexPath:path] : nil;
+    if ([row isKindOfClass:AMSliderCell.class]) { row.slider.value = AMSliderShown(item); [self showValueOf:item inRow:row]; }
+    [self confirm:on row:row];
+    [self refreshHeaderOf:flat];
+    [self refreshAllOff];
 }
 
 // An action row: "…" while it runs, then the outcome on the row with the glow and haptic of a pick.
@@ -2335,17 +2424,31 @@ static NSString *AMGameName(NSString *fallback) {
 // Letting go of a slider confirms like a switch: cyan when it is off its default (on), the line colour back at it.
 - (void)sliderReleased:(UISlider *)s {
     NSIndexPath *path = [self pathOfFlat:s.tag];
-    [self confirm:s.value != self.items[s.tag].defaultValue row:path ? [self.tableView cellForRowAtIndexPath:path] : nil];
+    [self confirm:AMItemOn(self.items[s.tag]) row:path ? [self.tableView cellForRowAtIndexPath:path] : nil];
 }
 
+// Dragging sets the value and turns the slider on; within 3% of the range from the default it snaps to the
+// default (off), with a tick, so off is easy to reach by hand.
 - (void)sliderChanged:(UISlider *)s {
     AMItem *item = self.items[s.tag];
-    [NSUserDefaults.standardUserDefaults setFloat:s.value forKey:AMKey(item.key)];
+    float v = s.value;
+    BOOL snap = fabsf(v - item.defaultValue) <= (item.max - item.min) * 0.03f;
+    if (snap) {
+        v = item.defaultValue;
+        s.value = v;
+    }
+    BOOL was = AMItemOn(item);
+    if (snap && !was) return;  // already off: nothing changes
+    if (snap) [[UISelectionFeedbackGenerator new] selectionChanged];
+    NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
+    [d setFloat:v forKey:AMKey(item.key)];
+    if (!snap) [d setFloat:v forKey:AMLastKey(item)];  // a snap keeps the value it was dragged from
+    if (item.onSlider) item.onSlider(v);
     NSIndexPath *path = [self pathOfFlat:s.tag];
     AMSliderCell *row = path ? (AMSliderCell *)[self.tableView cellForRowAtIndexPath:path] : nil;
     if ([row isKindOfClass:AMSliderCell.class]) [self showValueOf:item inRow:row];
-    if (item.onSlider) item.onSlider(s.value);
     [self refreshHeaderOf:s.tag];
+    if (was != !snap) [self refreshAllOff];
 }
 
 @end
@@ -2858,8 +2961,7 @@ static NSString *const AMButtonSpot = @"AM__buttonSpot";  // where the button wa
     AMItem *item = [self itemFor:key];
     if (!item || !item.isSlider) return NO;
     value = MIN(MAX(value, item.min), item.max);
-    [NSUserDefaults.standardUserDefaults setFloat:value forKey:AMKey(key)];
-    if (item.onSlider) item.onSlider(value);
+    AMSliderSet(item, value);
     os_log(OS_LOG_DEFAULT, "[AccretionMods] set %{public}@ %.2f", key, value);
     return YES;
 }
