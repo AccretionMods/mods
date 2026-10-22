@@ -180,6 +180,21 @@ class Api(unittest.TestCase):
         self.assertEqual(status, 200, job)
         self.assertEqual(job["args"], ["C:/no/such.ipa", "--install"])
         self.post(f"/api/jobs/{job['id']}/stop", {})
+        # prompt builder: every {fact} a task uses is one the context gives
+        status, ctx = self.get("/api/mods/game-plus/context")
+        self.assertEqual(status, 200, ctx)
+        self.assertTrue(ctx["dump"])
+        self.assertIn(ctx["log_seen"], (True, False))
+        status, conf = self.get("/api/prompts")
+        self.assertEqual(status, 200)
+        known = set(ctx) | {"ask", "extra", "where", "limits"}
+        import re as _re
+
+        for t in conf["tasks"]:
+            self.assertTrue(t["lines"] and t["label"] and t["ask"], t["id"])
+            used = set(_re.findall(r"\{(\w+)\}", "\n".join(t["lines"]) + conf["where"] + conf["limits"]))
+            self.assertLessEqual(used, known, t["id"])
+            self.assertLessEqual(set(t.get("needs", [])), {"ask", "dump", "log"}, t["id"])
         # console: any dev.py command, regexes kept as typed, answers only for console jobs
         status, data = self.get("/api/console/commands")
         self.assertIn("find", data["commands"])

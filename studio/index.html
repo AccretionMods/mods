@@ -587,30 +587,53 @@ const App = {
         group("Games and copies", [
           chip("games like ours", "games", true), chip("search games…", "games search …"), chip("game info…", "games info …"),
           chip("get .ipa…", "fetch …"), chip("get newest for this mod", `fetch --mod ${m}`, true), chip("decrypt site account", "fetch --account", true)]),
-        this.promptGroup(),
+        this.promptBuilder(run),
         group("Help", [chip("all commands", "help", true), ...commands.map(c => chip(c, `help ${c}`, true))])));
     line.focus();
   },
-  prompts() {
-    const d = this.detail || {}, m = d.name || "<mod>", t = d.title || m, g = d.target || "<bundle ID>";
-    const where = `Project: Accretion mods. Target: AccretionMods/mods, mods/${m} (${t} ${d.version || ""}, game ${g} ${d.app_version || "?"}; dump ${d.dump ? "present" : "not made yet: run am dump " + m + " first"}).`;
-    const limits = "Limits: single-player features only; never hook purchases, ads, accounts or online play (flag them instead); don't publish or push without asking.";
-    return [
-      ["Update this app", `Goal: bring ${t} up to the newest App Store version of ${g}, with every switch still working.\n${where}\nSteps: am games info ${g} for the store version; am fetch --mod ${m} for a decrypted copy (open the site if it asks for a captcha); am update ${m}; fix every hook it reports changed or missing (am find / am fields, then am add or am pin); am build ${m} --ipa --bump; am run ${m}; read the log.\nDone when: each switch is marked works or fails on the phone (am mark), mod.json's tested_app_version is the new version, and you list what changed.\n${limits}`],
-      ["Explore the dump for tweaks", `Goal: find every promising tweak in ${t}'s dump and flag the risky ones, before we change anything.\n${where}\nHow: am status ${m}; am suggest ${m} --no-pick; am find ${m} with regexes per area (currency|gold|coins|gems, health|hp|damage|armor, cooldown|timer|duration|speed, xp|level|exp, drop|loot|chance|rarity, unlock|owned|isLocked, energy|stamina); am fields on the classes that hold the values.\nDeliver: a table grouped by area: Class.method or Class.field, what changing it would do, the way (hook, no-JIT pin, call), needs JIT or not, risk; a FLAGS list (purchase/IAP, ads, online/server, anti-cheat or integrity checks, save sync); the top 10 ranked, each with the exact am add / am pin command.\nDone when: the table and the top 10 are in your reply. Read only: no files changed.\n${limits}`],
-      ["Help me narrow down the best approach", `Goal: pick the best way to make this work in ${t}: <describe the feature, e.g. "player takes no damage">.\n${where}\nGive 2 to 4 approaches (hook a method, pin a field without JIT, call a method every few seconds, patch an offset), each with: what it touches (Class.method/field from the dump), needs JIT or not, how likely it survives a game update, side effects, effort. Recommend one, say why, and give the exact am commands to try it, then how to check it on the phone (am run ${m}, what to look for in the log).\nAsk me before changing files if the choice is not clear.\n${limits}`],
-    ];
-  },
-  promptGroup() {
-    const out = this.el("textarea", { class: "hidden", rows: "10", style: "width:100%;margin-top:8px", readonly: "" });
-    const show = (label, text) => {
-      out.value = text; out.classList.remove("hidden");
-      navigator.clipboard.writeText(text).then(() => this.toast(`"${label}" copied: paste it into Claude Code`, "ok")).catch(() => { out.select(); this.toast("select and copy the prompt below", "bad"); });
+  // the prompt builder: a task + one line + this mod's facts -> a prompt for Claude Code (studio/prompts.json)
+  promptBuilder(run) {
+    const box = this.el("div", { class: "sec" }, this.el("h3", { text: "Prompt builder" }),
+      this.el("p", { class: "hint", text: "Pick a task and type one line. Studio adds this mod's facts (versions, dump, switches and their phone results, the last log errors) and the goal / target / done when / limits shape, and says which detail is missing. Copy it into Claude Code. Tasks live in studio/prompts.json." }));
+    const task = this.el("select", {});
+    const ask = this.el("input", { style: "flex:1;min-width:220px" });
+    const tags = this.el("span", { class: "badges", style: "margin:0" });
+    const hints = this.el("div", {});
+    const out = this.el("textarea", { rows: "11", style: "width:100%;margin-top:8px", spellcheck: "false" });
+    const copy = this.el("button", { class: "primary", onclick: () => navigator.clipboard.writeText(out.value).then(() => this.toast("prompt copied: paste it into Claude Code", "ok")).catch(() => { out.select(); this.toast("select and copy the prompt", "bad"); }) }, "Copy prompt");
+    const refresh = this.el("button", { class: "small", title: "read the mod's facts again (after a log, build or mark)", onclick: async () => { try { ctx = await this.api(`/api/mods/${this.mod}/context`); build(); this.toast("facts updated", "ok"); } catch (e) { this.toast(e.message, "bad"); } } }, "Refresh facts");
+    box.append(this.el("div", { class: "row" }, task, ask, tags, refresh), hints, out, this.el("div", { class: "row", style: "margin-top:6px" }, copy, this.el("span", { class: "muted small", text: "You can edit the prompt above before copying." })));
+    let conf = null, ctx = null;
+    const fill = (text, facts) => text.replace(/\{(\w+)\}/g, (m, k) => (k in facts ? String(facts[k]) : m));
+    const build = () => {
+      if (!conf || !ctx) return;
+      const t = conf.tasks.find(x => x.id === task.value) || conf.tasks[0];
+      ask.placeholder = t.ask;
+      const line = ask.value.trim();
+      const facts = { ...ctx, ask: line || "<" + t.ask.replace(/\s*\(.*\)$/, "") + ">", extra: line ? ` (${line})` : "" };
+      facts.limits = fill(conf.limits, facts);
+      facts.where = fill(conf.where, facts);
+      out.value = t.lines.map(l => fill(l, facts)).join("\n");
+      tags.replaceChildren(t.read_only ? this.el("span", { class: "badge good", text: "read only" }) : this.el("span", { class: "badge warn", text: "changes files" }));
+      const missing = [];
+      if ((t.needs || []).includes("ask") && !line) missing.push([`Type the one line: ${t.ask}`]);
+      if (t.id === "port" && line && !/^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+){2,}$/.test(line)) missing.push(["Use the game's bundle ID (Games tab or am games search shows it)."]);
+      if ((t.needs || []).includes("dump") && !ctx.dump) missing.push(["No dump yet, so Claude can't look up classes.", "Dump now", `dump ${ctx.mod}`]);
+      if ((t.needs || []).includes("log") && !ctx.log_seen) missing.push(["No device log in Studio yet, so the prompt can't carry the errors.", "Log 60 s", `log ${ctx.mod} --seconds 60 --launch`]);
+      if (t.id === "update" && ctx.newer_bases.length) missing.push([`A newer copy is already waiting: ${ctx.newer_bases[0].version}.`]);
+      hints.replaceChildren(...missing.map(([text, label, cmd]) => this.el("div", { class: "row hint", style: "margin:6px 0 0" },
+        this.el("span", { class: "badge warn", text: "missing" }), this.el("span", { class: "grow", text }),
+        label ? this.el("button", { class: "small", onclick: () => run(cmd) }, label) : null)));
     };
-    return this.el("div", { class: "sec" }, this.el("h3", { text: "Prompts for Claude" }),
-      this.el("p", { class: "hint", text: "Filled in for this mod (game, versions, dump) in the goal / target / done when / limits shape. Click to copy, then paste into Claude Code." }),
-      this.el("div", { class: "row" }, this.prompts().map(([label, text]) => this.el("button", { class: "small", onclick: () => show(label, text) }, label))),
-      out);
+    task.addEventListener("change", build); ask.addEventListener("input", build);
+    (async () => {
+      try {
+        [conf, ctx] = await Promise.all([this.api("/api/prompts"), this.api(`/api/mods/${this.mod}/context`)]);
+        task.replaceChildren(...conf.tasks.map(t => this.el("option", { value: t.id, text: t.label })));
+        build();
+      } catch (e) { hints.replaceChildren(this.el("p", { class: "hint", text: e.message })); }
+    })();
+    return box;
   },
 
   // ---------------------------------------------------------------- games
