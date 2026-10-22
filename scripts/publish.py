@@ -10,7 +10,10 @@ Needs the upload key: the git-ignored file .upload-key in this repo, or ACCRETIO
 
 Usage:
   python3 scripts/publish.py --mod swiftradio-plus --ipa out/swiftradio-plus_4.0.0-mod1.0.0_accretion.ipa \
-      [--min-os 17.0]
+      [--min-os 17.0] [--allow-personal]
+
+Mods marked "personal": true are refused unless --allow-personal is given (a manual upload the owner chose);
+their release entry then carries "personalPublished" and mods.json lists them.
 """
 
 import argparse
@@ -71,13 +74,23 @@ def main():
     p.add_argument("--ipa", required=True)
     p.add_argument("--app-version", help="ignored: the version comes from the .ipa (kept for old commands)")
     p.add_argument("--min-os")
+    p.add_argument(
+        "--allow-personal",
+        action="store_true",
+        help='publish a mod marked "personal": true anyway (manual uploads only; the owner\'s choice)',
+    )
     a = p.parse_args()
 
     meta = load(f"mods/{a.mod}/mod.json", None)
     if meta is None:
         sys.exit(f"mods/{a.mod}/mod.json not found")
+    if meta.get("personal") and not a.allow_personal:
+        sys.exit(
+            f"{a.mod} is a personal mod: use Mods: build a mod to keep a private copy, "
+            "or publish it by hand with --allow-personal (upload_ipa.ps1 -AllowPersonal)"
+        )
     if meta.get("personal"):
-        sys.exit(f"{a.mod} is a personal mod: use Mods: build a mod to keep a private copy; it is never published")
+        print(f"{a.mod} is personal: publishing it because --allow-personal was given")
     bundle = meta["bundle_id"]
     version = ipa_version(a.ipa)
     key = upload_key()
@@ -112,7 +125,7 @@ def main():
     query = urllib.parse.urlencode({"app": bundle, "version": version})
     url = f"{FUNCTIONS}/download?{query}"
     releases = load("releases.json", {})
-    record(releases, a.mod, a.ipa, url, version, a.min_os)
+    record(releases, a.mod, a.ipa, url, version, a.min_os, allow_personal=bool(meta.get("personal")))
     save("releases.json", releases)
     save("mods.json", build_source(releases))
     print("releases.json and mods.json updated; commit and push them")
