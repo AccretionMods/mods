@@ -51,8 +51,10 @@ NS_ASSUME_NONNULL_BEGIN
          onChange:(nullable void (^)(float value))block;
 
 // A row that opens a list page. `entries` is asked for the rows each time the page opens (so a mod can build
-// them from the running game): dictionaries with "title" and optionally "symbol" (an SF Symbol name) and
-// "detail". Tapping a row calls `block` with its index; the page stays open so several picks are easy.
+// them from the running game): dictionaries with "title" and optionally "symbol" (an SF Symbol name),
+// "detail" and "group". Entries with a "group" (a quality tier: "Legendary", "Rare", ...) are shown one box per
+// group, in the order they first appear, so list the best tier first; known tier names get their colour. Tapping a
+// row calls `block` with its index in `entries`; the page stays open so several picks are easy.
 - (void)addList:(NSString *)title
          symbol:(nullable NSString *)symbol
         entries:(NSArray<NSDictionary<NSString *, NSString *> *> *(^)(void))entries
