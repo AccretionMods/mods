@@ -4,8 +4,10 @@
 // Values are saved in the app's own NSUserDefaults under "AM_<key>", so they survive
 // relaunches and stay inside the app's sandbox.
 //
-// The look follows Accretion's design system (dark first, violet-black grounds, surface cards on hairlines,
-// calm status colours). Long menus fold their sections and get a search field.
+// The official mod menu template (owner, 2026-10-22): every mod uses this menu as it is; mods add items, never
+// restyle it. The rules are in README "The mod menu (official template)". The look follows Accretion's design
+// system (dark first, violet-black grounds, one outlined box per category, calm status colours); categories
+// start expanded and long menus get a search field.
 
 #import <UIKit/UIKit.h>
 

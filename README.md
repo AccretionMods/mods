@@ -83,9 +83,33 @@ both). Bump `version` in `mod.json` for every change you publish.
    - `base.ipa_url` and `base.sha256`: the build refuses any other file.
    - `remove_extensions`: `encrypted` (default) or `all`.
 3. Write `Tweak.x`. Register switches and sliders with `AMMenu.shared` in `%ctor`, then call
-   `[AMMenu.shared install]`. Read values anywhere with `[AMMenu boolForKey:]` / `[AMMenu floatForKey:]`.
+   `[AMMenu.shared install]` (the menu is the shared template: see "The mod menu" below). Read values anywhere with `[AMMenu boolForKey:]` / `[AMMenu floatForKey:]`.
 4. Push. CI checks every `mod.json` (`scripts/validate_mods.py`), the tweak library, the scripts and
    the version rules.
+
+### The mod menu (official template)
+
+`menu/AMMenu` is the one mod menu every mod uses, as approved by the owner on 2026-10-22. Mods add items to it; they
+never copy, restyle or replace it. Change the look only in `menu/AMMenu.m`, so every mod changes together.
+
+- **Title and footer:** the game's own name (as under its icon) with the Accretion mark; a plain Done and All off;
+  a small "More at getaccretion.app" link under the note.
+- **Categories:** one outlined box per category, the label above it with "N on" and a plain Off. Every
+  category starts expanded; tapping a label folds it. No lines between rows.
+- **Switch rows:** 13 pt text, about 30 pt tall. A small outlined line toggle: grey off, cyan on, red when on and
+  not reaching the game. Tap anywhere on the row. No checkmarks anywhere.
+- **Status:** the dot left of the title while a switch is on: steady green when it works, red pulsing when not,
+  with the reason in small red text under the title ("Start a fight to see it work"). Report it with
+  `AMMenuStatus`.
+- **Confirmation:** every tap glows its row: a switch cyan on and line colour off; a slider when released; a list
+  pick cyan with "✓ Added…", or red with the reason. All come with a haptic. A list pick reports what the game did
+  with `AMMenuPickResult(ok, text)` inside `onPick`.
+- **Lists (`addList`):** the menu's look with search on long lists. Give each entry a `group`, and list the best
+  first: by kind (Weapons, Ammo, Wearables, Medical, Food & drink, Water, Materials, Misc) and by quality tier
+  (Legendary, Epic, Rare, Normal, Common) when the game has tiers. Never one flat list.
+- **Display category (last):** Pulsing dot and Toggles, both on by default, kept per game. They are not cheats:
+  All off and the counts ignore them.
+- **Background:** only the two slow drifting lights and the moving line under the title.
 
 ### Private bases and ready-made tweaks
 
