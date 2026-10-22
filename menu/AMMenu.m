@@ -211,7 +211,7 @@ static BOOL AMItemOn(AMItem *item) {
 }
 
 static void AMStyleTable(UITableView *table) {
-    table.backgroundColor = AM_BG;
+    table.backgroundColor = AM_BG;  // under the backdrop, where a table has one
     table.separatorColor = AM_LINE;
     table.sectionHeaderTopPadding = 6;
     table.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
@@ -295,26 +295,331 @@ static void AMStyleNav(UINavigationController *nav) {
 
 @end
 
+#pragma mark - Backdrop and summary (the store's live-index look)
+
+static BOOL AMStill(void) {
+    return UIAccessibilityIsReduceMotionEnabled() || NSProcessInfo.processInfo.lowPowerModeEnabled;
+}
+
+static UIColor *AMResolved(UIColor *c, UITraitCollection *t) {
+    return [c resolvedColorWithTraitCollection:t];
+}
+
+// The Backdrop: `bg`, a hairline grid every 28 pt and two soft lights (violet, cyan) drifting over 40 s.
+// Core Animation moves the lights on the render server: no timer, nothing redrawn per frame. Still with
+// Reduce Motion or Low Power Mode.
+@interface AMBackdrop : UIView
+@end
+
+@implementation AMBackdrop {
+    CAShapeLayer *_grid;
+    CAGradientLayer *_lights[2];
+    CGSize _laidOut;
+}
+
+- (instancetype)init {
+    if ((self = [super initWithFrame:CGRectZero])) {
+        self.userInteractionEnabled = NO;
+        self.backgroundColor = AM_BG;
+        for (int i = 0; i < 2; i++) {
+            _lights[i] = [CAGradientLayer layer];
+            _lights[i].type = kCAGradientLayerRadial;
+            _lights[i].startPoint = CGPointMake(0.5, 0.5);
+            _lights[i].endPoint = CGPointMake(1, 1);
+            [self.layer addSublayer:_lights[i]];
+        }
+        _grid = [CAShapeLayer layer];
+        _grid.fillColor = UIColor.clearColor.CGColor;
+        _grid.lineWidth = 1 / UIScreen.mainScreen.scale;
+        [self.layer addSublayer:_grid];
+        [self applyColors];
+    }
+    return self;
+}
+
+- (void)applyColors {
+    BOOL light = self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleLight;
+    CGFloat glow = light ? 0.09 : 0.16;
+    UIColor *a = AMResolved(AM_ACCENT, self.traitCollection), *b = AMResolved(AMTok(0x22D3EE, 0x0E8FB0), self.traitCollection);
+    _lights[0].colors = @[(id)[a colorWithAlphaComponent:glow].CGColor, (id)[a colorWithAlphaComponent:0].CGColor];
+    _lights[1].colors = @[(id)[b colorWithAlphaComponent:glow].CGColor, (id)[b colorWithAlphaComponent:0].CGColor];
+    _grid.strokeColor = (light ? [UIColor colorWithRed:0x1E / 255.0 green:0x1B / 255.0 blue:0x4B / 255.0 alpha:0.05]
+                               : [UIColor colorWithWhite:1 alpha:0.035]).CGColor;
+}
+
+- (void)traitCollectionDidChange:(UITraitCollection *)previous {
+    [super traitCollectionDidChange:previous];
+    [self applyColors];
+}
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    CGSize size = self.bounds.size;
+    if (CGSizeEqualToSize(size, _laidOut)) return;
+    _laidOut = size;
+    UIBezierPath *path = [UIBezierPath bezierPath];
+    for (CGFloat x = 28; x < size.width; x += 28) { [path moveToPoint:CGPointMake(x, 0)]; [path addLineToPoint:CGPointMake(x, size.height)]; }
+    for (CGFloat y = 28; y < size.height; y += 28) { [path moveToPoint:CGPointMake(0, y)]; [path addLineToPoint:CGPointMake(size.width, y)]; }
+    _grid.frame = self.bounds;
+    _grid.path = path.CGPath;
+    CGFloat d = MAX(size.width, size.height) * 0.9;
+    CGPoint from[2] = {CGPointMake(size.width * 0.15, size.height * 0.12), CGPointMake(size.width * 0.9, size.height * 0.75)};
+    CGPoint to[2] = {CGPointMake(size.width * 0.6, size.height * 0.35), CGPointMake(size.width * 0.3, size.height * 0.95)};
+    for (int i = 0; i < 2; i++) {
+        _lights[i].bounds = CGRectMake(0, 0, d, d);
+        _lights[i].position = from[i];
+        [_lights[i] removeAllAnimations];
+        if (AMStill()) continue;
+        CABasicAnimation *drift = [CABasicAnimation animationWithKeyPath:@"position"];
+        drift.fromValue = [NSValue valueWithCGPoint:from[i]];
+        drift.toValue = [NSValue valueWithCGPoint:to[i]];
+        drift.duration = i ? 52 : 40;
+        drift.autoreverses = YES;
+        drift.repeatCount = HUGE_VALF;
+        drift.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
+        [_lights[i] addAnimation:drift forKey:@"drift"];
+    }
+}
+
+@end
+
+// One number tile: an uppercase mono label over a big tabular number.
+@interface AMTile : UIView
+@property (nonatomic, strong) UILabel *label, *number;
+@end
+
+@implementation AMTile
+
+- (instancetype)initWithLabel:(NSString *)label {
+    if ((self = [super initWithFrame:CGRectZero])) {
+        self.backgroundColor = AM_RAISED;
+        self.layer.cornerRadius = 10;
+        self.layer.borderWidth = 1;
+        _label = [UILabel new];
+        _label.attributedText = AMLabel(label, AM_MUTED);
+        _label.adjustsFontSizeToFitWidth = YES;
+        _label.minimumScaleFactor = 0.7;
+        _number = [UILabel new];
+        _number.font = [UIFont monospacedDigitSystemFontOfSize:22 weight:UIFontWeightSemibold];
+        _number.textColor = AM_FG;
+        _number.text = @"0";
+        [self addSubview:_label];
+        [self addSubview:_number];
+        self.isAccessibilityElement = YES;
+    }
+    return self;
+}
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    self.layer.borderColor = AMResolved(AM_LINE, self.traitCollection).CGColor;
+    CGFloat w = self.bounds.size.width - 20;
+    self.label.frame = CGRectMake(10, 9, w, 13);
+    self.number.frame = CGRectMake(10, 25, w, 28);
+}
+
+- (void)setValue:(NSUInteger)value color:(UIColor *)color {
+    self.number.text = [NSString stringWithFormat:@"%lu", (unsigned long)value];
+    self.number.textColor = color;
+    self.accessibilityLabel = [NSString stringWithFormat:@"%@ %lu", self.label.text.lowercaseString, (unsigned long)value];
+}
+
+@end
+
+// The card above the switches: "● ACCRETION / mod menu" and the build, the violet-to-cyan hairline, four
+// number tiles, and the search field. Corner brackets as on the store's live index.
+@interface AMSummary : UIView
+@property (nonatomic, strong) UITextField *search;
+- (void)showSwitches:(NSUInteger)all on:(NSUInteger)on working:(NSUInteger)working waiting:(NSUInteger)waiting;
+@end
+
+@implementation AMSummary {
+    UIView *_card;
+    AMStatusDot *_live;
+    UILabel *_brand, *_build;
+    CAGradientLayer *_rule;
+    NSArray<AMTile *> *_tiles;
+    NSArray<CAShapeLayer *> *_corners;
+}
+
+- (instancetype)initWithCount:(NSUInteger)count search:(BOOL)search {
+    if ((self = [super initWithFrame:CGRectZero])) {
+        _card = [UIView new];
+        _card.backgroundColor = AM_SURFACE;
+        _card.layer.cornerRadius = 14;
+        _card.layer.borderWidth = 1;
+        [self addSubview:_card];
+        _live = [AMStatusDot new];
+        [_card addSubview:_live];
+        _brand = [UILabel new];
+        NSMutableAttributedString *brand = [[NSMutableAttributedString alloc] initWithString:@"ACCRETION"
+            attributes:@{NSFontAttributeName: AMMono(12, UIFontWeightSemibold), NSForegroundColorAttributeName: AM_FG, NSKernAttributeName: @2}];
+        [brand appendAttributedString:[[NSAttributedString alloc] initWithString:@"  /  mod menu"
+            attributes:@{NSFontAttributeName: AMMono(12, UIFontWeightRegular), NSForegroundColorAttributeName: AM_MUTED}]];
+        _brand.attributedText = brand;
+        [_card addSubview:_brand];
+        _build = [UILabel new];
+        _build.font = AMMono(11, UIFontWeightRegular);
+        _build.textColor = AM_MUTED;
+        _build.textAlignment = NSTextAlignmentRight;
+        NSString *version = NSBundle.mainBundle.infoDictionary[@"CFBundleShortVersionString"];
+        _build.text = version.length ? [@"v" stringByAppendingString:version] : nil;
+        [_card addSubview:_build];
+        _rule = [CAGradientLayer layer];
+        _rule.startPoint = CGPointMake(0, 0.5);
+        _rule.endPoint = CGPointMake(1, 0.5);
+        [_card.layer addSublayer:_rule];
+        NSMutableArray *tiles = [NSMutableArray new];
+        for (NSString *label in @[@"switches", @"on", @"working", @"waiting"]) {
+            AMTile *tile = [[AMTile alloc] initWithLabel:label];
+            [_card addSubview:tile];
+            [tiles addObject:tile];
+        }
+        _tiles = tiles;
+        NSMutableArray *corners = [NSMutableArray new];
+        for (int i = 0; i < 4; i++) {
+            CAShapeLayer *corner = [CAShapeLayer layer];
+            corner.fillColor = UIColor.clearColor.CGColor;
+            corner.lineWidth = 1.5;
+            [self.layer addSublayer:corner];
+            [corners addObject:corner];
+        }
+        _corners = corners;
+        if (search) {
+            _search = [UITextField new];
+            _search.backgroundColor = AM_RAISED;
+            _search.textColor = AM_FG;
+            _search.tintColor = AM_ACCENT_TEXT;
+            _search.font = [UIFont systemFontOfSize:15];
+            _search.layer.cornerRadius = 10;
+            _search.layer.borderWidth = 1;
+            _search.clearButtonMode = UITextFieldViewModeWhileEditing;
+            _search.returnKeyType = UIReturnKeyDone;
+            _search.autocorrectionType = UITextAutocorrectionTypeNo;
+            _search.attributedPlaceholder = [[NSAttributedString alloc]
+                initWithString:[NSString stringWithFormat:@"Search %lu switches", (unsigned long)count]
+                     attributes:@{NSForegroundColorAttributeName: AM_MUTED}];
+            UIImageView *glass = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"magnifyingglass"]];
+            glass.tintColor = AM_MUTED;
+            glass.contentMode = UIViewContentModeCenter;
+            glass.frame = CGRectMake(0, 0, 36, 36);
+            _search.leftView = glass;
+            _search.leftViewMode = UITextFieldViewModeAlways;
+            [_card addSubview:_search];
+        }
+        [self applyColors];
+    }
+    return self;
+}
+
+- (CGFloat)heightForWidth:(CGFloat)width {
+    return 12 + 16 + 18 + 12 + 1 + 14 + 62 + (self.search ? 12 + 40 : 0) + 16 + 8;
+}
+
+- (void)applyColors {
+    UITraitCollection *t = self.traitCollection;
+    _card.layer.borderColor = AMResolved(AM_LINE, t).CGColor;
+    _search.layer.borderColor = AMResolved(AMTok(0x6458AF, 0x8F7ED2), t).CGColor;  // `line-strong`: a field's edge
+    UIColor *a = AMResolved(AM_ACCENT, t), *b = AMResolved(AMTok(0x22D3EE, 0x0E8FB0), t);
+    _rule.colors = @[(id)a.CGColor, (id)b.CGColor];
+    for (NSUInteger i = 0; i < _corners.count; i++) _corners[i].strokeColor = (i % 3 ? b : a).CGColor;
+}
+
+- (void)traitCollectionDidChange:(UITraitCollection *)previous {
+    [super traitCollectionDidChange:previous];
+    [self applyColors];
+}
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    CGFloat side = MAX(self.layoutMargins.left, 16);
+    CGRect card = CGRectMake(side, 12, self.bounds.size.width - 2 * side, self.bounds.size.height - 20);
+    _card.frame = card;
+    CGFloat w = card.size.width - 32, y = 16;
+    _live.center = CGPointMake(16 + 4, y + 9);
+    _brand.frame = CGRectMake(30, y, w * 0.65, 18);
+    _build.frame = CGRectMake(16 + w * 0.6, y, w * 0.4, 18);
+    y += 18 + 12;
+    _rule.frame = CGRectMake(16, y, w, 1);
+    y += 1 + 14;
+    CGFloat gap = 8, tw = (w - gap * 3) / 4;
+    for (NSUInteger i = 0; i < _tiles.count; i++) _tiles[i].frame = CGRectMake(16 + i * (tw + gap), y, tw, 62);
+    y += 62 + 12;
+    _search.frame = CGRectMake(16, y, w, 40);
+    // corner brackets just outside the card, 10 pt arms
+    CGFloat l = 10, o = 4;
+    CGPoint pts[4] = {CGPointMake(CGRectGetMinX(card) - o, CGRectGetMinY(card) - o), CGPointMake(CGRectGetMaxX(card) + o, CGRectGetMinY(card) - o),
+                      CGPointMake(CGRectGetMaxX(card) + o, CGRectGetMaxY(card) + o), CGPointMake(CGRectGetMinX(card) - o, CGRectGetMaxY(card) + o)};
+    int dx[4] = {1, -1, -1, 1}, dy[4] = {1, 1, -1, -1};
+    for (int i = 0; i < 4; i++) {
+        UIBezierPath *p = [UIBezierPath bezierPath];
+        [p moveToPoint:CGPointMake(pts[i].x, pts[i].y + dy[i] * l)];
+        [p addLineToPoint:pts[i]];
+        [p addLineToPoint:CGPointMake(pts[i].x + dx[i] * l, pts[i].y)];
+        _corners[i].path = p.CGPath;
+    }
+}
+
+- (void)showSwitches:(NSUInteger)all on:(NSUInteger)on working:(NSUInteger)working waiting:(NSUInteger)waiting {
+    [_tiles[0] setValue:all color:AM_FG];
+    [_tiles[1] setValue:on color:on ? AM_FG : AM_MUTED];
+    [_tiles[2] setValue:working color:working ? AM_GOOD : AM_MUTED];
+    [_tiles[3] setValue:waiting color:waiting ? AM_WARN : AM_MUTED];
+    _live.hidden = on == 0;
+    _live.ok = waiting == 0;
+}
+
+@end
+
 #pragma mark - Rows
 
-// A slider row's accessory: the value in mono (accent when it is not the default) and the slider.
-@interface AMSliderBox : UIView
-@property (nonatomic, strong) UILabel *value;
+// A slider row: the title on its own line (never squeezed by the slider), the value in mono on the right
+// (accent when it is not the default), the game's own value under the title, the slider full width below.
+@interface AMSliderCell : UITableViewCell
+@property (nonatomic, strong) UILabel *title, *value, *note;
 @property (nonatomic, strong) UISlider *slider;
 @end
 
-@implementation AMSliderBox
+@implementation AMSliderCell
 
-- (instancetype)init {
-    if ((self = [super initWithFrame:CGRectMake(0, 0, 196, 32)])) {
-        _value = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, 44, 32)];
-        _value.font = AMMono(13, UIFontWeightMedium);
+- (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier {
+    if ((self = [super initWithStyle:style reuseIdentifier:reuseIdentifier])) {
+        self.backgroundColor = AM_SURFACE;
+        self.selectionStyle = UITableViewCellSelectionStyleNone;
+        _title = [UILabel new];
+        _title.font = [UIFont systemFontOfSize:15];
+        _title.textColor = AM_FG;
+        _title.numberOfLines = 0;
+        _value = [UILabel new];
+        _value.font = [UIFont monospacedDigitSystemFontOfSize:15 weight:UIFontWeightSemibold];
         _value.textAlignment = NSTextAlignmentRight;
-        _slider = [[UISlider alloc] initWithFrame:CGRectMake(52, 0, 144, 32)];
+        [_value setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+        [_value setContentCompressionResistancePriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+        _note = [UILabel new];
+        _note.font = AMMono(11, UIFontWeightRegular);
+        _note.textColor = AM_MUTED;
+        _slider = [UISlider new];
         _slider.minimumTrackTintColor = AM_ACCENT;
         _slider.maximumTrackTintColor = AM_RAISED;
-        [self addSubview:_value];
-        [self addSubview:_slider];
+        for (UIView *v in @[_title, _value, _note, _slider]) {
+            v.translatesAutoresizingMaskIntoConstraints = NO;
+            [self.contentView addSubview:v];
+        }
+        UILayoutGuide *m = self.contentView.layoutMarginsGuide;
+        [NSLayoutConstraint activateConstraints:@[
+            [_title.topAnchor constraintEqualToAnchor:m.topAnchor constant:2],
+            [_title.leadingAnchor constraintEqualToAnchor:m.leadingAnchor],
+            [_title.trailingAnchor constraintLessThanOrEqualToAnchor:_value.leadingAnchor constant:-12],
+            [_value.trailingAnchor constraintEqualToAnchor:m.trailingAnchor],
+            [_value.firstBaselineAnchor constraintEqualToAnchor:_title.firstBaselineAnchor],
+            [_note.topAnchor constraintEqualToAnchor:_title.bottomAnchor constant:2],
+            [_note.leadingAnchor constraintEqualToAnchor:m.leadingAnchor],
+            [_note.trailingAnchor constraintEqualToAnchor:m.trailingAnchor],
+            [_slider.topAnchor constraintEqualToAnchor:_note.bottomAnchor constant:6],
+            [_slider.leadingAnchor constraintEqualToAnchor:m.leadingAnchor],
+            [_slider.trailingAnchor constraintEqualToAnchor:m.trailingAnchor],
+            [_slider.bottomAnchor constraintEqualToAnchor:m.bottomAnchor constant:-2],
+        ]];
     }
     return self;
 }
@@ -323,7 +628,7 @@ static void AMStyleNav(UINavigationController *nav) {
 
 #pragma mark - Panel
 
-@interface AMPanel : UITableViewController <UISearchResultsUpdating>
+@interface AMPanel : UITableViewController <UITextFieldDelegate>
 @property (nonatomic, strong) NSArray<AMItem *> *items;
 @property (nonatomic, strong) NSArray<NSString *> *allTitles;            // sections in the order first added
 @property (nonatomic, strong) NSArray<NSArray<NSNumber *> *> *allRows;   // indexes into items
@@ -332,6 +637,7 @@ static void AMStyleNav(UINavigationController *nav) {
 @property (nonatomic, copy) NSString *query;
 @property (nonatomic) BOOL folds;  // long menus fold their sections
 @property (nonatomic, strong, nullable) NSTimer *statusTimer;
+@property (nonatomic, strong) AMSummary *summary;
 @property (nonatomic, copy, nullable) void (^onClose)(void);  // the whole menu went away (Done or swipe down)
 @end
 
@@ -395,8 +701,8 @@ static NSString *const AMOpenSections = @"AM__openSections";
     self.shownRows = rows;
 }
 
-- (void)updateSearchResultsForSearchController:(UISearchController *)search {
-    NSString *q = search.searchBar.text ?: @"";
+- (void)searchChanged:(UITextField *)field {
+    NSString *q = field.text ?: @"";
     if ([q isEqualToString:self.query]) return;
     self.query = q;
     [self filter];
@@ -420,23 +726,50 @@ static NSString *const AMOpenSections = @"AM__openSections";
     [super viewDidLoad];
     AMStyleTable(self.tableView);
     self.tableView.estimatedRowHeight = 52;
+    self.tableView.backgroundView = [AMBackdrop new];  // fixed behind the rows while they scroll
     self.navigationItem.rightBarButtonItem =
         [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(close)];
-    if (self.items.count > 12) {
-        UISearchController *search = [[UISearchController alloc] initWithSearchResultsController:nil];
-        search.searchResultsUpdater = self;
-        search.obscuresBackgroundDuringPresentation = NO;
-        search.hidesNavigationBarDuringPresentation = NO;
-        UISearchBar *bar = search.searchBar;
-        bar.placeholder = [NSString stringWithFormat:@"Search %lu switches", (unsigned long)self.items.count];
-        bar.tintColor = AM_ACCENT_TEXT;
-        bar.searchTextField.backgroundColor = AM_RAISED;
-        bar.searchTextField.textColor = AM_FG;
-        bar.searchTextField.font = [UIFont systemFontOfSize:15];
-        self.navigationItem.searchController = search;
-        self.navigationItem.hidesSearchBarWhenScrolling = NO;
-        self.definesPresentationContext = YES;
+    NSUInteger switches = 0;
+    for (AMItem *item in self.items) if (!item.isList) switches++;
+    // the summary card, with the search field in it when the menu is long (not a bar floating over the rows)
+    self.summary = [[AMSummary alloc] initWithCount:switches search:self.items.count > 12];
+    self.summary.search.delegate = self;
+    [self.summary.search addTarget:self action:@selector(searchChanged:) forControlEvents:UIControlEventEditingChanged];
+    [self sizeSummary];
+    self.tableView.tableHeaderView = self.summary;
+    [self refreshSummary];
+}
+
+- (void)sizeSummary {
+    CGFloat width = self.tableView.bounds.size.width ?: UIScreen.mainScreen.bounds.size.width;
+    CGRect frame = CGRectMake(0, 0, width, [self.summary heightForWidth:width]);
+    if (!CGRectEqualToRect(frame, self.summary.frame)) {
+        self.summary.frame = frame;
+        self.tableView.tableHeaderView = self.summary;
     }
+}
+
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    [self sizeSummary];
+}
+
+- (BOOL)textFieldShouldReturn:(UITextField *)field {
+    [field resignFirstResponder];
+    return YES;
+}
+
+// The tiles: switches and sliders, how many are on, how many of those reach the game, how many wait.
+- (void)refreshSummary {
+    NSUInteger all = 0, on = 0, working = 0;
+    for (AMItem *item in self.items) {
+        if (item.isList) continue;
+        all++;
+        if (!AMItemOn(item)) continue;
+        on++;
+        if (AMStatusFor(item.key, NULL)) working++;
+    }
+    [self.summary showSwitches:all on:on working:working waiting:on - working];
 }
 
 - (void)close {
@@ -530,6 +863,21 @@ static NSString *const AMOpenSections = @"AM__openSections";
     NSInteger flat = [self flatIndexAt:indexPath];
     AMItem *item = self.items[flat];
     NSString *kind = item.isList ? @"list" : item.isSlider ? @"slider" : @"switch";
+    if (item.isSlider) {
+        AMSliderCell *row = [tableView dequeueReusableCellWithIdentifier:kind];
+        if (!row) {
+            row = [[AMSliderCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:kind];
+            [row.slider addTarget:self action:@selector(sliderChanged:) forControlEvents:UIControlEventValueChanged];
+        }
+        row.title.text = item.title;
+        row.slider.minimumValue = item.min;
+        row.slider.maximumValue = item.max;
+        row.slider.value = [NSUserDefaults.standardUserDefaults floatForKey:AMKey(item.key)];
+        row.slider.tag = flat;
+        row.note.text = AMNoteFor(item.key);
+        [self showValueOf:item inRow:row];
+        return row;
+    }
     UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:kind];
     if (!cell) {
         cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:kind];
@@ -544,10 +892,6 @@ static NSString *const AMOpenSections = @"AM__openSections";
             cell.selectionStyle = UITableViewCellSelectionStyleDefault;
             cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
             cell.imageView.tintColor = AM_ACCENT_TEXT;
-        } else if (item.isSlider) {
-            AMSliderBox *box = [AMSliderBox new];
-            [box.slider addTarget:self action:@selector(sliderChanged:) forControlEvents:UIControlEventValueChanged];
-            cell.accessoryView = box;
         } else {
             UISwitch *s = [UISwitch new];
             s.onTintColor = AM_ACCENT_FILL;
@@ -567,15 +911,6 @@ static NSString *const AMOpenSections = @"AM__openSections";
     if (item.isList) {
         cell.imageView.image = item.symbol ? [UIImage systemImageNamed:item.symbol] : nil;
         cell.detailTextLabel.text = nil;
-    } else if (item.isSlider) {
-        AMSliderBox *box = (AMSliderBox *)cell.accessoryView;
-        box.slider.minimumValue = item.min;
-        box.slider.maximumValue = item.max;
-        box.slider.value = [d floatForKey:AMKey(item.key)];
-        box.slider.tag = flat;
-        [self showValueOf:item inBox:box];
-        cell.detailTextLabel.text = AMNoteFor(item.key);
-        cell.detailTextLabel.textColor = AM_MUTED;
     } else {
         UISwitch *s = (UISwitch *)cell.accessoryView;
         s.on = [d boolForKey:AMKey(item.key)];
@@ -585,10 +920,10 @@ static NSString *const AMOpenSections = @"AM__openSections";
     return cell;
 }
 
-- (void)showValueOf:(AMItem *)item inBox:(AMSliderBox *)box {
-    float v = box.slider.value;
-    box.value.text = fabsf(v) >= 100 || v == roundf(v) ? [NSString stringWithFormat:@"%.0f", v] : [NSString stringWithFormat:@"%.1f", v];
-    box.value.textColor = v != item.defaultValue ? AM_ACCENT_TEXT : AM_MUTED;
+- (void)showValueOf:(AMItem *)item inRow:(AMSliderCell *)row {
+    float v = row.slider.value;
+    row.value.text = fabsf(v) >= 100 || v == roundf(v) ? [NSString stringWithFormat:@"%.0f", v] : [NSString stringWithFormat:@"%.1f", v];
+    row.value.textColor = v != item.defaultValue ? AM_ACCENT_TEXT : AM_MUTED;
 }
 
 - (void)showStatusOf:(AMItem *)item inCell:(UITableViewCell *)cell {
@@ -613,11 +948,18 @@ static NSString *const AMOpenSections = @"AM__openSections";
         if (item.isList) continue;
         UITableViewCell *cell = [self.tableView cellForRowAtIndexPath:path];
         if (!cell) continue;
+        if (item.isSlider) {
+            AMSliderCell *row = (AMSliderCell *)cell;
+            BOOL had = row.note.text.length > 0;
+            row.note.text = AMNoteFor(item.key);
+            if (had != (row.note.text.length > 0)) resize = YES;
+            continue;
+        }
         BOOL had = cell.detailTextLabel.text.length > 0;
-        if (item.isSlider) cell.detailTextLabel.text = AMNoteFor(item.key);
-        else [self showStatusOf:item inCell:cell];
+        [self showStatusOf:item inCell:cell];
         if (had != (cell.detailTextLabel.text.length > 0)) resize = YES;
     }
+    [self refreshSummary];
     if (resize) {
         [UIView performWithoutAnimation:^{ [self.tableView beginUpdates]; [self.tableView endUpdates]; }];
     }
@@ -671,14 +1013,18 @@ static NSString *const AMOpenSections = @"AM__openSections";
         [self.tableView endUpdates];
     }
     [self refreshHeaderOf:s.tag];
+    [self refreshSummary];
 }
 
 - (void)sliderChanged:(UISlider *)s {
     AMItem *item = self.items[s.tag];
     [NSUserDefaults.standardUserDefaults setFloat:s.value forKey:AMKey(item.key)];
-    if ([s.superview isKindOfClass:AMSliderBox.class]) [self showValueOf:item inBox:(AMSliderBox *)s.superview];
+    NSIndexPath *path = [self pathOfFlat:s.tag];
+    AMSliderCell *row = path ? (AMSliderCell *)[self.tableView cellForRowAtIndexPath:path] : nil;
+    if ([row isKindOfClass:AMSliderCell.class]) [self showValueOf:item inRow:row];
     if (item.onSlider) item.onSlider(s.value);
     [self refreshHeaderOf:s.tag];
+    [self refreshSummary];
 }
 
 @end
