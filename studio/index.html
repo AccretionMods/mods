@@ -45,7 +45,14 @@ button.danger { color: var(--bad); }
 button:disabled { opacity: .45; cursor: default; }
 button.small { padding: 4px 10px; font-size: 13px; min-height: 30px; border-radius: 8px; }
 input, select, textarea { font: inherit; background: var(--surface); color: var(--fg); border: 1px solid var(--line-strong); border-radius: 10px; padding: 7px 10px; min-width: 0; }
-input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+/* the field being typed in carries the live motif: violet into cyan, a light travelling every 6 s */
+input:focus, textarea:focus { outline: none; border-color: transparent;
+  background: linear-gradient(var(--surface), var(--surface)) padding-box,
+    linear-gradient(90deg, var(--accent), var(--accent-2), color-mix(in srgb, var(--accent-2) 30%, white), var(--accent-2), var(--accent)) border-box;
+  background-size: 100% 100%, 300% 100%; animation: edge 6s linear infinite; }
+select:focus { outline: none; border-color: var(--accent); }
+input[type=checkbox]:focus { animation: none; background: none; }
+@keyframes edge { from { background-position: 0 0, 100% 0; } to { background-position: 0 0, -200% 0; } }
 input[type=checkbox] { accent-color: var(--accent-fill); }
 label { display: block; font-size: 13px; color: var(--muted); margin: 8px 0 3px; }
 /* the uppercase mono label of the design system: panel titles, table heads, tabs */
