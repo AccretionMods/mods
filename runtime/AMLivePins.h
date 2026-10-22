@@ -48,7 +48,7 @@ static NSArray<NSValue *> *AMLiveObjects(NSString *object) {
         void *arr = AMIl2cppFindObjects([object substringToIndex:object.length - 2].UTF8String, &n);
         for (int32_t i = 0; i < n; i++) { void *o = AMIl2cppArrayAt(arr, i); if (o) [out addObject:[NSValue valueWithPointer:o]]; }
     } else {
-        NSRange dot = [object rangeOfString:@"."];
+        NSRange dot = [object rangeOfString:@"." options:NSBackwardsSearch];  // "Core.Entities.Foo.instance"
         void *o = dot.location != NSNotFound
             ? AMIl2cppStaticObject([object substringToIndex:dot.location].UTF8String, [object substringFromIndex:dot.location + 1].UTF8String)
             : AMIl2cppFindObject(object.UTF8String);
@@ -112,7 +112,9 @@ static void AMLiveRunTweak(NSDictionary *tweak) {
         tried = YES;
         if (!why) why = waiting;
         NSString *object = pin[@"object"];
-        NSString *cls = [object hasSuffix:@"[]"] ? [object substringToIndex:object.length - 2] : [object componentsSeparatedByString:@"."].firstObject;
+        NSRange last = [object rangeOfString:@"." options:NSBackwardsSearch];
+        NSString *cls = [object hasSuffix:@"[]"] ? [object substringToIndex:object.length - 2]
+                      : last.location != NSNotFound ? [object substringToIndex:last.location] : object;
         for (NSValue *box in AMLiveObjects(object)) {
             void *obj = box.pointerValue;
             NSString *tcls = cls;

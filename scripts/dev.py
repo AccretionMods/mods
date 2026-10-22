@@ -346,13 +346,17 @@ def type_kinds(mod):
 
 
 def fields_of(mod, cls):
-    """[(offset, static?, type, name)] of a class, from dump.cs."""
-    found, inside, depth = [], False, 0
+    """[(offset, static?, type, name)] of a class, from dump.cs. cls may carry its namespace (Core.PlayerLife)."""
+    found, inside, depth, ns = [], False, 0, ""
     with open(dump_path(mod), encoding="utf-8", errors="ignore") as f:
         for line in f:
             if not inside:
+                if line.startswith("// Namespace:"):
+                    ns = line[13:].strip()
+                    continue
                 m = TYPE_KIND.match(line)
-                if m and m.group(2).split("<")[0] == cls:
+                name = m.group(2).split("<")[0] if m else None
+                if m and (name == cls or (ns and f"{ns}.{name}" == cls)):
                     inside, depth = True, 0
                 continue
             depth += line.count("{") - line.count("}")
@@ -857,7 +861,7 @@ def pin_problems_in_dump(mod):
     out = []
 
     def has_method(cls, name, argc=None):
-        found = methods.get((cls, name), [])
+        found = methods.get((cls.split(".")[-1], name), [])  # the method list keys classes by short name
         return [m for m in found if argc is None or len(m.params) == argc]
 
     def getter(key, cls, name, why):
@@ -871,13 +875,13 @@ def pin_problems_in_dump(mod):
         for p in t.get("pins", []):
             key = t["key"]
             obj = p["object"]
-            cls = obj[:-2] if obj.endswith("[]") else obj.split(".")[0]
+            cls = obj[:-2] if obj.endswith("[]") else (obj.rpartition(".")[0] if obj.rpartition(".")[0] in data else obj.split(".")[0])
             info = data.get(cls)
             if info is None and not methods.get((cls, ".ctor")) and not any(k[0] == cls for k in methods):
                 out.append(("error", key, f"no class {cls} in the dump"))
                 continue
             if "." in obj and not obj.endswith("[]") and info is not None:
-                static = obj.split(".", 1)[1]
+                static = obj.rpartition(".")[2]
                 if static not in info.get("statics", []):
                     out.append(("warn", key, f"{obj}: not a static field of {cls}'s own type in the dump"))
             target = p.get("class") or cls
