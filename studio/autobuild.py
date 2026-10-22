@@ -32,8 +32,8 @@ import server  # noqa: E402  (the model command lines and the Claude stream pars
 PIN = re.compile(r"^am pin (\S+) (.+)$")
 # networked code: a switch there could reach other players (no online cheats). FistFightingController is
 # NuclearDay's online fight club (its offline twin, FistFighting_offline_Controller, stays a candidate).
-ONLINE = re.compile(r"network|photon|mirror|online|multiplayer|pvp|lobby|matchmak|server|netcode|rpc|fightclub"
-                    r"|^fistfightingcontroller",
+ONLINE = re.compile(r"network|photon|mirror|online|multiplayer|pvp|lobby|matchmak|server|netcode|\brpc\b|fightclub"
+                    r"|^fistfightingcontroller\b",
                     re.IGNORECASE)
 
 
