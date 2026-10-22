@@ -14,6 +14,7 @@ NS_ASSUME_NONNULL_BEGIN
 @interface AMMenu : NSObject
 
 @property (class, readonly) AMMenu *shared;
+// The mod's name ("9Kings+"). The menu itself is titled with the game's own name, the one under its icon.
 @property (nonatomic, copy) NSString *title;
 
 // Called with YES as the menu starts to open and NO once it has closed (a Unity mod pauses the game with it:
