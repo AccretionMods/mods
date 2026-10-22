@@ -429,6 +429,9 @@ static NSString *nsString(void *s) {
 static NSMutableArray<NSString *> *sItemIds;
 static NSMutableArray<NSNumber *> *sItemTypes;
 
+// Every weapon or outfit the game defines, one group per quality tier (EItemRarity: Legendary 4, Rare 3,
+// Normal 2, Common 1), best first; weapons by their top damage inside a tier, outfits by name. The menu shows
+// one box per tier.
 static NSArray *itemEntries(BOOL weapons) {
     if (!offsetsMatch()) return @[];
     NSMutableArray *entries = [NSMutableArray array];
@@ -439,17 +442,30 @@ static NSArray *itemEntries(BOOL weapons) {
     char *items = gp ? *(char **)(gp + 0x28) : NULL;
     char *array = items ? *(char **)(items + (weapons ? 0xB0 : 0x10)) : NULL;
     int32_t n = array ? *(int32_t *)(array + 0x18) : 0;
-    for (int rarity = 4; rarity >= 3; rarity--) {
+    NSArray *tiers = @[@"", @"Common", @"Normal", @"Rare", @"Legendary"];
+    for (int rarity = 4; rarity >= 1; rarity--) {
+        NSMutableArray<NSArray *> *tier = [NSMutableArray array];  // {entry, item id, sort key}
         for (int32_t i = 0; i < n; i++) {
             char *item = ((char **)(array + 0x20))[i];
             if (!item || *(int32_t *)(item + 0x20) != rarity || *(uint8_t *)(item + 0x48)) continue;
             NSString *itemId = nsString(*(void **)(item + (weapons ? 0x88 : 0x98)));
             if (!itemId.length) continue;
-            NSString *detail = rarity == 4 ? @"Legendary" : @"Rare";
-            if (weapons) detail = [detail stringByAppendingFormat:@" · damage %d-%d", *(int32_t *)(item + 0x90), *(int32_t *)(item + 0x94)];
             NSString *name = nsString(*(void **)(item + 0x10));
-            [entries addObject:@{@"title": name.length ? name : itemId, @"detail": detail}];
-            [sItemIds addObject:itemId];
+            NSMutableDictionary *entry = [@{@"title": name.length ? name : itemId, @"group": tiers[rarity]} mutableCopy];
+            int32_t top = 0;
+            if (weapons) {
+                top = *(int32_t *)(item + 0x94);
+                entry[@"detail"] = [NSString stringWithFormat:@"%d-%d", *(int32_t *)(item + 0x90), top];
+            }
+            [tier addObject:@[entry, itemId, @(top)]];
+        }
+        [tier sortUsingComparator:^NSComparisonResult(NSArray *a, NSArray *b) {
+            if (weapons && [a[2] intValue] != [b[2] intValue]) return [b[2] compare:a[2]];
+            return [a[0][@"title"] localizedCaseInsensitiveCompare:b[0][@"title"]];
+        }];
+        for (NSArray *row in tier) {
+            [entries addObject:row[0]];
+            [sItemIds addObject:row[1]];
             [sItemTypes addObject:@(weapons ? 2 : 1)];  // EItemType: Outfit 1, Weapon 2
         }
     }
