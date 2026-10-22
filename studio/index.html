@@ -115,6 +115,7 @@ dialog h3 { margin: 0 0 6px; }
       <button data-tab="switches" class="active">Switches</button>
       <button data-tab="find">Find</button>
       <button data-tab="suggest">Suggest</button>
+      <button data-tab="scan">Scan</button>
       <button data-tab="phone">Build &amp; Phone</button>
       <button data-tab="files">Files</button>
       <button data-tab="games">Games</button>
@@ -123,6 +124,7 @@ dialog h3 { margin: 0 0 6px; }
     <section id="tab-switches"></section>
     <section id="tab-find" class="hidden"></section>
     <section id="tab-suggest" class="hidden"></section>
+    <section id="tab-scan" class="hidden"></section>
     <section id="tab-phone" class="hidden"></section>
     <section id="tab-files" class="hidden"></section>
     <section id="tab-games" class="hidden"></section>
@@ -201,12 +203,12 @@ const App = {
   setTab(tab) {
     this.tab = tab;
     document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
-    for (const s of ["switches", "find", "suggest", "phone", "files", "games", "console"]) this.byId("tab-" + s).classList.toggle("hidden", s !== tab);
+    for (const s of ["switches", "find", "suggest", "scan", "phone", "files", "games", "console"]) this.byId("tab-" + s).classList.toggle("hidden", s !== tab);
     this.render();
   },
   render() {
     if (!this.detail) return;
-    ({ switches: this.renderSwitches, find: this.renderFind, suggest: this.renderSuggest, phone: this.renderPhone, files: this.renderFiles, games: this.renderGames, console: this.renderConsole })[this.tab].call(this);
+    ({ switches: this.renderSwitches, find: this.renderFind, suggest: this.renderSuggest, scan: this.renderScan, phone: this.renderPhone, files: this.renderFiles, games: this.renderGames, console: this.renderConsole })[this.tab].call(this);
   },
 
   // ---------------------------------------------------------------- switches
@@ -521,6 +523,19 @@ const App = {
     const st = this.byId("jobst-" + j.id); st.textContent = j.status; st.className = "badge " + (j.status === "done" ? "good" : j.status === "running" ? "accent" : "bad");
     const out = this.byId("jobout-" + j.id);
     if (j.lines && j.lines.length) { out.textContent += (out.textContent ? "\n" : "") + j.lines.join("\n"); out.scrollTop = out.scrollHeight; }
+    if (j.command === "claude" && j.status !== "running" && !this.byId("jobcmds-" + j.id)) {
+      const text = (this.byId("jobout-" + j.id) || {}).textContent || "";
+      const cmds = [...new Set(text.split("\n").map(l => l.trim().replace(/^[`$>\s]+|`+$/g, "")).filter(l => /^am (pin|call|add|tweak) \S+ /.test(l)))];
+      if (cmds.length) {
+        const list = this.el("div", { id: "jobcmds-" + j.id, class: "sec", style: "margin-top:8px" }, this.el("h3", { text: `${cmds.length} commands from Claude` }));
+        for (const c of cmds) {
+          const btn = this.el("button", { class: "small primary" }, "Add");
+          btn.onclick = async () => { btn.disabled = true; try { const r = await this.api("/api/console", { line: c }); this.showJob(r); this.poll(r.id); btn.textContent = "Added"; } catch (e) { btn.disabled = false; this.toast(e.message, "bad"); } };
+          list.append(this.el("div", { class: "row", style: "margin-bottom:6px" }, this.el("span", { class: "mono small grow", text: c }), btn));
+        }
+        this.byId("job-" + j.id).append(list);
+      }
+    }
   },
   poll(id, since) {
     since = since || 0;
@@ -538,6 +553,63 @@ const App = {
     box.append(this.el("div", { class: "sec" }, this.el("h3", { text: "Paths" }), this.el("pre", { text: [`mod:        mods/${d.name}`, `base .ipa:  ${d.base_ipa || "(not remembered; dump finds it by bundle ID in intake/ and Downloads)"}`, `dump:       ${d.dump ? "present" : "none"}`, `last dylib: ${d.last_dylib || "-"}`, `last ipa:   ${d.last_ipa || "-"}`].join("\n") })),
       pre("tweaks.json", d.tweaks_json ? JSON.stringify(d.tweaks_json, null, 2) : "(none)"),
       pre("hooks.json", JSON.stringify({ engine: "unity-il2cpp", hooks: d.hooks_json }, null, 2)));
+  },
+
+  // ---------------------------------------------------------------- scan (no-JIT candidates in the dump)
+  renderScan() {
+    const box = this.byId("tab-scan");
+    if (box.dataset.mod === this.mod && box.childElementCount) return;
+    box.dataset.mod = this.mod; box.replaceChildren();
+    const area = this.el("select", {}, [["", "All areas"], ["Survival", "Survival"], ["Combat", "Combat"], ["Pet", "Pet & companion"], ["Items", "Items & crafting"], ["Progress", "Progress"], ["Exploration", "Exploration"], ["Other", "Other"]].map(o => this.el("option", { value: o[0], text: o[1] })));
+    const find = this.el("input", { placeholder: "filter: regex on Class.member", class: "mono", style: "flex:1;min-width:180px" });
+    const flagged = this.el("input", { type: "checkbox" });
+    const hideHas = this.el("input", { type: "checkbox" }); hideHas.checked = true;
+    const note = this.el("p", { class: "hint" });
+    const table = this.el("div", {});
+    const nice = name => name.replace(/^set_/, "").replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/_/g, " ");
+    const load = async () => {
+      note.textContent = "Scanning the dump…"; table.replaceChildren();
+      try {
+        const r = await this.api(`/api/mods/${this.mod}/scan?area=${encodeURIComponent(area.value)}&find=${encodeURIComponent(find.value.trim())}${flagged.checked ? "&flagged=1" : ""}`);
+        const rows = r.rows.filter(x => flagged.checked || !hideHas.checked || !x.has);
+        note.textContent = `${r.total} candidates in ${r.classes} game classes, ${r.flagged} flagged (never switches). Showing ${rows.length}.`;
+        const tb = this.el("tbody");
+        for (const x of rows) {
+          const tag = x.flag ? this.el("span", { class: "badge bad", text: x.flag }) : x.has ? this.el("span", { class: "badge good", text: "in the mod" }) : this.el("span", { class: "badge accent", style: "white-space:nowrap", text: "score " + x.score });
+          const add = x.flag || x.has ? null : this.el("button", { class: "small primary", style: "white-space:nowrap", onclick: () => this.pinDialog({ target: `${x.class}.${x.member}`, object: x.object, value: x.value, when: x.when, title: nice(x.name) }) }, "Add…");
+          tb.append(this.el("tr", {},
+            this.el("td", { text: x.area }),
+            this.el("td", {}, this.el("span", { class: "mono", text: `${x.object} ${x.member}` }), this.el("br"), this.el("span", { class: "muted small", text: `${x.ctype} ${x.kind}${x.offset ? " at " + x.offset : ""}${x.value && !x.flag ? " · suggested " + x.value + (x.when !== "always" ? " when lower" : "") : ""}` })),
+            this.el("td", {}, tag), this.el("td", {}, add)));
+        }
+        table.replaceChildren(rows.length ? this.el("table", {}, this.el("thead", {}, this.el("tr", {}, ["area", "target", "", ""].map(h => this.el("th", { text: h })))), tb) : this.el("p", { class: "hint", text: "Nothing matches." }));
+      } catch (e) { note.textContent = e.message; }
+    };
+    const explain = async () => {
+      try {
+        const t = await this.api(`/api/mods/${this.mod}/scan?text=1&limit=60&area=${encodeURIComponent(area.value)}&find=${encodeURIComponent(find.value.trim())}`);
+        const d = this.detail || {};
+        const prompt = `Goal: pick the best new single-player switches for ${d.title || this.mod} from Mod Studio's dump scan, before changing anything.\n` +
+          `Project: Accretion mods. Target: AccretionMods/mods, mods/${this.mod} (${d.title || ""} ${d.version || ""}) for ${d.target || ""} ${d.app_version || ""}. The phone has no JIT: switches are pins (field writes or setter calls every half second).\n` +
+          `Candidates (scored by names and types only; not yet in the mod):\n${t.text}\n\n` +
+          `For the 10 to 15 most valuable: what it likely does in play (check the class in the dump with am find / am fields if unsure), a menu title, a section (Survival, Combat, Pet & companion, Items & crafting, Progress, Exploration, Other), the value to pin and why, confidence (high/medium/low), and the exact command on its own line starting with "am pin ${this.mod} ..." (with --object, --value, --when lower when it has a getter, --as <key>, --title "..."). Then list the candidates to skip and why (UI, timers, save counters, anything sold or online).\n` +
+          `Read only: change no files. Limits: single-player only; never purchases, ads, accounts or online play.`;
+        const j = await this.api("/api/claude", { prompt, read_only: true });
+        this.showJob(j); this.poll(j.id); this.byId("jobsPanel").scrollIntoView({ behavior: "smooth", block: "nearest" });
+        this.toast("Claude is ranking the candidates: its answer streams into Jobs, with an Add button on each command", "ok");
+      } catch (e) { this.toast(e.message, "bad"); }
+    };
+    [area, flagged, hideHas].forEach(i => i.addEventListener("change", load));
+    find.addEventListener("keydown", ev => { if (ev.key === "Enter") load(); });
+    box.append(
+      this.el("p", { class: "hint", text: "Fields and setters a no-JIT switch (a pin) can reach: on singletons (Class.instance) and on every live object of a class (Class[]), sorted into areas and scored by their names. What the game sells, ads and online code are flagged and never offered. A scan reads names, not behaviour: try a switch on the phone and watch its status dot. Same list in a console: am scan <mod>." }),
+      this.el("div", { class: "row", style: "margin-bottom:8px" }, area, find,
+        this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center" }, hideHas, "hide what the mod has"),
+        this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center" }, flagged, "show flagged"),
+        this.el("button", { class: "small", onclick: load }, "Scan"),
+        this.el("button", { class: "small primary", onclick: explain }, "Explain and rank with Claude")),
+      note, table);
+    load();
   },
 
   // ---------------------------------------------------------------- console
