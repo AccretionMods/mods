@@ -18,13 +18,13 @@
     {
       "id": "io.github.accretionmods.falloutshelter-plus",
       "name": "Fallout Shelter+",
-      "description": "Mod menu for Fallout Shelter: no combat or incident damage, production, training, wasteland and game speed, rushes always succeed, no radiation or fires, caps multiplier, full resources, happy dwellers, max SPECIAL, fast level-ups, instant explorer returns, and a rare/legendary weapon and outfit picker. Works without JIT; also fixes a re-signed copy's main menu so vaults open.",
+      "description": "Mod menu for Fallout Shelter: no combat or incident damage, production, training, wasteland and game speed, rushes always succeed, no radiation or fires, caps multiplier, full resources, happy dwellers, max SPECIAL, fast level-ups, instant explorer returns, fast babies, and a weapon and outfit picker grouped by quality tier. Works without JIT; also fixes a re-signed copy's main menu so vaults open.",
       "targets": [
         "com.bethsoft.falloutshelter"
       ],
-      "version": "2.1.1",
-      "date": "2026-10-21",
-      "debURL": "https://github.com/AccretionMods/mods/releases/download/falloutshelter-plus-v2.1.1/FalloutShelterPlus-2.1.1.dylib",
+      "version": "2.1.2",
+      "date": "2026-10-22",
+      "debURL": "https://github.com/AccretionMods/mods/releases/download/falloutshelter-plus-v2.1.2/FalloutShelterPlus-2.1.2.dylib",
       "requires": [],
       "license": "MIT",
       "projectURL": "https://github.com/AccretionMods/mods/tree/main/mods/falloutshelter-plus",
