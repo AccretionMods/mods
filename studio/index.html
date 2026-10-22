@@ -828,6 +828,13 @@ const App = {
       } catch (e) { this.toast(e.message, "bad"); }
     };
     const rank = this.el("button", { class: "small primary", onclick: explain }, `Explain and rank with ${this.engine() === "aider" ? "aider" : "Claude"}`);
+    // Auto-build: the picked model chooses switches from this scan, Studio adds them, runs gen and builds the .ipa
+    const auto = this.el("button", { class: "small", title: "The selected model picks up to 10 switches from this scan; Studio adds them, runs gen and builds the .ipa (installing stays your Run click)", onclick: async () => {
+      const who = this.engineName();
+      if (!confirm(`Auto-build ${this.detail ? this.detail.title : this.mod}: ${who} picks up to 10 new switches from this scan (nothing about purchases, store currency, ads, accounts or online play), Studio adds them with am pin, runs gen and builds the .ipa. The mod's files are snapshotted first (Files tab restores). Installing stays your click (Run). Start?`)) return;
+      try { const j = await this.api(`/api/mods/${this.mod}/autobuild`, { engine: this.engine(), limit: 10 }); this.showJob(j); this.poll(j.id); this.byId("jobsPanel").scrollIntoView({ behavior: "smooth", block: "nearest" }); this.toast(`${who} is picking switches; Studio adds and builds them: follow it in Jobs`, "ok"); }
+      catch (e) { this.toast(e.message, "bad"); }
+    } }, "Auto-build menu");
     [area, mode, verified, flagged, hideHas].forEach(i => i.addEventListener("change", load));
     find.addEventListener("keydown", ev => { if (ev.key === "Enter") load(); });
     box.append(
@@ -837,7 +844,7 @@ const App = {
         this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center" }, flagged, "only topic-labelled"),
         this.el("button", { class: "small", onclick: load }, "Scan"),
         this.enginePicker(() => { rank.textContent = `Explain and rank with ${this.engine() === "aider" ? "aider" : "Claude"}`; }),
-        rank),
+        rank, auto),
       note, table, more);
     load();
   },

@@ -172,7 +172,7 @@ class Job:
             if (
                 self.argv
                 and "mod:" + self.argv[0] in self.resources
-                and self.command in {"build", "run", "dump", "update", "new", "aider"}
+                and self.command in {"build", "run", "dump", "update", "new", "aider", "autobuild"}
             ):
                 folder = ROOT / "mods" / self.argv[0]
                 if folder.is_dir():
@@ -204,6 +204,7 @@ class Job:
             + self.argv
         )
         env = dict(os.environ, PYTHONUTF8="1", PYTHONUNBUFFERED="1", AM_REPO=str(ROOT))
+        env.setdefault("COLUMNS", "4000")  # aider wraps its answer (and its am lines) at the terminal width
         # a server started outside a login shell may lack uv and pymobiledevice3 on PATH
         local_bin = str(Path.home() / ".local" / "bin")
         if local_bin not in env.get("PATH", ""):
@@ -546,6 +547,23 @@ def run_searches(mod, lines, budget):
         blocks.append(f"$ {cmd}\n" + ("\n".join(rows[:SEARCH_ROWS]) or "(nothing found)") + more)
     text = "\n\n".join(blocks)
     return text if len(text) <= budget else text[:budget] + "\n... (cut to fit the prompt)"
+
+
+def start_autobuild(mod, engine, limit):
+    """studio/autobuild.py as a job: the model picks switches from the scan, Studio adds them and builds."""
+    if engine not in ENGINES:
+        raise dev.DevError(f"unknown model engine {engine!r}")
+    if not (MOD_NAME.fullmatch(mod or "") and dev.mod_dir(mod).is_dir()):
+        raise dev.DevError("pick a mod first")
+    with SESSION_LOCK:
+        if RESTARTING.is_set():
+            raise dev.DevError("Studio is restarting; reconnect before starting jobs")
+        job = Job("autobuild", [mod, engine], cmd=[sys.executable, str(HERE / "autobuild.py"), mod, "--engine", engine,
+                                                   "--limit", str(max(1, min(int(limit), 25)))])
+        JOBS[job.id] = job
+    job.persist()
+    threading.Thread(target=job.run, daemon=True).start()
+    return job
 
 
 def start_followup(job, mod):
@@ -1247,6 +1265,10 @@ class Handler(BaseHTTPRequestHandler):
         if parts == ["api", "console"]:
             self.local_only()
             return self.send_json(console(str(body.get("line", ""))).view())
+        if len(parts) == 4 and parts[:2] == ["api", "mods"] and parts[3] == "autobuild":
+            self.local_only()
+            return self.send_json(start_autobuild(self.mod_name(parts[2]), str(body.get("engine", "claude")),
+                                                  int(body.get("limit", 10))).view())
         if len(parts) == 4 and parts[:2] == ["api", "jobs"] and parts[3] == "followup":
             self.local_only()
             job = JOBS.get(parts[2])
