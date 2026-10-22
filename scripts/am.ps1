@@ -7,8 +7,9 @@
 $ErrorActionPreference = 'Stop'
 $env:PYTHONUTF8 = '1'
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
-    Write-Host "uv is not on PATH (https://docs.astral.sh/uv/). Or run: py -3 $PSScriptRoot\dev.py $args"
-    exit 1
+    # uv's usual home when a fresh shell has not picked up the PATH change yet
+    if (Test-Path "$env:USERPROFILE\.local\bin\uv.exe") { $env:Path = "$env:USERPROFILE\.local\bin;$env:Path" }
+    else { Write-Host "uv is not on PATH (https://docs.astral.sh/uv/). Or run: py -3 $PSScriptRoot\dev.py $args"; exit 1 }
 }
 if ($args.Count -eq 0) {
     & uv run --no-project --python 3.12 "$PSScriptRoot\dev.py" --help
