@@ -541,8 +541,12 @@ def render_pin(pin, var, kind, key, index, waiting=None):
                     f"            if (*cur > {state}_peak) {state}_peak = *cur;"
                 )
             cond = "true" if cmp_ is None else f"*cur {cmp_} {limit}"
+            # read back right after the setter: one that ignores or clamps the value turns the dot red
+            took = c_string(f"{cls}.{setter} didn't take the value (the game clamps or recomputes it)")
             lines.append(
-                f"            if ({cond}) {{ {ctype_} v = {value}; void *argv[1] = {{&v}}; if (AMIl2cppCall(obj, {c_string(cls)}, {c_string(setter)}, 1, argv, NULL)) applied = true; }}"
+                f"            if ({cond}) {{ {ctype_} v = {value}; void *argv[1] = {{&v}}; if (AMIl2cppCall(obj, {c_string(cls)}, {c_string(setter)}, 1, argv, NULL)) {{ applied = true;"
+                f" void *rb = NULL; {ctype_} *back = AMIl2cppCall(obj, {c_string(cls)}, {c_string(getter)}, 0, NULL, &rb) ? AMIl2cppUnbox(rb) : NULL;"
+                f" if (back && *back != v) {{ reached = false; why = {took}; }} }} }}"
             )
     if any(f"goto {state}_next" in line for line in lines):
         lines.append(f"            {state}_next:;")
