@@ -25,7 +25,7 @@ static BOOL sRushWins, sNoStatDamage, sNoRadiation, sNoIncidents;
 static float sOutput = 1, sSpeed = 1;
 // extras (no JIT needed): caps multiplier, full resources, dweller boosts, instant returns
 static float sCaps = 1;
-static BOOL sFullResources, sHappy, sMaxSpecial, sFastLevels, sInstantReturn;
+static BOOL sFullResources, sHappy, sMaxSpecial, sFastLevels, sInstantReturn, sFastBabies;
 static float sGameTimeScale = 1;  // what the game itself last asked for (pause sets 0)
 
 // IL2CPP methods take self (instance methods), the C# arguments, then a MethodInfo pointer. The runtime
@@ -268,6 +268,24 @@ static void applyNoJitSwitches(void) {
     if (rp) {
         *(float *)(rp + 0x4C) = baseNoRush * sOutput;
         *(float *)(rp + 0x40) = baseRush * sOutput;
+    }
+
+    // fast babies: GameParameters.m_dweller (0x20) -> DwellerParameters m_childhoodDuration 0xC4,
+    // m_breedingCycleTime 0xC8, m_relationshipMakeBabyTime 0xE4, m_relationshipBabyBirthTime 0xE8 (seconds) are
+    // capped at 10 s while on and put back when off. Timers already running keep their length.
+    static const int babyOffsets[4] = {0xC4, 0xC8, 0xE4, 0xE8};
+    static char *dwellerParams;
+    static float babyBase[4];
+    static BOOL babiesFast;
+    char *dp = gp ? *(char **)(gp + 0x20) : NULL;
+    if (dp && dp != dwellerParams) {
+        dwellerParams = dp;
+        for (int k = 0; k < 4; k++) babyBase[k] = *(float *)(dp + babyOffsets[k]);
+        babiesFast = NO;
+    }
+    if (dp && (sFastBabies || babiesFast)) {
+        for (int k = 0; k < 4; k++) *(float *)(dp + babyOffsets[k]) = sFastBabies ? fminf(babyBase[k], 10) : babyBase[k];
+        babiesFast = sFastBabies;
     }
 
     if (sNoStatDamage || sNoRadiation) {
@@ -540,6 +558,7 @@ static void registerHooks(void) {
     [menu addSwitch:@"maxSpecial" title:@"Max SPECIAL for every dweller" defaultValue:NO onChange:^(BOOL on) { sMaxSpecial = on; }];
     [menu addSwitch:@"fastLevels" title:@"Fast level-ups" defaultValue:NO onChange:^(BOOL on) { sFastLevels = on; }];
     [menu addSwitch:@"instantReturn" title:@"Explorers return instantly" defaultValue:NO onChange:^(BOOL on) { sInstantReturn = on; }];
+    [menu addSwitch:@"fastBabies" title:@"Babies arrive and grow up fast" defaultValue:NO onChange:^(BOOL on) { sFastBabies = on; }];
     [menu addList:@"Add a weapon" symbol:@"scope" entries:^NSArray *{ return itemEntries(YES); } onPick:^(NSInteger i) { addItem(i); }];
     [menu addList:@"Add an outfit" symbol:@"tshirt" entries:^NSArray *{ return itemEntries(NO); } onPick:^(NSInteger i) { addItem(i); }];
 
@@ -561,6 +580,7 @@ static void registerHooks(void) {
     sMaxSpecial = [AMMenu boolForKey:@"maxSpecial"];
     sFastLevels = [AMMenu boolForKey:@"fastLevels"];
     sInstantReturn = [AMMenu boolForKey:@"instantReturn"];
+    sFastBabies = [AMMenu boolForKey:@"fastBabies"];
     sSpeed = MAX([AMMenu floatForKey:@"speed"], 1);
 
     registerHooks();
