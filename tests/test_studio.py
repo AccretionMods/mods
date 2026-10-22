@@ -54,6 +54,8 @@ public class PurchaseState : MonoBehaviour // TypeDefIndex: 110
     public static PurchaseState instance; // 0x0
     public bool FullGameUnlocked; // 0x20
     public int Gems; // 0x24
+    // RVA: 0x2000 Offset: 0x2000 VA: 0x2000
+    public bool IsPurchased() { }
 }
 // Namespace:
 public class OnlineState : MonoBehaviour // TypeDefIndex: 111
@@ -154,6 +156,22 @@ public class OnlineState : MonoBehaviour // TypeDefIndex: 111
             self.assertTrue(added["ok"])
         finally:
             self.post("/api/mods/game-plus/remove", {"what": "fullGame"})
+
+    def test_scan_purchase_method_can_be_added_as_a_hook(self):
+        status, data = self.get("/api/mods/game-plus/scan?area=In-app%20purchases")
+        self.assertEqual(status, 200, data)
+        row = next(r for r in data["rows"] if r["member"] == "IsPurchased")
+        m = row["method"]
+        self.assertEqual((m["kind"], m["args"]), ("bool", 0))
+        status, added = self.post("/api/mods/game-plus/add", {
+            "method": m["full_name"], "args": m["args"], "action": "return",
+            "value": "true", "key": "purchaseTest", "title": "Purchase test",
+        })
+        try:
+            self.assertEqual(status, 200, added)
+            self.assertTrue(added["ok"])
+        finally:
+            self.post("/api/mods/game-plus/remove", {"what": "purchaseTest"})
 
     def test_quick_commands_and_errors(self):
         status, data = self.post(

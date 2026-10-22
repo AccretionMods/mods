@@ -17,9 +17,9 @@ import os
 import re
 from pathlib import Path
 
-from il2cpp_dump import SIGNATURE, TYPE, TYPE_INDEX
+from il2cpp_dump import ADDRESS, FLOATS, INTEGERS, SIGNATURE, TYPE, TYPE_INDEX, Method, split_params
 
-VERSION = 10  # Store/IAP inventory, without generic token/cost matches from unrelated SDKs
+VERSION = 11  # purchase mod targets only: no generated helpers, type rows or metadata
 
 IMAGE = re.compile(r"^// Image \d+: (.+?)(?:\.dll)? - (\d+)\s*$")
 NAMESPACE = re.compile(r"^\s*// Namespace: ?(\S*)")
@@ -288,7 +288,7 @@ def scan(dump, tweaks=None, learned=None):
 
 
 def purchase_inventory(path):
-    """All named Store/IAP types, fields and method declarations, including SDKs and non-pin targets.
+    """Mutable scalar Store/IAP fields and concrete methods supported by the hook tool.
 
     These are inspection rows, not pin suggestions. Keep them separate so automatic pin generation
     and the learner never treat an arbitrary method or a string field as a writable numeric value.
@@ -297,6 +297,11 @@ def purchase_inventory(path):
                        r"([\w.<>\[\], ]+?)\s+([\w<>]+)(?:\s*=\s*[^;]+)?; // (0x[0-9A-Fa-f]+)")
     images, rows = [], []
     namespace = cls = assembly = ""
+    code = None
+    scalar = INTEGERS | FLOATS | {"bool"}
+    action = re.compile(r"buy|purchas|unlock|own|grant|reward|spend|consume|refund|restore|"
+                        r"premium|currency|coins?|gems?|subscri|entitle|payment|(?:^|_)ads?(?:_|$)|price|cost|"
+                        r"^(get_|set_|is_|has_|can_|allow|enable|disable)", re.IGNORECASE)
     topics = re.compile(r"purchas|iap|in_?app|full_?game|paywall|billing|receipt|entitlement|shop|"
                         r"storekit|storefront|payment|premium|vip|subscri|token_?(balance|currency)|"
                         r"(?:^|[._ ])(?:store|buy|currency|coins?|gems?|diamonds?)(?:$|[._ ])")
@@ -304,11 +309,14 @@ def purchase_inventory(path):
     def matches(member):
         return topics.search(_split_words(f"{assembly}.{cls}.{member}")) is not None
 
-    def add(member, ctype, kind, signature, offset=None):
-        rows.append({"class": cls, "object": cls, "member": member, "name": member,
+    def add(member, ctype, kind, signature, offset=None, method=None):
+        row = {"class": cls, "object": cls, "member": member, "name": member,
                      "ctype": ctype, "kind": kind, "signature": signature.strip(),
                      "assembly": assembly, "offset": offset, "area": "In-app purchases",
-                     "flag": "sold in the shop", "score": 0, "has": False, "inspect_only": True})
+                     "flag": "sold in the shop", "score": 0, "has": False, "inspect_only": True}
+        if method:
+            row["method"] = method
+        rows.append(row)
 
     with open(path, encoding="utf-8", errors="replace") as source:
         for line in source:
@@ -319,26 +327,43 @@ def purchase_inventory(path):
             ns = NAMESPACE.match(line)
             if ns:
                 namespace, cls = ns.group(1), ""
+                code = None
                 continue
             typ, index = TYPE.match(line), TYPE_INDEX.search(line)
             if typ and index:
                 cls = f"{namespace}.{typ.group(1)}" if namespace else typ.group(1)
                 assembly = next((name for start, name in reversed(images) if start <= int(index.group(1))), "")
-                if matches(""):
-                    add("(type)", "type", "type", line)
+                code = None
+                if "<" in cls:  # closures, delegates, async/iterator state machines and unsupported generics
+                    cls = ""
                 continue
             if not cls:
+                continue
+            if line.lstrip().startswith("// RVA:"):
+                code = ADDRESS.match(line)  # -1 means abstract/no implementation; never reuse the previous RVA
                 continue
             f = field.match(line)
             sig = SIGNATURE.match(line.strip())
             if f:
                 ctype, member, offset = f.groups()
-                if matches(member):
+                if ctype in scalar and "<" not in member and not re.search(r"\b(const|readonly)\b", line) and matches(member):
                     add(member, ctype, "field", line, offset)
             elif sig:
-                ctype, member, _params = sig.groups()
-                if matches(member):
-                    add(member, ctype, "method", line)
+                ctype, member, params = sig.groups()
+                if (code and ctype in scalar | {"void"} and not member.startswith(".") and "<" not in member
+                        and member not in {"ToString", "GetHashCode", "Equals"}
+                        and (ctype != "void" or action.search(_split_words(member))) and matches(member)):
+                    m = Method(assembly, namespace, cls[len(namespace) + 1:] if namespace else cls,
+                               member, ctype, split_params(params), code.group(1),
+                               line.strip().split("{")[0].rstrip().rstrip(";"),
+                               int(code.group(2)) if code.group(2) else None)
+                    metadata = {"full_name": m.full_name, "class": m.class_name, "namespace": namespace,
+                                "method": member, "params": m.params, "args": m.args, "return_type": ctype,
+                                "kind": m.kind, "assembly": assembly, "rva": m.rva, "slot": m.slot,
+                                "needs_jit": m.needs_jit, "static": bool(re.search(r"\bstatic\b", m.signature)),
+                                "signature": m.signature}
+                    add(member, ctype, "method", m.signature, method=metadata)
+                code = None
     return rows
 
 

@@ -7,10 +7,12 @@ Topic restrictions removed locally (2026-10-22): prompt builder and scan ranking
 including IAP and full-game unlocks. Scan and learned suggestions include shop/ads/accounts/online candidates;
 labels are informational, Add opens the regular pin form, and Games includes online games by default.
 Scan's area filter includes In-app purchases for purchase, currency, subscription, entitlement and full-game names.
-Store/IAP discovery also includes named types, fields and method declarations from every assembly, cached
-separately from automatic pin candidates. Non-pin entries use Inspect; Show next 300 loads more matches.
-Verified locally: 9 Kings 12,112 purchase entries; Wanderer 8,536; 183 unit tests (11 skipped), then 9 scan
-tests after tightening SDK-name matches. Updated server on port 8766; the stale 8765 process was left running.
+Store/IAP discovery keeps mutable numeric/boolean fields and concrete hook-supported methods across assemblies.
+Generated classes, delegate caches, type-only rows, constructors, constants and metadata are hidden.
+Methods offer Hook with a JIT badge; unreachable fields keep Inspect; Show next 300 loads more matches.
+Verified local scan: 9 Kings 1,751 purchase mod targets; Wanderer 1,235; zero generated-name rows in both.
+Validation: 183-test full suite (11 skipped), then all 6 Studio API tests including adding a hook from a scan
+method; JavaScript Hook/JIT action checked. Updated local server on port 8767.
 Technical validation, local-only execution, private-file handling and publication approval remain in place.
 Verified: 181 unit tests (11 skipped), Studio API adds a synthetic full-game pin, JavaScript parses and
 UI logic opens labelled pins directly and includes online games despite the old saved default filter.

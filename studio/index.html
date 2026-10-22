@@ -718,16 +718,19 @@ const App = {
       try {
         const r = await this.api(`/api/mods/${this.mod}/scan?limit=${shownLimit}&area=${encodeURIComponent(area.value)}&find=${encodeURIComponent(find.value.trim())}${flagged.checked ? "&flagged=1" : ""}`);
         const rows = r.rows.filter(x => !hideHas.checked || !x.has);
-        note.textContent = `${r.matched ?? r.total} matching entries; showing ${rows.length}. Store/IAP includes matching types, fields and methods from every assembly. Add is available for pin candidates; other entries can be inspected.`;
+        note.textContent = `${r.matched ?? r.total} mod targets; showing ${rows.length}. Add creates a pin; Hook targets a concrete method. Fields without an automatic object path need investigation. Generated helpers and metadata are hidden.`;
         more.hidden = (r.matched ?? r.rows.length) <= shownLimit;
         const tb = this.el("tbody");
         for (const x of rows) {
-          const tag = x.has ? this.el("span", { class: "badge good", text: "in the mod" }) : this.el("span", { class: "badge accent", style: "white-space:nowrap", text: x.inspect_only ? "inspect" : "score " + x.score });
+          const tag = x.has ? this.el("span", { class: "badge good", text: "in the mod" }) : this.el("span", { class: "badge accent", style: "white-space:nowrap", text: x.method ? (x.method.needs_jit ? "hook · JIT" : "hook · no JIT") : x.inspect_only ? "needs object" : "score " + x.score });
           const pin = () => this.pinDialog({ target: `${x.class}.${x.member}`, object: x.object, value: x.value, when: x.when, title: nice(x.name) });
-          const add = x.inspect_only ? this.el("button", { class: "small", onclick: () => this.dialog(`${x.class}.${x.member}`, [
+          const inspect = () => this.dialog(`${x.class}.${x.member}`, [
             { type: "note", text: x.signature }, { type: "note", text: `Assembly: ${x.assembly}` },
-            { type: "note", text: "This entry is in the dump but is not an automatic pin candidate. Use Find to investigate its methods and fields." },
-          ], async () => true, "Close") }, "Inspect…") : x.has ? null : this.el("button", { class: "small", style: "white-space:nowrap", onclick: pin }, "Add…");
+            { type: "note", text: x.method ? (x.method.needs_jit ? "This method needs JIT to intercept direct calls." : "This virtual method or Unity callback can be hooked without JIT.") : "This field has no automatic object path. Use Find to identify its owner before adding a pin." },
+          ], async () => true, "Close");
+          const add = x.inspect_only ? this.el("div", { class: "row" },
+            x.method && !x.has ? this.el("button", { class: "small", onclick: () => this.hookDialog(x.method) }, "Hook…") : null,
+            this.el("button", { class: "small", onclick: inspect }, "Inspect…")) : x.has ? null : this.el("button", { class: "small", style: "white-space:nowrap", onclick: pin }, "Add…");
           tb.append(this.el("tr", {},
             this.el("td", { text: x.area }),
             this.el("td", {}, this.el("span", { class: "mono", text: `${x.object} ${x.member}` }), this.el("br"), this.el("span", { class: "muted small", text: `${x.ctype} ${x.kind}${x.offset ? " at " + x.offset : ""}${x.value ? " · suggested " + x.value + (x.when !== "always" ? " when " + x.when : "") : ""}` })),
@@ -758,7 +761,7 @@ const App = {
     [area, flagged, hideHas].forEach(i => i.addEventListener("change", load));
     find.addEventListener("keydown", ev => { if (ev.key === "Enter") load(); });
     box.append(
-      this.el("p", { class: "hint", text: "Game fields and setters that a no-JIT pin can reach are scored by name. In-app purchases also includes Store/IAP types, fields and methods across all assemblies, with Inspect for entries that are not automatic pin candidates. Topic labels are informational; names do not prove behaviour. Same list in a console: am scan <mod>." }),
+      this.el("p", { class: "hint", text: "Game fields and setters that a no-JIT pin can reach are scored by name. In-app purchases also includes mutable numeric/boolean fields and concrete hookable Store/IAP methods. Generated helpers, type-only rows, delegate caches and metadata are hidden. Topic labels are informational; names do not prove behaviour. Same list in a console: am scan <mod>." }),
       this.el("div", { class: "row", style: "margin-bottom:8px" }, area, find,
         this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center" }, hideHas, "hide what the mod has"),
         this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center" }, flagged, "only topic-labelled"),

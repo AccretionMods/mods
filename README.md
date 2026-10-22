@@ -264,10 +264,11 @@ decrypted copy (am fetch) if none is here, the report (it stops when the game ca
 folder and its dump (am new), then the best no-JIT candidates. In Studio: Start a mod and Report on a
 Games card; Start ends on the new mod's Scan tab.
 
-Scan's **In-app purchases** area includes Store/IAP types, fields and method declarations across all
-assemblies, including purchasing SDKs and objects that a pin cannot reach. Pin-compatible values keep
-**Add**; other entries offer **Inspect** with their signature and assembly. **Show next 300** loads more
-matches. This is name-based discovery; an entry's presence does not prove it controls a purchase.
+Scan's **In-app purchases** area keeps Store/IAP mod targets: pin-compatible values, mutable numeric or
+boolean fields, and concrete methods supported by the hook tool. Generated classes and delegate caches,
+type-only rows, constructors, constants and metadata are hidden. **Add** creates a pin; **Hook** uses a
+method with its JIT requirement shown; **Inspect** shows signatures and fields needing an object path.
+**Show next 300** loads more matches. Names suggest candidates; phone tests establish their effect.
 
 While the game runs, the mod's menu logs each switch's state (`[AccretionMods] status <key> ok|off|waiting:
 ...`), on change and every 20 s. Studio's Switches tab shows them from its log and run jobs ("on the phone:
