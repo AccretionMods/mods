@@ -1,0 +1,540 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mod Studio</title>
+<style>
+:root {
+  --bg:#07070D; --surface:#0F0E1A; --raised:#17152A; --line:#262145; --fg:#ECEAFF; --muted:#8B87B3;
+  --accent:#8B5CF6; --accent-2:#22D3EE; --accent-text:#A07AF7; --accent-fill:#7C4DEE; --on-accent:#FFFFFF;
+  --link:#22D3EE; --line-strong:#6458AF; --good:#34D399; --warn:#F59E0B; --bad:#F87171; --radius:14px;
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  --bg:#F7F6FC; --surface:#FFFFFF; --raised:#F0EEF9; --line:#DFDAF2; --fg:#15122B; --muted:#625E85;
+  --accent:#6D3FE0; --accent-2:#0E8FB0; --accent-text:#6A3BDF; --accent-fill:#6D3FE0; --link:#0A6880;
+  --line-strong:#8F7ED2; --good:#066D4A; --warn:#8C5100; --bad:#AA390B; color-scheme: light;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+code, pre, .mono, textarea, input.mono { font-family: ui-monospace, "JetBrains Mono", Consolas, Menlo, monospace; }
+a { color: var(--link); }
+button { font: inherit; border: 1px solid var(--line); background: var(--raised); color: var(--fg); border-radius: 9px; padding: 6px 12px; cursor: pointer; }
+button.primary { background: var(--accent-fill); border-color: var(--accent-fill); color: var(--on-accent); }
+button.danger { color: var(--bad); }
+button:disabled { opacity: .45; cursor: default; }
+button.small { padding: 3px 9px; font-size: 13px; }
+input, select, textarea { font: inherit; background: var(--surface); color: var(--fg); border: 1px solid var(--line); border-radius: 9px; padding: 6px 9px; min-width: 0; }
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 0; }
+label { display: block; font-size: 13px; color: var(--muted); margin: 8px 0 3px; }
+header { position: sticky; top: 0; z-index: 5; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 10px 16px; background: var(--surface); border-bottom: 1px solid var(--line); }
+header h1 { font-size: 18px; margin: 0; letter-spacing: .3px; }
+header .sel { color: var(--muted); font-size: 14px; flex: 1; min-width: 160px; }
+header .sel b { color: var(--fg); }
+.layout { display: grid; grid-template-columns: 280px 1fr; gap: 16px; padding: 16px; max-width: 1400px; margin: 0 auto; }
+@media (max-width: 860px) { .layout { grid-template-columns: 1fr; } }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
+.mods { display: flex; flex-direction: column; gap: 8px; }
+.mod { padding: 10px 12px; border: 1px solid var(--line); border-radius: 11px; cursor: pointer; background: var(--raised); }
+.mod.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.mod .t { font-weight: 600; }
+.mod .s { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.badges { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
+.badge { font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--raised); border: 1px solid var(--line); color: var(--muted); }
+.badge.good { color: var(--good); border-color: var(--good); }
+.badge.warn { color: var(--warn); border-color: var(--warn); }
+.badge.bad { color: var(--bad); border-color: var(--bad); }
+.badge.accent { color: var(--accent-text); border-color: var(--line-strong); }
+.tabs { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--line); margin-bottom: 14px; }
+.tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; color: var(--muted); padding: 8px 12px; }
+.tabs button.active { color: var(--fg); border-bottom-color: var(--accent); }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.row > * { min-width: 0; }
+.grow { flex: 1; }
+.item { border: 1px solid var(--line); border-radius: 11px; padding: 10px 12px; margin-bottom: 8px; background: var(--raised); }
+.item .head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.item .head .title { font-weight: 600; }
+.item .head .key { color: var(--muted); font-size: 13px; }
+.chips { display: flex; flex-wrap: wrap; gap: 5px; margin: 6px 0; }
+.chip { font-size: 12.5px; padding: 2px 8px; border-radius: 7px; background: var(--surface); border: 1px solid var(--line); overflow-wrap: anywhere; }
+.chip.pin { border-color: var(--good); }
+.chip.hook { border-color: var(--line-strong); }
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; }
+th { color: var(--muted); font-weight: 500; }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+pre { background: var(--raised); border: 1px solid var(--line); border-radius: 10px; padding: 10px; overflow: auto; font-size: 12.5px; max-height: 60vh; white-space: pre-wrap; }
+.console { background: #000; color: #D7D4F0; border-radius: 10px; padding: 10px; font-size: 12.5px; max-height: 40vh; overflow: auto; white-space: pre-wrap; font-family: ui-monospace, Consolas, monospace; }
+:root[data-theme="light"] .console { background: #15122B; }
+.job { margin-bottom: 10px; }
+.job summary { cursor: pointer; padding: 6px 0; }
+dialog { background: var(--surface); color: var(--fg); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; width: min(560px, 94vw); }
+dialog::backdrop { background: rgba(0,0,0,.55); }
+dialog h3 { margin: 0 0 6px; }
+.toast { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); background: var(--raised); border: 1px solid var(--line); color: var(--fg); padding: 10px 14px; border-radius: 10px; max-width: 92vw; z-index: 20; white-space: pre-wrap; font-size: 14px; box-shadow: 0 6px 30px rgba(0,0,0,.4); }
+.toast.ok { border-color: var(--good); }
+.toast.bad { border-color: var(--bad); }
+.hint { font-size: 13px; color: var(--muted); margin: 6px 0 10px; }
+.sec { margin-bottom: 18px; }
+.sec h3 { margin: 0 0 8px; font-size: 15px; }
+.hidden { display: none !important; }
+.copy { float: right; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Mod Studio</h1>
+  <div class="sel" id="sel">no mod selected</div>
+  <button id="newBtn" class="primary">New mod</button>
+  <button id="themeBtn" title="Dark / light">Theme</button>
+</header>
+<div class="layout">
+  <aside class="card">
+    <div class="row" style="margin-bottom:10px"><b class="grow">Mods</b><button class="small" id="reloadMods">Reload</button></div>
+    <div class="mods" id="mods"></div>
+    <p class="hint" id="amRoot"></p>
+  </aside>
+  <main class="card">
+    <div class="tabs" id="tabs">
+      <button data-tab="switches" class="active">Switches</button>
+      <button data-tab="find">Find</button>
+      <button data-tab="suggest">Suggest</button>
+      <button data-tab="phone">Build &amp; Phone</button>
+      <button data-tab="files">Files</button>
+    </div>
+    <section id="tab-switches"></section>
+    <section id="tab-find" class="hidden"></section>
+    <section id="tab-suggest" class="hidden"></section>
+    <section id="tab-phone" class="hidden"></section>
+    <section id="tab-files" class="hidden"></section>
+  </main>
+</div>
+
+<dialog id="dlg"><div id="dlgBody"></div></dialog>
+
+<script>
+"use strict";
+const App = {
+  mods: [], mod: null, detail: null, tab: "switches", jobs: {}, pollers: {}, findRows: [],
+  async api(path, body) {
+    const r = await fetch(path, body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    let data = {};
+    try { data = await r.json(); } catch (e) { data = { error: "no JSON from the server" }; }
+    if (!r.ok) throw new Error(data.output || data.error || `HTTP ${r.status}`);
+    return data;
+  },
+  el(tag, attrs, ...children) {
+    const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (k === "class") e.className = v; else if (k === "text") e.textContent = v; else if (k.startsWith("on")) e.addEventListener(k.slice(2), v); else if (v !== null && v !== undefined) e.setAttribute(k, v);
+    }
+    for (const c of children.flat()) if (c !== null && c !== undefined) e.append(c.nodeType ? c : document.createTextNode(String(c)));
+    return e;
+  },
+  toast(text, kind) {
+    document.querySelectorAll(".toast").forEach(t => t.remove());
+    const t = this.el("div", { class: "toast " + (kind || ""), text: String(text).trim().split("\n").slice(0, 3).join("\n") });
+    document.body.append(t);
+    setTimeout(() => t.remove(), kind === "bad" ? 9000 : 4500);
+  },
+  byId(id) { return document.getElementById(id); },
+  hex(n) { return "0x" + Number(n).toString(16).toUpperCase(); },
+  mb(n) { return (n / 1e6).toFixed(1) + " MB"; },
+
+  async loadMods() {
+    const data = await this.api("/api/mods");
+    this.mods = data.mods;
+    this.byId("amRoot").textContent = "Workspace: " + data.am_root;
+    const box = this.byId("mods"); box.replaceChildren();
+    for (const m of this.mods) {
+      const badges = [
+        m.personal ? this.el("span", { class: "badge", text: "personal" }) : null,
+        this.el("span", { class: "badge accent", text: `${m.hooks} hooks${m.hooks_jit ? ", " + m.hooks_jit + " JIT" : ""}` }),
+        m.has_tweaks ? this.el("span", { class: "badge", text: m.tweaks + " switches" }) : this.el("span", { class: "badge warn", text: "hand-written" }),
+        this.el("span", { class: "badge " + (m.dump ? "good" : "bad"), text: m.dump ? "dump" : "no dump" }),
+      ];
+      box.append(this.el("div", { class: "mod" + (m.name === this.mod ? " active" : ""), onclick: () => this.select(m.name) },
+        this.el("div", { class: "t", text: `${m.title} ${m.version}` }),
+        this.el("div", { class: "s", text: `${m.target} ${m.app_version}` }),
+        this.el("div", { class: "badges" }, badges)));
+    }
+    if (!this.mod && this.mods.length) this.select(localStorage.getItem("studio.mod") || this.mods[0].name);
+  },
+  async select(name) {
+    if (!this.mods.some(m => m.name === name)) name = this.mods[0] && this.mods[0].name;
+    if (!name) return;
+    this.mod = name; localStorage.setItem("studio.mod", name);
+    await this.refresh();
+    document.querySelectorAll(".mod").forEach((e, i) => e.classList.toggle("active", this.mods[i].name === name));
+  },
+  async refresh(detail) {
+    this.detail = detail || await this.api(`/api/mods/${this.mod}`);
+    const d = this.detail;
+    this.byId("sel").replaceChildren(this.el("b", { text: `${d.title} ${d.version}` }), ` · ${d.target} ${d.app_version}`);
+    this.render();
+  },
+  setTab(tab) {
+    this.tab = tab;
+    document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
+    for (const s of ["switches", "find", "suggest", "phone", "files"]) this.byId("tab-" + s).classList.toggle("hidden", s !== tab);
+    this.render();
+  },
+  render() {
+    if (!this.detail) return;
+    ({ switches: this.renderSwitches, find: this.renderFind, suggest: this.renderSuggest, phone: this.renderPhone, files: this.renderFiles })[this.tab].call(this);
+  },
+
+  // ---------------------------------------------------------------- switches
+  keys() { return ((this.detail.tweaks_json || {}).tweaks || []).map(t => t.key); },
+  renderSwitches() {
+    const d = this.detail, box = this.byId("tab-switches"); box.replaceChildren();
+    const tj = d.tweaks_json;
+    if (!tj) {
+      box.append(this.el("p", { class: "hint", text: "This mod has a hand-written Tweak.x and no tweaks.json. Adding a switch here creates one; the Makefile must then list AMTweaks.gen.m and Tweak.x must call AMTweaksRegister() (see README \"Dev loop\")." }));
+    }
+    const top = this.el("div", { class: "row", style: "margin-bottom:12px" },
+      this.el("b", { class: "grow", text: `${(tj ? tj.tweaks.length : 0)} menu items` }),
+      this.el("button", { class: "small", onclick: () => this.plainSwitchDialog() }, "Add a plain switch / slider"),
+      this.el("button", { class: "small", onclick: () => this.quick("gen", {}) }, "Regenerate code"));
+    box.append(top);
+    if (tj && tj.watch && tj.watch.length) {
+      box.append(this.el("p", { class: "hint", text: "Watch (log every " + (tj.watch_every || 10) + " s): " + tj.watch.map(w => `${w.object} ${w.getter || w.field}`).join(", ") }));
+    }
+    for (const t of (tj ? tj.tweaks : [])) {
+      const hooks = t.hooks || [], pins = t.pins || [];
+      const jit = hooks.length && hooks.every(h => (d.hooks_json.find(e => (e.namespace ? e.namespace + "." : "") + e.class + "." + e.method === h.method || e.class + "." + e.method === h.method) || {}).needs_jit) && !pins.length && t.jit_label !== false;
+      const chips = [
+        ...hooks.map(h => this.el("span", { class: "chip hook", title: "hook (JIT unless virtual / Unity callback)", text: `${h.method} · ${h.action || "custom"}${h.value !== undefined ? " " + h.value : ""}${h.index !== undefined ? " [arg " + h.index + "]" : ""}` })),
+        ...pins.map(p => this.el("span", { class: "chip pin", title: "pin: no JIT needed", text: `${p.object}${p.via ? " via " + p.via : ""} · ${p.field || p.setter || (p.call + "(" + (p.args || []).join(", ") + ")")}${p.call ? " every " + (p.every ?? 0) + " s" : " " + (p.op === "multiply" ? "× " : "") + (p.when && p.when !== "always" ? p.when + " " : "= ") + JSON.stringify(p.value)}` })),
+      ];
+      const kindText = t.kind === "slider" ? `slider ${t.min}–${t.max}, default ${t.default ?? t.min}` : "switch";
+      box.append(this.el("div", { class: "item" },
+        this.el("div", { class: "head" },
+          this.el("span", { class: "title", text: t.title }),
+          this.el("span", { class: "key", text: `${t.key} · ${kindText}` }),
+          jit ? this.el("span", { class: "badge warn", text: "(JIT)", title: "every hook needs JIT; add a pin for phones without it" }) : null,
+          t.verified ? this.el("span", { class: "badge " + (t.verified.result === "works" ? "good" : "bad"), text: `${t.verified.result} on ${t.verified.app_version} (${t.verified.date})` }) : null),
+        chips.length ? this.el("div", { class: "chips" }, chips) : this.el("div", { class: "hint", text: "No hook or pin: a value for hand-written code in Tweak.x (am_" + t.key + ")." }),
+        this.el("div", { class: "row" },
+          this.el("button", { class: "small", onclick: () => this.quick("mark", { key: t.key, works: true }) }, "Works on the phone"),
+          this.el("button", { class: "small", onclick: () => this.quick("mark", { key: t.key, fails: true }) }, "Fails"),
+          this.el("button", { class: "small", onclick: () => this.pinDialog({ to: t.key }) }, "Add a pin"),
+          this.el("button", { class: "small danger", onclick: () => { if (confirm(`Remove "${t.title}" and the hooks only it uses?`)) this.quick("remove", { what: t.key }); } }, "Remove"))));
+    }
+  },
+  async quick(command, body) {
+    try {
+      const r = await this.api(`/api/mods/${this.mod}/${command}`, body);
+      this.toast(r.output || "done", "ok");
+      await this.refresh(r.mod);
+      await this.loadMods();
+      return true;
+    } catch (e) { this.toast(e.message, "bad"); return false; }
+  },
+
+  // ---------------------------------------------------------------- dialogs
+  dialog(title, fields, onSubmit, submitText) {
+    const dlg = this.byId("dlg"), body = this.byId("dlgBody"); body.replaceChildren();
+    const form = this.el("form", { method: "dialog" }, this.el("h3", { text: title }));
+    const inputs = {};
+    for (const f of fields) {
+      if (f.type === "note") { form.append(this.el("p", { class: "hint", text: f.text })); continue; }
+      let input;
+      if (f.type === "select") { input = this.el("select", { name: f.name }, f.options.map(o => this.el("option", { value: o[0], text: o[1] }))); input.value = f.value ?? f.options[0][0]; }
+      else if (f.type === "check") { input = this.el("input", { type: "checkbox", name: f.name }); input.checked = !!f.value; }
+      else { input = this.el("input", { type: f.type || "text", name: f.name, value: f.value ?? "", placeholder: f.placeholder || "", class: f.mono ? "mono" : "" }); if (f.list) { input.setAttribute("list", f.name + "-list"); form.append(this.el("datalist", { id: f.name + "-list" }, f.list.map(v => this.el("option", { value: v })))); } }
+      input.style.width = f.type === "check" ? "auto" : "100%";
+      inputs[f.name] = input;
+      form.append(this.el("label", { text: f.label + (f.help ? "  —  " + f.help : "") }), input);
+      if (f.onchange) input.addEventListener("change", () => f.onchange(inputs));
+    }
+    form.append(this.el("div", { class: "row", style: "margin-top:14px;justify-content:flex-end" },
+      this.el("button", { type: "button", onclick: () => dlg.close() }, "Cancel"),
+      this.el("button", { type: "submit", class: "primary" }, submitText || "Add")));
+    form.addEventListener("submit", async ev => {
+      ev.preventDefault();
+      const values = {}; for (const [k, i] of Object.entries(inputs)) values[k] = i.type === "checkbox" ? i.checked : i.value.trim();
+      if (await onSubmit(values)) dlg.close();
+    });
+    body.append(form); dlg.showModal();
+    return inputs;
+  },
+  keyFrom(method) {
+    const [cls, name] = [method.slice(0, method.lastIndexOf(".")).split(".").pop(), method.slice(method.lastIndexOf(".") + 1).replace(/^(get_|set_)/, "")];
+    const k = (cls + name.charAt(0).toUpperCase() + name.slice(1)).replace(/\W/g, "");
+    return k.charAt(0).toLowerCase() + k.slice(1);
+  },
+  validKey(k) { return /^[A-Za-z][A-Za-z0-9_]*$/.test(k); },
+  hookDialog(m, preset) {
+    preset = preset || {};
+    const def = preset.action || (m.kind === "void" ? "skip" : m.kind === "bool" ? "return" : m.kind === "other" ? "custom" : "return");
+    const toOpts = [["", "a new switch"], ...this.keys().map(k => [k, "add to " + k])];
+    const fields = [
+      { type: "note", text: `${m.full_name}(${m.params.join(", ")}) → ${m.return_type}${m.needs_jit ? "   · needs JIT: without it this hook catches nothing; prefer a pin (Find → fields / set_ methods)" : ""}` },
+      { name: "to", label: "Switch", type: "select", options: toOpts, value: preset.to || "" },
+      { name: "title", label: "Menu title", value: preset.title || m.class + " " + m.method.replace(/^(get_|set_)/, "") },
+      { name: "key", label: "Key", value: this.keyFrom(m.full_name), mono: true },
+      { name: "action", label: "Action", type: "select", options: [["skip", "skip (void: don't call)"], ["return", "return a value"], ["multiply", "multiply the result"], ["arg", "replace an argument"], ["custom", "custom (code in Tweak.x)"]], value: def },
+      { name: "value", label: "Value", help: "for return / arg / multiply-by-fixed", value: preset.value !== undefined && preset.value !== null ? String(preset.value) : (m.kind === "bool" ? "true" : ""), mono: true },
+      { name: "index", label: "Argument index (arg)", value: "0", type: "number" },
+      { name: "slider", label: "Slider min max default (multiply)", value: preset.slider ? preset.slider.join(" ") : "1 20 1", mono: true },
+    ];
+    this.dialog("Hook a method", fields, async v => {
+      if (!v.to && !this.validKey(v.key)) { this.toast("key: letters, digits, underscores", "bad"); return false; }
+      if (!v.to && !v.title) { this.toast("a title is needed", "bad"); return false; }
+      const body = { method: m.full_name, args: m.args, action: v.action };
+      if (v.to) body.to = v.to; else { body.key = v.key; body.title = v.title; }
+      if (v.value && (v.action === "return" || v.action === "arg" || v.action === "multiply")) body.value = v.value;
+      if (v.action === "arg") body.index = Number(v.index);
+      if (v.action === "multiply" && !v.to && !v.value) body.slider = v.slider.split(/\s+/).map(Number);
+      return this.quick("add", body);
+    });
+  },
+  pinDialog(preset) {
+    preset = preset || {};
+    const toOpts = [["", "a new switch"], ...this.keys().map(k => [k, "add to " + k])];
+    const fields = [
+      { type: "note", text: "A pin runs every half second on the live object(s): write a field or call a setter. Works without JIT." },
+      { name: "target", label: "Target", help: "Class.field or Class.set_Property", value: preset.target || "", mono: true },
+      { name: "object", label: "Object", help: "blank = the class's instance field; or Class, or Class[] for every live object", value: preset.object || "", mono: true },
+      { name: "value", label: "Value", help: "number, true/false, peak, getter:get_X, field:Y, slider", value: preset.value || "", mono: true },
+      { name: "when", label: "When", type: "select", options: [["always", "always"], ["lower", "only when the current value is lower"], ["higher", "only when higher"]], value: preset.when || "always" },
+      { name: "threshold", label: "Threshold (with when)", value: "", type: "number" },
+      { name: "via", label: "Via getter (optional)", help: "a 0-arg getter on the object that returns the real target", value: "", mono: true },
+      { name: "class", label: "Target class (optional)", help: "when the field belongs to a parent class or the via result", value: "", mono: true },
+      { name: "multiply", label: "Multiply (field = base × value, slider)", type: "check" },
+      { name: "to", label: "Switch", type: "select", options: toOpts, value: preset.to || "" },
+      { name: "title", label: "Menu title (new switch)", value: preset.title || "" },
+      { name: "key", label: "Key (new switch)", value: preset.target ? this.keyFrom(preset.target) : "", mono: true },
+      { name: "slider", label: "Slider min max default (value = slider)", value: "1 20 1", mono: true },
+    ];
+    this.dialog("Add a pin (no JIT)", fields, async v => {
+      if (!v.target.includes(".")) { this.toast("target is Class.field or Class.set_X", "bad"); return false; }
+      if (!v.to && !this.validKey(v.key)) { this.toast("key: letters, digits, underscores", "bad"); return false; }
+      const body = { target: v.target, value: v.value || undefined, when: v.when };
+      if (v.object) body.object = v.object; if (v.threshold) body.threshold = Number(v.threshold); if (v.via) body.via = v.via; if (v.class) body.class = v.class; if (v.multiply) body.multiply = true;
+      if (v.to) body.to = v.to; else { body.key = v.key; body.title = v.title || v.target; }
+      if (v.value === "slider") body.slider = v.slider.split(/\s+/).map(Number);
+      return this.quick("pin", body);
+    });
+  },
+  callDialog(m, preset) {
+    preset = preset || {};
+    const toOpts = [["", "a new switch"], ...this.keys().map(k => [k, "add to " + k])];
+    this.dialog("Call a method every N seconds (no JIT)", [
+      { type: "note", text: `${m.full_name}(${m.params.join(", ")})` },
+      { name: "args", label: "Arguments", help: "numbers / true / false, space-separated", value: m.params.map(p => (p.split("=")[1] || "0").trim()).join(" "), mono: true },
+      { name: "every", label: "Every (seconds)", type: "number", value: "10" },
+      { name: "object", label: "Object", help: "blank = the class's instance field", value: "", mono: true },
+      { name: "to", label: "Switch", type: "select", options: toOpts, value: preset.to || "" },
+      { name: "title", label: "Menu title (new switch)", value: preset.title || `${m.method} every 10 s` },
+      { name: "key", label: "Key (new switch)", value: this.keyFrom(m.full_name), mono: true },
+    ], async v => {
+      if (!v.to && !this.validKey(v.key)) { this.toast("key: letters, digits, underscores", "bad"); return false; }
+      const body = { target: m.full_name, args: v.args ? v.args.split(/\s+/) : [], every: Number(v.every) };
+      if (v.object) body.object = v.object; if (v.to) body.to = v.to; else { body.key = v.key; body.title = v.title; }
+      return this.quick("call", body);
+    });
+  },
+  plainSwitchDialog() {
+    this.dialog("A switch or slider with no hook", [
+      { type: "note", text: "Read it in Tweak.x as am_<key> (BOOL, or float for a slider)." },
+      { name: "title", label: "Menu title", value: "" },
+      { name: "key", label: "Key", value: "", mono: true },
+      { name: "slider", label: "Slider min max default (blank = switch)", value: "", mono: true },
+    ], async v => {
+      if (!this.validKey(v.key) || !v.title) { this.toast("key and title are needed", "bad"); return false; }
+      const body = { key: v.key, title: v.title }; if (v.slider) body.slider = v.slider.split(/\s+/).map(Number);
+      return this.quick("tweak", body);
+    });
+  },
+
+  // ---------------------------------------------------------------- find
+  renderFind() {
+    const box = this.byId("tab-find");
+    if (box.dataset.mod === this.mod && box.childElementCount) { this.renderFindRows(); return; }
+    box.dataset.mod = this.mod; box.replaceChildren();
+    if (!this.detail.dump) { box.append(this.needDump()); return; }
+    const q = this.el("input", { class: "grow mono", placeholder: "regex on Class.method, e.g. Damage|Health", value: localStorage.getItem("studio.q." + this.mod) || "" });
+    const cls = this.el("input", { class: "mono", placeholder: "class (every method, or its fields)", style: "width:230px" });
+    const limit = this.el("input", { type: "number", value: "60", style: "width:80px", title: "limit" });
+    const search = async (mode) => {
+      try {
+        localStorage.setItem("studio.q." + this.mod, q.value);
+        if (mode === "fields") { const r = await this.api(`/api/mods/${this.mod}/fields?class=${encodeURIComponent(cls.value.trim())}`); this.findFields = r.fields; this.findRows = []; this.findClass = cls.value.trim(); }
+        else { const url = cls.value.trim() && mode === "class" ? `class=${encodeURIComponent(cls.value.trim())}` : `q=${encodeURIComponent(q.value || ".")}`; const r = await this.api(`/api/mods/${this.mod}/find?${url}&limit=${Number(limit.value) || 60}`); this.findRows = r.methods; this.findCount = r.count; this.findFields = null; }
+        this.renderFindRows();
+      } catch (e) { this.toast(e.message, "bad"); }
+    };
+    q.addEventListener("keydown", ev => { if (ev.key === "Enter") search("q"); });
+    cls.addEventListener("keydown", ev => { if (ev.key === "Enter") search("class"); });
+    box.append(this.el("div", { class: "row" }, q, this.el("button", { class: "primary", onclick: () => search("q") }, "Search"), limit),
+      this.el("div", { class: "row", style: "margin-top:8px" }, cls, this.el("button", { onclick: () => search("class") }, "Methods of class"), this.el("button", { onclick: () => search("fields") }, "Fields of class")),
+      this.el("p", { class: "hint", text: "Hook… registers a hook (catches calls only with JIT unless the method is virtual or a Unity callback). Pin… writes a field or calls a set_ method on the live objects every half second: works on any phone." }),
+      this.el("div", { id: "findOut" }));
+    if (q.value) search("q");
+  },
+  needDump() {
+    return this.el("div", { class: "item" }, this.el("p", { text: "No dump of the game yet. The dump reads the game's code names (Il2CppDumper) and takes under a minute." }),
+      this.el("button", { class: "primary", onclick: () => { this.setTab("phone"); this.job("dump", []); } }, "Dump the game"));
+  },
+  renderFindRows() {
+    const out = this.byId("findOut"); if (!out) return; out.replaceChildren();
+    if (this.findFields) {
+      out.append(this.el("p", { class: "hint", text: `${this.findFields.length} fields of ${this.findClass} (offsets are read by name at run time; you never copy them)` }));
+      const tb = this.el("tbody");
+      for (const f of this.findFields) tb.append(this.el("tr", {}, this.el("td", { class: "mono", text: this.hex(f.offset) }), this.el("td", { text: f.static ? "static" : "" }), this.el("td", { class: "mono", text: f.type }), this.el("td", { class: "mono", text: f.name }),
+        this.el("td", {}, f.static ? "" : this.el("button", { class: "small", onclick: () => this.pinDialog({ target: `${this.findClass}.${f.name}`, title: `${this.findClass} ${f.name}` }) }, "Pin…"))));
+      out.append(this.el("table", {}, this.el("thead", {}, this.el("tr", {}, ["offset", "", "type", "name", ""].map(h => this.el("th", { text: h })))), tb));
+      return;
+    }
+    if (!this.findRows.length) { out.append(this.el("p", { class: "hint", text: "No methods match." })); return; }
+    out.append(this.el("p", { class: "hint", text: `${this.findCount} methods${this.findCount > this.findRows.length ? " (showing " + this.findRows.length + ")" : ""}` }));
+    const tb = this.el("tbody");
+    for (const m of this.findRows) {
+      const canPin = /^set_/.test(m.method) && m.args === 1;
+      tb.append(this.el("tr", {},
+        this.el("td", {}, this.el("span", { class: "mono", text: m.full_name }), this.el("br"), this.el("span", { class: "muted small mono", text: `(${m.params.join(", ")}) → ${m.static ? "static " : ""}${m.return_type}` })),
+        this.el("td", {}, m.needs_jit ? this.el("span", { class: "badge warn", text: "JIT", title: "catches nothing without JIT; use a pin" }) : this.el("span", { class: "badge good", text: m.slot !== null ? "virtual" : "callback", title: "pointer hook works without JIT" })),
+        this.el("td", { class: "mono muted small", text: m.rva }),
+        this.el("td", {}, this.el("div", { class: "row" },
+          this.el("button", { class: "small", onclick: () => this.hookDialog(m) }, "Hook…"),
+          canPin ? this.el("button", { class: "small", onclick: () => this.pinDialog({ target: m.full_name, title: `${m.class} ${m.method.slice(4)}` }) }, "Pin…") : null,
+          this.el("button", { class: "small", onclick: () => this.callDialog(m) }, "Call…"),
+          this.el("button", { class: "small", onclick: () => { this.findClass = m.class; this.api(`/api/mods/${this.mod}/fields?class=${encodeURIComponent(m.class)}`).then(r => { this.findFields = r.fields; this.renderFindRows(); }).catch(e => this.toast(e.message, "bad")); } }, "Fields")))));
+    }
+    out.append(this.el("table", {}, this.el("thead", {}, this.el("tr", {}, ["method", "without JIT", "RVA", ""].map(h => this.el("th", { text: h })))), tb));
+  },
+
+  // ---------------------------------------------------------------- suggest
+  async renderSuggest() {
+    const box = this.byId("tab-suggest"); box.replaceChildren();
+    if (!this.detail.dump) { box.append(this.needDump()); return; }
+    box.append(this.el("p", { class: "hint", text: "Loading…" }));
+    try {
+      const r = await this.api(`/api/mods/${this.mod}/suggest?limit=40`);
+      box.replaceChildren(this.el("p", { class: "hint", text: `${r.learned} learned patterns from earlier mods (every hook you add and every phone result feeds them). Methods of this game that match, best first:` }));
+      if (!r.rows.length) { box.append(this.el("p", { text: r.learned ? "No method of this game matches a learned pattern. Use Find." : "Nothing learned yet: add switches, or import a mod's hooks.json with `am learn <mod>`." })); return; }
+      const tb = this.el("tbody");
+      for (const row of r.rows) {
+        const m = row.method;
+        const add = () => {
+          if (row.action === "pin") this.pinDialog({ target: m.full_name, title: row.title });
+          else if (row.action === "call") this.callDialog(m, { title: row.title });
+          else this.hookDialog(m, { title: row.title, action: row.action, value: row.value, slider: row.slider });
+        };
+        tb.append(this.el("tr", {},
+          this.el("td", { text: row.score }),
+          this.el("td", {}, this.el("span", { class: "mono", text: m.full_name }), this.el("br"), this.el("span", { class: "muted small mono", text: `(${m.params.join(", ")}) → ${m.return_type}` })),
+          this.el("td", {}, this.el("span", { class: "badge " + (row.exact ? "good" : ""), text: row.exact ? "same name" : "similar" }), this.el("div", { class: "small muted", text: row.pattern }), this.el("div", { class: "small", text: "“" + row.title + "”" })),
+          this.el("td", {}, this.el("button", { class: "small primary", onclick: add }, "Add…"))));
+      }
+      box.append(this.el("table", {}, this.el("thead", {}, this.el("tr", {}, ["score", "method", "learned", ""].map(h => this.el("th", { text: h })))), tb));
+    } catch (e) { box.replaceChildren(this.el("p", { class: "hint", text: e.message })); }
+  },
+
+  // ---------------------------------------------------------------- build & phone
+  renderPhone() {
+    const d = this.detail, box = this.byId("tab-phone");
+    if (box.dataset.mod !== this.mod || !box.childElementCount) {
+      box.dataset.mod = this.mod; box.replaceChildren();
+      const bump = this.el("input", { type: "checkbox", id: "bump" });
+      const launch = this.el("input", { type: "checkbox", id: "launch" }); launch.checked = true;
+      const secs = this.el("input", { type: "number", value: "75", style: "width:80px", id: "secs" });
+      const extra = () => (bump.checked ? ["--bump"] : []);
+      const btn = (text, cmd, args, cls) => this.el("button", { class: cls || "", onclick: () => this.job(cmd, typeof args === "function" ? args() : args) }, text);
+      box.append(
+        this.el("div", { class: "sec" }, this.el("h3", { text: "Game" }), this.el("div", { class: "row" }, btn("Dump", "dump", []), btn("Dump again", "dump", ["--force"]), btn("Check hooks against the dump", "check", []))),
+        this.el("div", { class: "sec" }, this.el("h3", { text: "Build" }), this.el("div", { class: "row" }, btn("Build .dylib", "build", extra), btn("Build .ipa", "build", () => ["--ipa", ...extra()]), this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center" }, bump, "bump the mod version")),
+          this.el("p", { class: "hint", id: "buildInfo" })),
+        this.el("div", { class: "sec" }, this.el("h3", { text: "Phone (USB)" }), this.el("div", { class: "row" },
+          btn("Sign + install last .ipa", "sign", () => [d.last_ipa, "--install"], "primary"),
+          btn("Run: build, sign, install, open, log", "run", () => [...extra(), "--seconds", String(Number(secs.value) || 75)], "primary"),
+          btn("Log", "log", () => ["--seconds", String(Number(secs.value) || 60), ...(launch.checked ? ["--launch"] : [])]),
+          this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center" }, launch, "open the app first"), this.el("span", { class: "muted small", text: "seconds" }), secs),
+          this.el("p", { class: "hint", text: "The first Apple ID sign-in (2FA) must be done once from a console: scripts\\am.ps1 sign <ipa> --install. After that plumesign keeps the session and these buttons work." })),
+        this.el("div", { class: "sec", id: "updateSec" }),
+        this.el("div", { class: "sec" }, this.el("div", { class: "row" }, this.el("h3", { class: "grow", text: "Jobs" }), this.el("button", { class: "small", onclick: () => { this.byId("jobs").replaceChildren(); } }, "Clear")), this.el("div", { id: "jobs" })));
+    }
+    this.byId("buildInfo").textContent = (d.last_dylib ? "Last dylib: " + d.last_dylib : "No build yet") + (d.last_ipa ? "   ·   Last ipa: " + d.last_ipa : "");
+    box.querySelectorAll("button").forEach(b => { if (b.textContent.startsWith("Sign + install")) b.disabled = !d.last_ipa; });
+    const up = this.byId("updateSec"); up.replaceChildren(this.el("h3", { text: "Newer game version" }));
+    if (d.newer_bases.length) for (const b of d.newer_bases) up.append(this.el("div", { class: "row", style: "margin-bottom:6px" }, this.el("span", { class: "mono small grow", text: `${b.version}  ${b.path}` }), this.el("button", { class: "small", onclick: () => this.job("update", [b.path]) }, "Update to it")));
+    else up.append(this.el("p", { class: "hint", text: `No copy of ${d.target} newer than ${d.app_version} in intake/ or Downloads. Drop one there and this offers the update (re-dump, hooks checked, mod.json refreshed).` }));
+  },
+  async job(command, args, mod) {
+    try {
+      const body = { command, args: (args || []).filter(a => a !== null && a !== undefined) };
+      if (command !== "new") body.mod = mod || this.mod;
+      const j = await this.api("/api/jobs", body);
+      this.setTab("phone");
+      this.showJob(j);
+      this.poll(j.id);
+    } catch (e) { this.toast(e.message, "bad"); }
+  },
+  showJob(j) {
+    const jobs = this.byId("jobs"); if (!jobs) return;
+    let det = this.byId("job-" + j.id);
+    if (!det) {
+      det = this.el("details", { class: "job", id: "job-" + j.id, open: "" },
+        this.el("summary", {}, this.el("span", { class: "mono", text: `${j.command} ${j.args.join(" ")}` }), " ", this.el("span", { class: "badge", id: "jobst-" + j.id, text: j.status }), " ", this.el("button", { class: "small", onclick: ev => { ev.preventDefault(); this.api(`/api/jobs/${j.id}/stop`, {}).catch(() => {}); } }, "Stop")),
+        this.el("div", { class: "console", id: "jobout-" + j.id }));
+      jobs.prepend(det);
+    }
+    const st = this.byId("jobst-" + j.id); st.textContent = j.status; st.className = "badge " + (j.status === "done" ? "good" : j.status === "running" ? "accent" : "bad");
+    const out = this.byId("jobout-" + j.id);
+    if (j.lines && j.lines.length) { out.textContent += (out.textContent ? "\n" : "") + j.lines.join("\n"); out.scrollTop = out.scrollHeight; }
+  },
+  poll(id, since) {
+    since = since || 0;
+    this.api(`/api/jobs/${id}?since=${since}`).then(j => {
+      this.showJob(j);
+      if (j.status === "running" || j.status === "stopping") setTimeout(() => this.poll(id, j.next), 1000);
+      else { this.toast(`${j.command}: ${j.status}`, j.status === "done" ? "ok" : "bad"); this.loadMods().then(() => { if (this.mod) this.refresh(); }); }
+    }).catch(e => this.toast(e.message, "bad"));
+  },
+
+  // ---------------------------------------------------------------- files
+  renderFiles() {
+    const d = this.detail, box = this.byId("tab-files"); box.replaceChildren();
+    const pre = (title, text) => this.el("div", { class: "sec" }, this.el("h3", {}, title, this.el("button", { class: "small copy", onclick: () => navigator.clipboard.writeText(text).then(() => this.toast("copied", "ok")) }, "Copy")), this.el("pre", { text }));
+    box.append(this.el("div", { class: "sec" }, this.el("h3", { text: "Paths" }), this.el("pre", { text: [`mod:        mods/${d.name}`, `base .ipa:  ${d.base_ipa || "(not remembered; dump finds it by bundle ID in intake/ and Downloads)"}`, `dump:       ${d.dump ? "present" : "none"}`, `last dylib: ${d.last_dylib || "-"}`, `last ipa:   ${d.last_ipa || "-"}`].join("\n") })),
+      pre("tweaks.json", d.tweaks_json ? JSON.stringify(d.tweaks_json, null, 2) : "(none)"),
+      pre("hooks.json", JSON.stringify({ engine: "unity-il2cpp", hooks: d.hooks_json }, null, 2)));
+  },
+
+  // ---------------------------------------------------------------- new mod
+  async newModDialog() {
+    let ipas = [];
+    try { ipas = (await this.api("/api/bases")).ipas; } catch (e) { this.toast(e.message, "bad"); }
+    const opts = [["", "choose a decrypted .ipa from intake/ or Downloads…"], ...ipas.map(i => [i.path, `${i.name} ${i.version} · ${i.bundle} · ${this.mb(i.size)}`])];
+    this.dialog("New personal mod", [
+      { type: "note", text: "Makes mods/<name>/ from a decrypted .ipa of your own copy of the game, then dumps it. Nothing is uploaded." },
+      { name: "name", label: "Folder name", help: "lowercase letters, digits, dashes", value: "", placeholder: "my-game-plus", mono: true },
+      { name: "title", label: "Menu title", value: "", placeholder: "My Game+" },
+      { name: "pick", label: "Base .ipa", type: "select", options: opts, onchange: i => { if (i.pick.value) { const row = ipas.find(x => x.path === i.pick.value); i.path.value = i.pick.value; if (!i.title.value) i.title.value = row.name + "+"; if (!i.name.value) i.name.value = row.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") + "-plus"; } } },
+      { name: "path", label: "or a path", value: "", mono: true },
+    ], async v => {
+      if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(v.name)) { this.toast("name: lowercase letters, digits and dashes", "bad"); return false; }
+      if (!v.path) { this.toast("choose a base .ipa", "bad"); return false; }
+      await this.job("new", [v.name, v.path, "--title", v.title || v.name]);
+      return true;
+    }, "Create and dump");
+  },
+
+  init() {
+    const theme = localStorage.getItem("studio.theme") || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+    document.documentElement.dataset.theme = theme;
+    this.byId("themeBtn").addEventListener("click", () => { const t = document.documentElement.dataset.theme === "light" ? "dark" : "light"; document.documentElement.dataset.theme = t; localStorage.setItem("studio.theme", t); });
+    this.byId("tabs").addEventListener("click", ev => { const b = ev.target.closest("button"); if (b) this.setTab(b.dataset.tab); });
+    this.byId("newBtn").addEventListener("click", () => this.newModDialog());
+    this.byId("reloadMods").addEventListener("click", () => this.loadMods());
+    this.loadMods().catch(e => this.toast(e.message, "bad"));
+  },
+};
+App.init();
+</script>
+</body>
+</html>

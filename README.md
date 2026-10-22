@@ -176,6 +176,18 @@ The runtime probe (`runtime/probe/`) checks all of this on a real phone without 
 it from the run's artifacts, add it as a tweak when signing any Unity game in Accretion, install and open
 the game. After about 20 s an alert shows the mode, each probe hook and how often it was called.
 
+#### Mod Studio: the same loop as a page (`studio/`)
+
+`scripts\am.ps1 ui` (or `python3 studio/server.py`) starts a small server on the PC and opens
+http://localhost:8765/: the mods on the left; tabs for the switches (hooks and pins as chips, phone
+results, remove), Find (search the dump, fields of a class, Hook / Pin / Call buttons that open a
+prefilled form), Suggest (what worked in earlier games), Build & Phone (dump, build, sign + install,
+run, log, update to a newer base, with the job output streamed into the page) and Files. Quick commands
+run through `dev.py`'s own functions; long ones run `dev.py` as a subprocess. The first Apple ID
+sign-in (2FA) must be done once from a console, then the page's phone buttons work. The server binds
+127.0.0.1; `--host 0.0.0.0` shows the page on the Wi-Fi with no login, for a trusted network only.
+Tests: `tests/test_studio.py`.
+
 #### Dev loop for personal mods (`scripts/dev.py`)
 
 `scripts/dev.py` runs the whole loop for a personal mod of a Unity game from one place: dump, search, add a
