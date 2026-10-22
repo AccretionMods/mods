@@ -37,8 +37,8 @@ code for a hook-only tweak: no "(JIT)" title, and Tweak.x reports its status its
 Turning a switch off puts the game's own values back where a pin forced them (see restorable(): fields and
 setters written "always" or multiplied, on one object); "restore": false on a tweak or pin keeps what the game
 has instead (radiation, for example). A slider shows the game's own value of its first pin's target under its
-title ("Game value 2"). The game pauses while the menu is open (Unity Time.timeScale); "pause_menu": false at
-the top of tweaks.json turns that off.
+title ("Game value 2"). The game keeps running while the menu is open; "pause_menu": true at the top of
+tweaks.json pauses it instead (Unity Time.timeScale).
 
 Actions, while the tweak is on (a slider counts as on when its value is not its default):
   skip      a void method is not called
@@ -954,7 +954,7 @@ def render(tweaks, hooks, mod_name):
         "    AMMenu *menu = AMMenu.shared;",
         "    menu.title = AMTweaksTitle;",
     ]
-    if tweaks.get("pause_menu", True):
+    if tweaks.get("pause_menu", False):  # the game keeps running unless a mod asks (owner's choice, 2026-10-22)
         m.append("    menu.onOpenChange = ^(BOOL open) { AMIl2cppPauseGame(open); };  // the game stops while the menu is open")
     m += [
         '    NSString *jit = AMIl2cppHasJIT() ? @"" : @" (JIT)";',

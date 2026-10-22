@@ -19,8 +19,8 @@ NS_ASSUME_NONNULL_BEGIN
 // The mod's name ("9Kings+"). The menu itself is titled with the game's own name, the one under its icon.
 @property (nonatomic, copy) NSString *title;
 
-// Called with YES as the menu starts to open and NO once it has closed (a Unity mod pauses the game with it:
-// AMIl2cppPauseGame). Taps on the game are blocked from the button tap until the menu is fully up.
+// Called with YES as the menu starts to open and NO once it has closed (a Unity mod with "pause_menu": true
+// pauses the game with it: AMIl2cppPauseGame; by default the game keeps running). Taps on the game are blocked from the button tap until the menu is fully up.
 @property (nonatomic, copy, nullable) void (^onOpenChange)(BOOL open);
 
 // Items added after this go under a section header with this title. Adding a title used before puts the
