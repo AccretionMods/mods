@@ -43,6 +43,55 @@ class PublishTests(unittest.TestCase):
         network.assert_not_called()
         record.assert_not_called()
 
+    def test_personal_mod_publishes_by_hand_with_allow_personal(self):
+        meta = {"personal": True, "bundle_id": "io.github.accretionmods.fixture", "name": "Fixture", "version": "1.0"}
+        with (
+            patch.object(publish, "load", side_effect=lambda name, default: meta if name.endswith("mod.json") else {}),
+            patch.object(publish, "ipa_version", return_value="1.0-mod1.0"),
+            patch.object(publish, "upload_key", return_value="k"),
+            patch.object(publish, "call", return_value={"published": True}) as network,
+            patch.object(publish, "record") as record,
+            patch.object(publish, "save"),
+            patch.object(publish, "build_source", return_value={}),
+            patch.object(publish.os.path, "getsize", return_value=1),
+            patch("builtins.open", unittest.mock.mock_open(read_data=b"x")),
+            patch.object(
+                sys,
+                "argv",
+                ["publish.py", "--mod", "fixture", "--ipa", "fictional.ipa", "--allow-personal"],
+            ),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            publish.main()
+        network.assert_called_once()
+        self.assertTrue(record.call_args.kwargs["allow_personal"])
+
+    def test_source_builder_lists_a_personal_mod_published_by_hand(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "mods/fixture").mkdir(parents=True)
+            metadata = {
+                "personal": True,
+                "name": "Fixture",
+                "bundle_id": "io.github.accretionmods.fixture",
+                "description": "Fixture",
+                "icon_url": "https://example.test/icon.png",
+                "kind": "tweak",
+            }
+            (root / "mods/fixture/mod.json").write_text(json.dumps(metadata))
+            build = {
+                "version": "1.0",
+                "date": "2026-10-14T00:00:00Z",
+                "size": 1,
+                "downloadURL": "https://example.test/download",
+                "minOSVersion": "16.0",
+                "modVersion": "1.0",
+                "personalPublished": True,
+            }
+            with patch.object(update_source, "ROOT", str(root)):
+                apps = update_source.build_source({"fixture": [build]})["apps"]
+            self.assertEqual([a["bundleIdentifier"] for a in apps], ["io.github.accretionmods.fixture"])
+
     def test_source_builder_omits_personal_mod_even_if_a_release_entry_exists(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

@@ -46,11 +46,13 @@ def app_version_of(version):
     return str(version).split("-mod", 1)[0]
 
 
-def record(releases, mod, ipa, url, version, min_os):
+def record(releases, mod, ipa, url, version, min_os, allow_personal=False):
     meta = load(f"mods/{mod}/mod.json", None)
     if meta is None:
         raise SystemExit(f"mods/{mod}/mod.json not found")
     entry = {
+        # a personal mod the owner chose to publish by hand (publish.py --allow-personal) stays listed
+        **({"personalPublished": True} if allow_personal else {}),
         "version": version,
         "appVersion": app_version_of(version),
         "modVersion": meta["version"],
@@ -112,7 +114,7 @@ def build_source(releases):
             continue  # never built yet, so nothing to download
         with open(path, encoding="utf-8") as f:
             meta = json.load(f)
-        if meta.get("personal"):
+        if meta.get("personal") and not any(b.get("personalPublished") for b in builds):
             continue
         apps.append(app_entry(mod, meta, builds))
     apps.sort(key=lambda a: a["name"].lower())
