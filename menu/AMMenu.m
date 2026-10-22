@@ -1473,23 +1473,29 @@ static NSData *AMCloudPack(NSString **why, NSString **hash) {
 
 // Back up now: pack, ask for a place, upload, confirm. text: "Backed up · 2.3 MB" or why not.
 static void AMCloudBackup(void (^done)(BOOL ok, NSString *text)) {
-    NSString *why = nil, *hash = nil;
-    NSData *zip = AMCloudPack(&why, &hash);
-    if (!zip) { done(NO, why); return; }
-    if ([AMCloudState()[@"last_hash"] isEqual:hash]) { done(YES, @"Already backed up"); return; }
-    NSString *game, *mod;
-    AMCloudVersions(&game, &mod);
-    AMCloudCall(@"backup-start", @{@"size": @(zip.length), @"mod_version": mod, @"game_version": game}, ^(NSDictionary *json, NSString *err) {
-        if (err) { done(NO, err); return; }
-        AMCloudTransfer(@"PUT", json[@"upload_url"], zip, ^(NSData *data, NSString *err2) {
-            if (err2) { done(NO, err2); return; }
-            AMCloudCall(@"backup-finish", @{@"id": json[@"id"]}, ^(NSDictionary *fin, NSString *err3) {
-                if (err3) { done(NO, err3); return; }
-                NSMutableDictionary *state = AMCloudState();
-                state[@"last_backup"] = @((long long)NSDate.date.timeIntervalSince1970);
-                state[@"last_hash"] = hash;
-                AMCloudSave(state);
-                done(YES, [@"Backed up · " stringByAppendingString:AMCloudSize(zip.length)]);
+    // reading and zipping the save takes a moment (a 2 MB save is tens of milliseconds): off the main thread, so
+    // the menu never stutters (Back up now, and the backup when the menu opens)
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSString *why = nil, *hash = nil;
+        NSData *zip = AMCloudPack(&why, &hash);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (!zip) { done(NO, why); return; }
+            if ([AMCloudState()[@"last_hash"] isEqual:hash]) { done(YES, @"Already backed up"); return; }
+            NSString *game, *mod;
+            AMCloudVersions(&game, &mod);
+            AMCloudCall(@"backup-start", @{@"size": @(zip.length), @"mod_version": mod, @"game_version": game}, ^(NSDictionary *json, NSString *err) {
+                if (err) { done(NO, err); return; }
+                AMCloudTransfer(@"PUT", json[@"upload_url"], zip, ^(NSData *data, NSString *err2) {
+                    if (err2) { done(NO, err2); return; }
+                    AMCloudCall(@"backup-finish", @{@"id": json[@"id"]}, ^(NSDictionary *fin, NSString *err3) {
+                        if (err3) { done(NO, err3); return; }
+                        NSMutableDictionary *state = AMCloudState();
+                        state[@"last_backup"] = @((long long)NSDate.date.timeIntervalSince1970);
+                        state[@"last_hash"] = hash;
+                        AMCloudSave(state);
+                        done(YES, [@"Backed up · " stringByAppendingString:AMCloudSize(zip.length)]);
+                    });
+                });
             });
         });
     });
@@ -1563,13 +1569,18 @@ static void AMCloudRestore(NSString *backupId, void (^done)(BOOL ok, NSString *t
             AMCloudBackup(^(BOOL keptOk, NSString *keptText) {
                 // with no save yet there is nothing to keep; any other failure stops the restore (the current save stays)
                 if (!keptOk && ![keptText hasPrefix:@"There is no save yet"]) { done(NO, [@"Your current save could not be kept: " stringByAppendingString:keptText]); return; }
-                NSString *why = nil;
-                if (!AMCloudStage(zip, &why)) { done(NO, why); return; }
-                NSMutableDictionary *state = AMCloudState();  // the restored save is the one to back up from now on
-                state[@"last_backup"] = @((long long)NSDate.date.timeIntervalSince1970);
-                [state removeObjectForKey:@"last_hash"];
-                AMCloudSave(state);
-                done(YES, @"Restored: the game closes; open it again");
+                dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{  // unzip and write off the main thread
+                    NSString *why = nil;
+                    BOOL staged = AMCloudStage(zip, &why);
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        if (!staged) { done(NO, why); return; }
+                        NSMutableDictionary *state = AMCloudState();  // the restored save is the one to back up from now on
+                        state[@"last_backup"] = @((long long)NSDate.date.timeIntervalSince1970);
+                        [state removeObjectForKey:@"last_hash"];
+                        AMCloudSave(state);
+                        done(YES, @"Restored: the game closes; open it again");
+                    });
+                });
             });
         });
     });
@@ -2311,8 +2322,10 @@ static NSString *AMGameName(NSString *fallback) {
     NSIndexPath *path = [self pathOfFlat:flat];
     AMSwitchCell *row = path ? (AMSwitchCell *)[self.tableView cellForRowAtIndexPath:path] : nil;
     if ([row isKindOfClass:AMSwitchCell.class]) {
+        BOOL had = row.detail.text.length > 0;
         [self showStatusOf:item inRow:row animated:YES];
-        [UIView performWithoutAnimation:^{ [self.tableView beginUpdates]; [self.tableView endUpdates]; }];  // the line may come or go
+        if (had != (row.detail.text.length > 0))  // only when the red line came or went: re-measuring every row stutters
+            [UIView performWithoutAnimation:^{ [self.tableView beginUpdates]; [self.tableView endUpdates]; }];
     }
     [self confirm:on row:row];
     [self refreshHeaderOf:flat];
