@@ -523,35 +523,44 @@ const App = {
     if (box.childElementCount) return;  // built once; Refresh reloads the list
     const pref = (k, d) => { try { return localStorage.getItem("studio.games." + k) || d; } catch (e) { return d; } };
     const save = (k, v) => { try { localStorage.setItem("studio.games." + k, v); } catch (e) {} };
-    const list = this.el("select", {}, [["similar", "Like the games we mod"], ["top-free", "Top free"], ["top-paid", "Top paid"], ["top-grossing", "Top grossing"], ["new-free", "New free"], ["new-paid", "New paid"]].map(o => this.el("option", { value: o[0], text: o[1] })));
+    const list = this.el("select", {}, [["similar", "Like the games we mod"], ["search", "App Store search"], ["like", "Like one game"], ["top-free", "Top free"], ["top-paid", "Top paid"], ["top-grossing", "Top grossing"], ["new-free", "New free"], ["new-paid", "New paid"]].map(o => this.el("option", { value: o[0], text: o[1] })));
     const region = this.el("select", {}, [["us", "USA"], ["jp", "Japan"], ["cn", "China"], ["vn", "Vietnam"], ["gb", "UK"], ["de", "Germany"], ["br", "Brazil"], ["mx", "Mexico"]].map(o => this.el("option", { value: o[0], text: o[1] })));
-    const filter = this.el("input", { placeholder: "filter by name, maker or genre", style: "flex:1;min-width:160px" });
+    const filter = this.el("input", { placeholder: "filter this list, or Enter to search the whole App Store", style: "flex:1;min-width:200px" });
+    let likeBundle = "", likeName = "", loads = 0;
     const offline = this.el("input", { type: "checkbox" });
-    list.value = pref("list", "similar"); region.value = pref("region", "us"); offline.checked = pref("offline", "1") === "1";
+    list.value = pref("list", "similar"); if (list.value === "like" || list.value === "search") list.value = "similar"; region.value = pref("region", "us"); offline.checked = pref("offline", "1") === "1";
     const note = this.el("p", { class: "hint" });
     const grid = this.el("div", { class: "games" });
     let rows = [];
     const draw = () => {
-      const f = filter.value.trim().toLowerCase();
-      const shown = rows.filter(g => (!offline.checked || !g.online) && (!f || [g.name, g.seller, ...g.genres].join(" ").toLowerCase().includes(f)));
+      const f = list.value === "search" ? "" : filter.value.trim().toLowerCase();  // a search list is already the answer
+      const shown = rows.filter(g => (list.value === "search" || !offline.checked || !g.online) && (!f || [g.name, g.seller, g.bundle, ...g.genres].join(" ").toLowerCase().includes(f)));
       const hidden = rows.filter(g => g.online).length;
-      note.textContent = `${shown.length} of ${rows.length} games` + (offline.checked && hidden ? ` · ${hidden} online or multiplayer hidden (no online cheats)` : "");
+      note.textContent = (list.value === "search" ? `${shown.length} App Store results for "${filter.value.trim()}"` : list.value === "like" ? `${shown.length} games like ${likeName}` : `${shown.length} of ${rows.length} games`)
+        + (list.value !== "search" && offline.checked && hidden ? ` · ${hidden} online or multiplayer hidden (no online cheats)` : "")
+        + (f && !shown.length ? " · press Enter to search the whole App Store" : "");
       grid.replaceChildren(...shown.map(g => this.gameCard(g, region.value)));
     };
     const load = async () => {
       save("list", list.value); save("region", region.value);
-      note.textContent = list.value === "similar" ? "Looking for games like ours (the first time takes about 10 s)…" : "Loading…";
+      if (list.value === "search" && filter.value.trim().length < 2) { rows = []; grid.replaceChildren(); note.textContent = "Type a name or bundle ID above and press Enter."; return; }
+      if (list.value === "like" && !likeBundle) { rows = []; grid.replaceChildren(); note.textContent = "Press Like this on a card first."; return; }
+      note.textContent = list.value === "similar" || list.value === "like" ? "Looking for similar games (the first time takes about 10 s)…" : "Loading…";
       grid.replaceChildren();
-      try { rows = (await this.api(`/api/games?list=${list.value}&region=${region.value}`)).games; draw(); }
-      catch (e) { note.textContent = e.message; }
+      const extra = list.value === "search" ? `&q=${encodeURIComponent(filter.value.trim())}` : list.value === "like" ? `&bundle=${encodeURIComponent(likeBundle)}` : "";
+      const ticket = ++loads;  // a slow earlier list must not land on top of a newer one
+      try { const got = (await this.api(`/api/games?list=${list.value}&region=${region.value}${extra}`)).games; if (ticket === loads) { rows = got; draw(); } }
+      catch (e) { if (ticket === loads) note.textContent = e.message; }
     };
+    this.gamesLike = (bundle, name) => { likeBundle = bundle; likeName = name; list.value = "like"; filter.value = ""; load(); };
     list.addEventListener("change", load); region.addEventListener("change", load);
-    filter.addEventListener("input", draw); offline.addEventListener("change", () => { save("offline", offline.checked ? "1" : "0"); draw(); });
+    filter.addEventListener("input", draw);
+    filter.addEventListener("keydown", ev => { if (ev.key === "Enter" && filter.value.trim().length >= 2) { ev.preventDefault(); list.value = "search"; load(); } }); offline.addEventListener("change", () => { save("offline", offline.checked ? "1" : "0"); draw(); });
     box.append(
       this.el("div", { class: "row", style: "margin-bottom:10px" }, list, region, filter,
         this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center" }, offline, "single-player only"),
         this.el("button", { class: "small", onclick: load }, "Refresh")),
-      this.el("p", { class: "hint", text: "From the App Store's public charts and search. \"Like the games we mod\" ranks games by the themes and genres they share with our mods' games. Get .ipa looks the game up on the decrypt site; New mod starts a mod from a decrypted copy." }),
+      this.el("p", { class: "hint", text: "From the App Store's public charts and search. Type in the box to filter this list; press Enter to search the whole App Store (a name or a bundle ID). \"Like the games we mod\" ranks games by the themes and genres they share with our mods' games; Like this on a card does the same for one game. Get .ipa looks the game up on the decrypt site; New mod starts a mod from a decrypted copy. Same lists from a console: am games (see am games --help)." }),
       note, grid);
     load();
   },
@@ -576,6 +585,7 @@ const App = {
       this.el("div", { class: "acts" },
         this.el("button", { class: "small", onclick: () => this.getIpaDialog(g.bundle, region) }, "Get .ipa"),
         newMod,
+        this.el("button", { class: "small", onclick: () => this.gamesLike && this.gamesLike(g.bundle, g.name) }, "Like this"),
         g.url ? this.el("a", { href: g.url, target: "_blank", rel: "noopener", class: "small", style: "align-self:center" }, "App Store") : null));
   },
 

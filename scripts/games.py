@@ -1,8 +1,9 @@
-"""Games for Mod Studio's Games tab: App Store charts, new games, and games like the ones we mod.
+"""App Store games for Mod Studio's Games tab and `dev.py games`: charts, new games, search, one game's details,
+and games like the ones we mod.
 
 Apple's public feeds only (no account, no key): the iTunes RSS charts (genre 6014 = Games), the iTunes Lookup
-API for ratings, genres and icons, and the iTunes Search API for the "similar" list. Answers are cached for
-half an hour per URL. Every row has the same fields (see row()).
+API for ratings, genres and icons, and the iTunes Search API for search and the "similar" list. Answers are
+cached for half an hour per URL. Every row has the same fields (see row()).
 """
 
 import json
@@ -101,6 +102,44 @@ def chart(kind, region="us", limit=50, opener=None):
         if cat == GAMES or cat.startswith("70"):  # the new-app feeds mix in other kinds of apps
             ids.append(e["id"]["attributes"]["im:id"])
     return [row(r) for r in lookup(ids=ids[:limit], region=region, opener=opener)]
+
+
+def search(term, region="us", limit=50, games_only=False, opener=None):
+    """The App Store's own search (any app unless games_only), best match first; a bundle ID looks that app up."""
+    term = (term or "").strip()
+    if len(term) < 2:
+        raise GamesError("search: two letters at least")
+    if re.fullmatch(r"[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+){2,}", term):
+        found = lookup(bundles=[term], region=region, opener=opener)
+        if found:
+            return [row(found[0])]
+    params = {"term": term, "entity": "software", "country": region, "limit": min(int(limit), 200)}
+    if games_only:
+        params["genreId"] = GAMES
+    q = urllib.parse.urlencode(params)
+    results = get_json(f"https://itunes.apple.com/search?{q}", opener).get("results", [])
+    return [row(r) for r in results if r.get("bundleId")]
+
+
+def info(bundle, region="us", opener=None):
+    """One app's details: the row plus its description, version, minimum iOS and age rating."""
+    found = lookup(bundles=[bundle], region=region, opener=opener)
+    if not found:
+        raise GamesError(f"{bundle} is not in the {region.upper()} App Store")
+    r = found[0]
+    out = row(r)
+    out.update(
+        {
+            "version": r.get("version", ""),
+            "min_ios": r.get("minimumOsVersion", ""),
+            "age": r.get("contentAdvisoryRating", ""),
+            "description": r.get("description", ""),
+            "notes": r.get("releaseNotes", ""),
+            "languages": r.get("languageCodesISO2A", []),
+            "themes": theme_words(r)[:8],
+        }
+    )
+    return out
 
 
 def theme_words(game):

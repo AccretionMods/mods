@@ -1,4 +1,4 @@
-"""studio/games.py: charts and "like ours" from canned App Store answers (no network)."""
+"""scripts/games.py: charts and "like ours" from canned App Store answers (no network)."""
 
 import io
 import json
@@ -7,7 +7,7 @@ import sys
 import unittest
 from urllib.parse import parse_qs, urlparse
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "studio"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
 import games
 
@@ -88,6 +88,55 @@ class Games(unittest.TestCase):
         self.assertEqual(rows[0]["like"], ["Wanderer+"])
         self.assertTrue(next(r for r in rows if r["name"] == "Ruins Online")["online"])
         self.assertFalse(rows[0]["online"])
+
+    def test_search_by_words_or_bundle_id_and_info(self):
+        op = Opener()
+        self.assertEqual([r["name"] for r in games.search("wasteland", opener=op)], ["Wasteland Tale", "Ruins Online"])
+        games.search("wasteland", games_only=True, opener=op)
+        self.assertIn("genreId=6014", op.urls[-1])
+        self.assertEqual(games.search("com.ours.wander", opener=op)[0]["name"], OURS["trackName"])
+        with self.assertRaises(games.GamesError):
+            games.search("x", opener=op)
+        g = games.info("com.ours.wander", opener=op)
+        self.assertIn("wasteland", g["themes"])
+        self.assertTrue(g["description"].startswith("A wasteland"))
+        with self.assertRaises(games.GamesError):
+            games.info("com.nobody.here", opener=op)
+
+    def test_dev_cli_games_commands(self):
+        import contextlib
+        import tempfile
+        from pathlib import Path
+
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+        import dev
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            (repo / "mods" / "wander-plus").mkdir(parents=True)
+            (repo / "mods" / "wander-plus" / "mod.json").write_text(
+                json.dumps({"name": "Wander+", "target_bundle_id": "com.ours.wander"})
+            )
+            old = (dev.ROOT, os.environ.get("AM_ROOT"), games.urllib.request.urlopen)
+            dev.ROOT, os.environ["AM_ROOT"] = repo, str(Path(tmp) / "am")
+            games.urllib.request.urlopen = Opener()
+            try:
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    self.assertEqual(dev.main(["games", "search", "com.ours.wander"]), 0)
+                    self.assertEqual(dev.main(["games", "info", "com.ours.wander", "--json"]), 0)
+                    self.assertEqual(dev.main(["games", "like", "com.ours.wander", "--json"]), 0)
+                    self.assertEqual(dev.main(["games", "--region", "u s"]), 1)
+                text = out.getvalue()
+                self.assertIn("our mod wander-plus", text)
+                self.assertIn('"min_ios"', text)
+                self.assertIn('"like": [', text)
+            finally:
+                dev.ROOT, env, games.urllib.request.urlopen = old
+                if env is None:
+                    os.environ.pop("AM_ROOT", None)
+                else:
+                    os.environ["AM_ROOT"] = env
 
     def test_themes_come_from_name_and_description(self):
         terms = [t for t, _ in games.themes(OURS)]

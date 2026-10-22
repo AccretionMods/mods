@@ -184,10 +184,11 @@ results, remove), Find (search the dump, fields of a class, Hook / Pin / Call bu
 prefilled form), Suggest (what worked in earlier games), Build & Phone (dump, build, sign + install,
 run, log, update to a newer base, with the job output streamed into the page), Files and Games. Games
 shows App Store games as cards (top free, paid and grossing, new free and paid, or "like the games we
-mod": ranked by the themes and genres they share with our mods' games, from `studio/games.py` over
+mod": ranked by the themes and genres they share with our mods' games, from `scripts/games.py` over
 Apple's public RSS, Lookup and Search APIs, cached half an hour), marks the ones we already mod and the
 ones with a decrypted copy waiting, flags online or multiplayer games (hidden by default: no online
-cheats), and has Get .ipa and New mod (or Open mod) on each card. Quick commands
+cheats), and has Get .ipa, New mod (or Open mod) and Like this on each card. Enter in its box searches the
+whole App Store (a name or a bundle ID); `am games` gives the same lists in a console (below). Quick commands
 run through `dev.py`'s own functions; long ones run `dev.py` as a subprocess. The first Apple ID
 sign-in (2FA) must be done once from a console, then the page's phone buttons work. The server binds
 127.0.0.1; `--host 0.0.0.0` shows the page on the Wi-Fi with no login, for a trusted network only.
@@ -243,6 +244,23 @@ function that makes it plain `am`). With no command it prints the help. Three mo
   mod's `hooks.json`). `am mark my-game-plus noDamage --works` (or `--fails`) records the phone result on
   the switch and on the pattern, so what worked ranks higher next time and what failed drops out. Methods
   named for purchases or online play are never suggested (README rules), nor are Unity callbacks.
+
+#### App Store games from a console (`am games`)
+
+The Games tab's lists, for a console or a script (`--json` prints the rows the page gets from
+`/api/games`):
+
+```sh
+am games                          # like the games we mod (online / multiplayer left out; --all keeps them)
+am games top-free                 # also top-paid, top-grossing, new-free, new-paid; --region jp, --limit 20
+am games search 9 kings           # the App Store's own search; a bundle ID looks that app up; --games: games only
+am games like com.playdigious.9kings    # games like that one
+am games info com.playdigious.9kings    # version, minimum iOS, size, age rating, themes, description,
+                                        # our mods of it and a decrypted copy waiting, if any
+```
+
+Each row says when we already mod the game (`our mod <folder>`), when a decrypted copy waits in `intake/`
+or Downloads (`ipa ready`), and when it looks online or multiplayer (`online`).
 
 #### Getting a decrypted copy (`am fetch`)
 

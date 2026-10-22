@@ -36,6 +36,10 @@ it); signing and device logs need the phone on USB and run on Windows (plumesign
          [--platform iphone] [--force]                           (AM_DECRYPT_URL; default decrypt.34306.lol, a third party)
   dev.py fetch --login [--email E] | --logout | --account        the site account a new decrypt needs
   dev.py fetch --save-login | --forget-login                     keep it in Windows Credential Manager; fetch signs in
+  dev.py games [top-free|top-paid|top-grossing|new-free|new-paid|similar] [--region us] [--json] [--all]
+  dev.py games search <words or bundle ID> [--games]              the App Store's own search
+  dev.py games like <bundle-id>                                   games like that one
+  dev.py games info <bundle-id> [--json]                          one app: version, min iOS, size, themes, text
   dev.py fetch <bundle-id> --source decrypt.day|armconverter     open that site in the browser, take the download
   dev.py fetch --import <file.ipa>                               check a copy downloaded by hand, move it to intake/
          (a site that asks for a captcha opens in the browser; fetch waits for the download in ~/Downloads)
@@ -70,6 +74,7 @@ ROOT = (
 sys.path.insert(0, str(HERE))
 
 import dev_learn
+import games
 import gen_tweaks
 import ipa_fetch
 from il2cpp_dump import methods
@@ -1738,6 +1743,135 @@ def cmd_learn(args):
 # ---------------------------------------------------------------- main
 
 
+def local_ipas():
+    """Decrypted-looking .ipa files in intake/ and Downloads: path, bundle, name, version, size."""
+    rows = []
+    for folder in (am_root() / "intake", Path.home() / "Downloads"):
+        if not folder.is_dir():
+            continue
+        for ipa in sorted(folder.glob("*.ipa")):
+            try:
+                info, _ = ipa_info(ipa)
+            except Exception:  # noqa: BLE001 - a broken file in Downloads is skipped
+                continue
+            rows.append(
+                {
+                    "path": str(ipa),
+                    "bundle": info.get("CFBundleIdentifier"),
+                    "name": info.get("CFBundleDisplayName") or info.get("CFBundleName"),
+                    "version": info.get("CFBundleShortVersionString"),
+                    "size": ipa.stat().st_size,
+                    "fetched": ipa.with_name(ipa.name + ".source.json").is_file(),
+                }
+            )
+    return rows
+
+
+def mods_by_target():
+    """{game bundle ID: [{name, title}]} for every mod folder."""
+    out = {}
+    for path in sorted((ROOT / "mods").glob("*/mod.json")):
+        meta = read_json(path)
+        if meta.get("target_bundle_id"):
+            out.setdefault(meta["target_bundle_id"], []).append(
+                {"name": path.parent.name, "title": meta.get("display_name") or meta["name"]}
+            )
+    return out
+
+
+def mark_games(rows):
+    """Each game with our mods of it and a decrypted copy waiting, if any."""
+    mods = mods_by_target()
+    have = {}
+    for ipa in local_ipas():
+        have.setdefault(ipa["bundle"], ipa)
+    for r in rows:
+        r["mods"] = mods.get(r["bundle"], [])
+        r["ipa"] = have.get(r["bundle"])
+    return rows
+
+
+def games_list(kind, region="us", term=None, bundle=None, games_only=False):
+    """A list for the Games tab and `dev.py games`: charts, similar, search, or like one game."""
+    if not re.fullmatch(r"[a-z]{2}", region or ""):
+        raise DevError("region: a two-letter store code like us")
+    try:
+        if kind == "similar":
+            rows = games.similar({b: ms[0]["title"] for b, ms in mods_by_target().items()}, region)
+        elif kind == "search":
+            rows = games.search(term, region, games_only=games_only)
+        elif kind == "like":
+            found = games.lookup(bundles=[bundle], region=region) if bundle else []
+            if not found:
+                raise DevError(f"like: {bundle or 'a bundle ID'} is not in the {region.upper()} App Store")
+            rows = games.similar({bundle: found[0]["trackName"]}, region)
+        else:
+            rows = games.chart(kind, region)
+    except games.GamesError as e:
+        raise DevError(str(e)) from e
+    return {"list": kind, "region": region, "games": mark_games(rows)}
+
+
+def games_info(bundle, region="us"):
+    if not re.fullmatch(r"[a-z]{2}", region or ""):
+        raise DevError("region: a two-letter store code like us")
+    try:
+        return mark_games([games.info(bundle, region)])[0]
+    except games.GamesError as e:
+        raise DevError(str(e)) from e
+
+
+def cmd_games(args):
+    what, rest = args.what, list(args.rest)
+    if what == "info":
+        if not rest:
+            raise DevError("games info <bundle-id>")
+        g = games_info(rest[0], args.region)
+        if args.json:
+            print(json.dumps(g, indent=2, ensure_ascii=False))
+            return 0
+        print(f"{g['name']}  ({g['bundle']})")
+        print(f"  {g['seller']} · {g['price']} · version {g['version']} · iOS {g['min_ios']}+ · {g['age']}"
+              + (f" · {g['size'] / 1e6:.0f} MB" if g["size"] else ""))
+        print(f"  rating {g['rating']} ({g['ratings']}) · genres {', '.join(g['genres']) or '-'} · updated {g['updated']}")
+        print(f"  themes {', '.join(g['themes']) or '-'}" + ("  · ONLINE/multiplayer" if g["online"] else ""))
+        for m in g["mods"]:
+            print(f"  our mod: {m['title']} (mods/{m['name']})")
+        if g["ipa"]:
+            print(f"  decrypted copy: {g['ipa']['path']} ({g['ipa']['version']})")
+        print(f"  {g['url']}")
+        print()
+        print("  " + g["description"][:600].replace("\n", "\n  ") + ("…" if len(g["description"]) > 600 else ""))
+        return 0
+    if what == "search":
+        if not rest:
+            raise DevError("games search <words or bundle ID>")
+        data = games_list("search", args.region, " ".join(rest), games_only=args.games)
+    elif what == "like":
+        if not rest:
+            raise DevError("games like <bundle-id>")
+        data = games_list("like", args.region, bundle=rest[0])
+    else:
+        data = games_list(what, args.region)
+    rows = data["games"] if args.all or what == "search" else [g for g in data["games"] if not g["online"]]
+    rows = rows[: args.limit]
+    if args.json:
+        print(json.dumps(rows, indent=2, ensure_ascii=False))
+        return 0
+    hidden = len(data["games"]) - len(rows)
+    for i, g in enumerate(rows, 1):
+        tags = [f"our mod {m['name']}" for m in g["mods"]] + (["ipa ready"] if g["ipa"] else [])
+        tags += ["online"] if g["online"] else []
+        tags += [f"like {t}" for t in g["like"]]
+        print(f"{i:>3}. {g['name'][:44]:<44} {g['bundle'][:42]:<42} {g['rating']:>3} {g['ratings']:>8}  {g['price']:<6}"
+              + (f"  [{', '.join(tags)}]" if tags else ""))
+    if not rows:
+        print("nothing found")
+    if hidden > 0 and what != "search":
+        print(f"({hidden} more: online/multiplayer or past --limit; --all shows online ones)")
+    return 0
+
+
 def cmd_fetch(args):
     client = ipa_fetch.Client(am_root())
     try:
@@ -2003,6 +2137,19 @@ def main(argv=None):
     s = sub.add_parser("learn", help="import a mod's hooks.json into the pattern store")
     s.add_argument("mod")
     s.set_defaults(fn=cmd_learn)
+
+    s = sub.add_parser("games", help="App Store games: charts, search, like a game, one game's details")
+    s.add_argument(
+        "what", nargs="?", default="similar",
+        choices=["similar", "search", "like", "info", *games.CHARTS],
+    )
+    s.add_argument("rest", nargs="*", help="search words, or the bundle ID for like / info")
+    s.add_argument("--region", default="us")
+    s.add_argument("--limit", type=int, default=50)
+    s.add_argument("--all", action="store_true", help="keep online / multiplayer games in the list")
+    s.add_argument("--games", action="store_true", help="search: games only")
+    s.add_argument("--json", action="store_true", help="machine-readable output")
+    s.set_defaults(fn=cmd_games)
 
     s = sub.add_parser(
         "fetch", help="a decrypted .ipa from the decrypt site (AM_DECRYPT_URL) into intake/"
