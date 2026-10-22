@@ -98,6 +98,15 @@ void AMMenuStatus(const char *key, bool ok, const char *reason) {
     if (changed) os_log(OS_LOG_DEFAULT, "[AccretionMods] %{public}s", line);
 }
 
+static BOOL sPickReported, sPickOK;
+static NSString *sPickText;
+
+void AMMenuPickResult(bool ok, const char *text) {  // main thread, inside a list page's onPick
+    sPickReported = YES;
+    sPickOK = ok;
+    sPickText = text && text[0] ? @(text) : nil;
+}
+
 void AMMenuNote(const char *key, const char *note) {
     if (!key) return;
     os_unfair_lock_lock(&sStatusLock);
@@ -410,6 +419,7 @@ static const CGFloat AMRadius = 12;
 typedef NS_ENUM(NSInteger, AMPiece) { AMPieceTop, AMPieceMiddle, AMPieceBottom, AMPieceWhole };
 
 @interface AMPanelPiece : UIView
+- (void)flash:(UIColor *)color;
 @property (nonatomic) AMPiece piece;
 @property (nonatomic) BOOL rule;  // a hairline at the top: under the header, between rows
 @end
@@ -440,6 +450,18 @@ typedef NS_ENUM(NSInteger, AMPiece) { AMPieceTop, AMPieceMiddle, AMPieceBottom, 
     _fill.fillColor = AMResolved(AM_SURFACE, self.traitCollection).CGColor;
     _edge.strokeColor = AMResolved(AM_LINE, self.traitCollection).CGColor;
     _hair.strokeColor = AMResolved(AM_LINE, self.traitCollection).CGColor;
+}
+
+// A pick's confirmation: the slice glows in `color`, then fades back to `surface` over 1.4 s.
+- (void)flash:(UIColor *)color {
+    UIColor *base = AMResolved(AM_SURFACE, self.traitCollection);
+    UIColor *tint = [AMResolved(color, self.traitCollection) colorWithAlphaComponent:0.22];
+    CABasicAnimation *glow = [CABasicAnimation animationWithKeyPath:@"fillColor"];
+    glow.fromValue = (id)tint.CGColor;
+    glow.toValue = (id)base.CGColor;
+    glow.duration = 1.4;
+    glow.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseIn];
+    [_fill addAnimation:glow forKey:@"flash"];
 }
 
 - (void)traitCollectionDidChange:(UITraitCollection *)previous {
@@ -1725,21 +1747,43 @@ static UIColor *AMTierColor(NSString *group) {
     cell.title.text = e[@"title"];
     cell.title.textColor = AM_FG;
     cell.detail.text = e[@"detail"];
+    cell.detail.textColor = AM_MUTED;
+    cell.accessibilityValue = nil;
     [cell setSymbol:e[@"symbol"]];
     BOOL last = indexPath.row == (NSInteger)_rows[indexPath.section].count - 1, first = indexPath.row == 0;
     [cell setPiece:last ? (first ? AMPieceWhole : AMPieceBottom) : (first ? AMPieceTop : AMPieceMiddle) rule:NO];
     return cell;
 }
 
+// A pick: the mod's onPick runs, then the row confirms what happened (AMMenuPickResult): it glows cyan and its
+// detail reads "✓ Added" for 1.6 s, or red with the reason when the game did not take it, with a matching haptic.
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
-    if (self.item.onPick) self.item.onPick(_rows[indexPath.section][indexPath.row].integerValue);
-    [[[UISelectionFeedbackGenerator alloc] init] selectionChanged];
+    NSInteger index = _rows[indexPath.section][indexPath.row].integerValue;
+    sPickReported = NO;
+    sPickText = nil;
+    if (self.item.onPick) self.item.onPick(index);
+    BOOL ok = sPickReported ? sPickOK : YES;
+    NSString *text = sPickText ?: (!sPickReported ? @"Sent" : ok ? @"Added" : @"Not added");
+    [[[UINotificationFeedbackGenerator alloc] init]
+        notificationOccurred:ok ? UINotificationFeedbackTypeSuccess : UINotificationFeedbackTypeError];
     AMEntryCell *cell = (AMEntryCell *)[tableView cellForRowAtIndexPath:indexPath];
     if (![cell isKindOfClass:AMEntryCell.class]) return;
-    cell.title.textColor = AM_ACCENT2;  // a short flash says it was applied
-    [UIView transitionWithView:cell.title duration:0.6 options:UIViewAnimationOptionTransitionCrossDissolve
-                    animations:^{ cell.title.textColor = AM_FG; } completion:nil];
+    UIColor *color = ok ? AM_ACCENT2 : AM_BAD;
+    [(AMPanelPiece *)cell.backgroundView flash:color];
+    NSString *detail = self.entries[index][@"detail"];
+    cell.detail.text = [NSString stringWithFormat:@"%@ %@", ok ? @"✓" : @"✕", text];
+    cell.detail.textColor = color;
+    cell.accessibilityValue = cell.detail.text;
+    UIAccessibilityPostNotification(UIAccessibilityAnnouncementNotification, cell.detail.text);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (![[tableView indexPathForCell:cell] isEqual:indexPath]) return;  // reused for another row meanwhile
+        [UIView transitionWithView:cell.detail duration:0.3 options:UIViewAnimationOptionTransitionCrossDissolve animations:^{
+            cell.detail.text = detail;
+            cell.detail.textColor = AM_MUTED;
+        } completion:nil];
+        cell.accessibilityValue = nil;
+    });
 }
 
 @end

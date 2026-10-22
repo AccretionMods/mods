@@ -124,8 +124,9 @@ static void *il2cpp(const char *name) { return dlsym(RTLD_DEFAULT, name); }
 // EnableJoystickButtonStatesForView before it handles a tap, and the game's ExceptionHandler turns that into a
 // quit (why entering a vault closed the game, 1.0 and 2.0). And when a vault loads, the game removes only the
 // first, registered menu, so the second stayed drawn over the vault.
-// Fix: give the second menu its button table, built the way OnAwake builds it, and destroy it once the game has
-// removed the first. Running OnAwake again, or making the second menu the singleton, crashed the game (segfault).
+// Fix: give the second menu its button table, built the way OnAwake builds it, and hide it (its GameObject
+// inactive): with both copies on screen a new player saw the vault list and the number picker drawn over each
+// other and had to tap blindly (2026-10-22). It is destroyed once the game has removed the first. Running OnAwake again, or making the second menu the singleton, crashed the game (segfault).
 
 // Field offsets below come from the 2.7.0 dump. Hooks are found by name and simply stay off when a version lacks
 // them, but raw offsets on another version would read or write the wrong memory, so everything that uses them
@@ -208,7 +209,11 @@ static void repairMenus(void) {
         wbarrier(m, (void **)(m + 0x218), table);
         sDuplicateMenu = m;
         duplicateAlive = YES;
-        logMenu("second copy given its button table");
+        void *go = invoke(klass("UnityEngine.CoreModule", "UnityEngine", "Component"), "get_gameObject", 0, m, NULL);
+        uint8_t off = 0;
+        void *hide[1] = {&off};
+        if (go) invoke(klass("UnityEngine.CoreModule", "UnityEngine", "GameObject"), "SetActive", 1, go, hide);
+        logMenu(go ? "second copy given its button table and hidden" : "second copy given its button table");
     }
     if (sDuplicateMenu && duplicateAlive && !originalAlive) {
         void *root = invoke(klass("UnityEngine.CoreModule", "UnityEngine", "Component"), "get_gameObject", 0, sDuplicateMenu, NULL);
@@ -477,10 +482,19 @@ static void addItem(NSInteger index) {
     void *(*string_new)(const char *) = il2cpp("il2cpp_string_new");
     char *vault = theVault();
     char *inventory = vault ? *(char **)(vault + 0x158) : NULL;
-    if (!string_new || !inventory) return;
+    if (!string_new || !inventory) { AMMenuPickResult(false, "Open a vault first"); return; }
     int32_t type = sItemTypes[index].intValue, count = 1;
     void *args[3] = {&type, string_new(sItemIds[index].UTF8String), &count};
-    invoke(klass("Assembly-CSharp", "", "Inventory"), "AddAndRecordDwellerItem", 3, inventory, args);
+    // AddAndRecordDwellerItem is declared on VaultInventory (Vault.m_inventory's class), not on Inventory: looked up
+    // on Inventory it was never found and nothing was added (2026-10-22)
+    void *(*method_from_name)(void *, const char *, int) = il2cpp("il2cpp_class_get_method_from_name");
+    void *(*runtime_invoke)(void *, void *, void **, void **) = il2cpp("il2cpp_runtime_invoke");
+    void *m = method_from_name ? method_from_name(klass("Assembly-CSharp", "", "VaultInventory"), "AddAndRecordDwellerItem", 3) : NULL;
+    void *exception = NULL;
+    if (m && runtime_invoke) runtime_invoke(m, inventory, args, &exception);
+    os_log(OS_LOG_DEFAULT, "[Fallout Shelter+] add item %{public}@: %{public}s", sItemIds[index],
+           !m ? "method not found" : exception ? "the game threw" : "added");
+    AMMenuPickResult(m && !exception, !m ? "Not found in this game version" : exception ? "The game refused it" : "Added to storage");
 }
 
 // Hooked to learn the table's class from the menu whose OnAwake finished, and to start the repair.
