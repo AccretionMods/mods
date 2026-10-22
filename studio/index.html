@@ -307,6 +307,16 @@ const App = {
   renderSwitches() {
     const d = this.detail, box = this.byId("tab-switches"); box.replaceChildren();
     const tj = d.tweaks_json;
+    for (const f of d.features || []) {
+      const v = f.verified || {}, state = f.verification_state;
+      const evidence = this.el("details", {}, this.el("summary", { text: "Test evidence and reuse criteria" }));
+      for (const text of [...(f.evidence || []), ...(f.criteria || [])]) evidence.append(this.el("p", { class: "hint", text }));
+      box.append(this.el("div", { class: "panel" },
+        this.el("div", { class: "panel-h" }, this.el("span", { text: f.title }),
+          this.el("span", { class: "badge " + (state === "works" ? "good" : "warn"), text: state === "works" ? "Verified on this build" : state === "stale" ? "Needs retest" : state })),
+        this.el("p", { text: `${f.mode || "Custom feature"} · ${f.nojit ? "No JIT" : "Runtime dependent"} · game ${v.app_version || "?"} · mod ${v.mod_version || "?"} · ${v.date || ""}` }),
+        this.el("p", { class: "hint", text: f.summary || "" }), evidence));
+    }
     if (!tj) {
       box.append(this.el("p", { class: "hint", text: "This mod has a hand-written Tweak.x and no tweaks.json. Adding a switch here creates one; the Makefile must then list AMTweaks.gen.m and Tweak.x must call AMTweaksRegister() (see README \"Dev loop\")." }));
     }
@@ -966,6 +976,13 @@ const App = {
       facts.limits = fill(conf.limits, facts);
       facts.where = fill(conf.where, facts);
       out.value = t.lines.map(l => fill(l, facts)).join("\n");
+      for (const workflow of ctx.learned_workflows || []) {
+        // These are review checklists from another tested game, never automatic proof or patch instructions.
+        if (!(workflow.topics || []).some(word => line.toLowerCase().includes(word.toLowerCase()))) continue;
+        out.value += `\n\nPreviously tested workflow: ${workflow.title}\n` +
+          `Evidence applies only to ${workflow.proven_on || "the recorded game/build"}. Check every criterion in this game; do not apply automatically.\n` +
+          (workflow.criteria || []).map(text => `- ${text}`).join("\n");
+      }
       tags.replaceChildren(t.read_only ? this.el("span", { class: "badge good", text: "read only" }) : this.el("span", { class: "badge warn", text: "changes files" }));
       const viaAider = this.engine() === "aider";
       const viaCodex = this.engine() === "codex";

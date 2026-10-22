@@ -104,6 +104,35 @@ public class OnlineState : MonoBehaviour // TypeDefIndex: 111
         except urllib.error.HTTPError as e:
             return e.code, json.loads(e.read())
 
+    def test_custom_feature_evidence_is_versioned_and_reused_as_criteria(self):
+        old = dev.load_state("game-plus")
+        path = dev.patterns_path()
+        previous = path.read_bytes() if path.exists() else None
+        result = {"result": "works", "app_version": "1.0", "mod_version": "1.0.0", "date": "2026-10-22"}
+        feature = {"key": "customFeature", "title": "Custom feature", "verified": result}
+        try:
+            dev.save_state("game-plus", dict(old, verified_features=[feature]))
+            dev.write_json(path, {"version": 2, "patterns": {}, "members": {}, "workflows": [{"title": "Review persistence", "criteria": ["Validate storage and readback"]}]})
+            status, detail = self.get("/api/mods/game-plus")
+            self.assertEqual(status, 200)
+            self.assertEqual(detail["features"][0]["verification_state"], "works")
+            _, context = self.get("/api/mods/game-plus/context")
+            self.assertIn("Custom feature", context["works"])
+            self.assertEqual(context["learned_workflows"][0]["criteria"], ["Validate storage and readback"])
+            for changed in ({"app_version": "old"}, {"mod_version": "old"}):
+                feature["verified"] = dict(result, **changed)
+                dev.save_state("game-plus", dict(old, verified_features=[feature]))
+                _, detail = self.get("/api/mods/game-plus")
+                self.assertEqual(detail["features"][0]["verification_state"], "stale")
+                _, context = self.get("/api/mods/game-plus/context")
+                self.assertNotIn("Custom feature", context["works"])
+        finally:
+            dev.save_state("game-plus", old)
+            if previous is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.write_bytes(previous)
+
     def test_mods_and_detail(self):
         status, studio = self.get("/api/studio")
         self.assertEqual(status, 200)

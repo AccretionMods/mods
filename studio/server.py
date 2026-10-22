@@ -754,6 +754,15 @@ def mod_detail(name):
         else None
     )
     data["hooks_json"] = dev.load_hooks(folder)["hooks"]
+    data["features"] = []
+    for saved in dev.load_state(name).get("verified_features", []):
+        feature = dict(saved)
+        result = feature.get("verified") or {}
+        status = scan_view.verification_state(result, data["app_version"])
+        if status in {"works", "fails"} and result.get("mod_version") != data["version"]:
+            status = "stale"
+        feature["verification_state"] = status
+        data["features"].append(feature)
     for tweak in (data["tweaks_json"] or {}).get("tweaks", []):
         tweak["verification_state"] = scan_view.verification_state(
             tweak.get("verified"), data["app_version"]
@@ -835,7 +844,7 @@ def mod_context(name):
         else f"not made yet (am dump {name})",
         "hooks": f"{d['hooks']} hooks, {d['hooks_jit']} need JIT",
         "switches": switches,
-        "works": ", ".join(works) or "none",
+        "works": ", ".join(works + [f["title"] for f in d["features"] if f["verification_state"] == "works"]) or "none",
         "fails": ", ".join(fails) or "none",
         "untested": ", ".join(untested) or "none",
         "log_errors": ("\n" + "\n".join("  " + e for e in errors))
@@ -844,6 +853,8 @@ def mod_context(name):
         "log_seen": bool(seen_at),
         "newer_bases": d["newer_bases"],
         "last_ipa": d["last_ipa"],
+        "verified_features": d["features"],
+        "learned_workflows": dev.dev_learn.load(dev.patterns_path()).get("workflows", []),
     }
 
 

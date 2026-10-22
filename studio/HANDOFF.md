@@ -3,6 +3,12 @@ Read first when resuming. Project row in `~/PROJECTS.md`. The handbook rules (`.
 this lives in the AccretionMods/mods repo, so nothing personal, no secrets, neutral commits, PRs with auto-merge.
 
 ## What it is
+Custom always-on features can be recorded in local `AM_ROOT/dev/<mod>.json` under `verified_features`.
+Studio shows their evidence separately from switches and marks results stale if either game or mod
+version changes. Local `patterns.json` may contain `workflows`: topic words, a proven-on scope and
+review criteria. Relevant prompt-builder requests include these checklists for every engine, explicitly
+as candidates requiring fresh analysis in the next game. Personal evidence stays outside Git.
+
 The eight approved workflow improvements are implemented (2026-10-22): managed instance reuse and
 source-version detection, capability/result filters, cached offset paging, grouped property variants,
 no-JIT candidate explanations, configuration snapshots with preview/recovery, persistent redacted job
