@@ -8,7 +8,7 @@ through dev.py's functions and answer at once. Long ones (dump, build, sign, ins
 fetch) run as jobs: a `python dev.py <command> ...` subprocess whose output the page streams. The Apple ID sign-in
 (2FA) can't be answered from a page: do it once from a console, plumesign keeps the session.
 
-API (JSON): GET /api/mods, /api/mods/<mod>, /api/mods/<mod>/find?q=&limit=, /api/mods/<mod>/fields?class=,
+API (JSON): GET /api/mods, /api/mods/<mod>, /api/mods/<mod>/find?q=&limit=, /api/mods/<mod>/fields?class=, /api/mods/<mod>/fieldsearch?q=&limit=,
 /api/mods/<mod>/suggest, /api/mods/<mod>/scan?area=&find=&flagged=1&text=1 (no-JIT candidates,
 scripts/dump_scan.py), /api/mods/<mod>/live (switch states the phone logged),
 /api/mods/<mod>/context (facts for the prompt builder), /api/prompts
@@ -448,6 +448,13 @@ def fields(name, class_name):
     }
 
 
+def field_search(name, query, limit):
+    """Fields whose Namespace.Class.field matches, across every class (am find --fields): which class holds a value."""
+    rx = re.compile(query or ".", re.IGNORECASE)
+    rows = [r for r in dev.field_rows(name) if "<" not in r[0] and not r[3].startswith("<>") and rx.search(f"{r[0]}.{r[3]}")]
+    return {"count": len(rows), "fields": [{"class": c, "static": st, "type": t, "name": n} for c, st, t, n in rows[:limit]]}
+
+
 def suggest(name, limit):
     folder = ROOT / "mods" / name
     store = dev_learn.load(dev.patterns_path())
@@ -683,6 +690,8 @@ class Handler(BaseHTTPRequestHandler):
                     )
                 if rest == ["fields"]:
                     return self.send_json(fields(name, q.get("class", "")))
+                if rest == ["fieldsearch"]:
+                    return self.send_json(field_search(name, q.get("q", "."), int(q.get("limit", 60))))
                 if rest == ["scan"]:
                     result, rows = dev.scan_rows(name, q.get("area") or None, q.get("find") or None, q.get("flagged") == "1")
                     if q.get("text") == "1":  # for the Claude prompt: not yet in the mod, best first

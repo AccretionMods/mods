@@ -4,109 +4,193 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mod Studio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700&family=JetBrains+Mono:wght@400;500&display=swap">
 <style>
+/* Accretion's design system (store repo design/tokens.json): dark first, the Backdrop under everything,
+   bordered panels with their label inside, one primary action per view, small slow motion. */
 :root {
   --bg:#07070D; --surface:#0F0E1A; --raised:#17152A; --line:#262145; --fg:#ECEAFF; --muted:#8B87B3;
-  --accent:#8B5CF6; --accent-2:#22D3EE; --accent-text:#A07AF7; --accent-fill:#7C4DEE; --on-accent:#FFFFFF;
+  --accent:#8B5CF6; --accent-2:#22D3EE; --accent-text:#A07AF7; --accent-fill:#7C4DEE; --accent-fill-end:#3A6FE6; --on-accent:#FFFFFF;
   --link:#22D3EE; --line-strong:#6458AF; --good:#34D399; --warn:#F59E0B; --bad:#F87171; --radius:14px;
+  --grid:rgba(255,255,255,.035); --glow:.16;
+  --display:"Sora", system-ui, sans-serif; --mono:"JetBrains Mono", ui-monospace, Consolas, Menlo, monospace;
   color-scheme: dark;
 }
 :root[data-theme="light"] {
   --bg:#F7F6FC; --surface:#FFFFFF; --raised:#F0EEF9; --line:#DFDAF2; --fg:#15122B; --muted:#625E85;
-  --accent:#6D3FE0; --accent-2:#0E8FB0; --accent-text:#6A3BDF; --accent-fill:#6D3FE0; --link:#0A6880;
-  --line-strong:#8F7ED2; --good:#066D4A; --warn:#8C5100; --bad:#AA390B; color-scheme: light;
+  --accent:#6D3FE0; --accent-2:#0E8FB0; --accent-text:#6A3BDF; --accent-fill:#6D3FE0; --accent-fill-end:#4568C8; --link:#0A6880;
+  --line-strong:#8F7ED2; --good:#066D4A; --warn:#8C5100; --bad:#AA390B; --grid:rgba(30,27,75,.05); --glow:.09; color-scheme: light;
 }
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-code, pre, .mono, textarea, input.mono { font-family: ui-monospace, "JetBrains Mono", Consolas, Menlo, monospace; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; min-height: 100vh; }
+/* the Backdrop: a 28 px grid and two soft lights drifting over 40 s (still with Reduce Motion) */
+body::before { content: ""; position: fixed; inset: 0; z-index: -2; background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px); background-size: 28px 28px; }
+.light { position: fixed; z-index: -1; width: 70vmax; height: 70vmax; border-radius: 50%; pointer-events: none; opacity: var(--glow); }
+.light.a { background: radial-gradient(var(--accent), transparent 62%); left: -25vmax; top: -30vmax; animation: drift-a 40s ease-in-out infinite alternate; }
+.light.b { background: radial-gradient(var(--accent-2), transparent 62%); right: -30vmax; bottom: -35vmax; animation: drift-b 52s ease-in-out infinite alternate; }
+@keyframes drift-a { to { transform: translate(18vmax, 14vmax); } }
+@keyframes drift-b { to { transform: translate(-16vmax, -12vmax); } }
+@media (prefers-reduced-motion: reduce) { .light { animation: none; } * { transition: none !important; animation: none !important; } }
+code, pre, .mono, textarea, input.mono { font-family: var(--mono); }
 a { color: var(--link); }
-button { font: inherit; border: 1px solid var(--line); background: var(--raised); color: var(--fg); border-radius: 9px; padding: 6px 12px; cursor: pointer; }
-button.primary { background: var(--accent-fill); border-color: var(--accent-fill); color: var(--on-accent); }
+:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+button { font: inherit; font-size: 14px; border: 1px solid var(--line); background: var(--raised); color: var(--fg); border-radius: 10px; padding: 7px 13px; min-height: 36px; cursor: pointer; transition: border-color .15s, transform .15s, opacity .15s; }
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:active:not(:disabled) { transform: scale(.97); opacity: .85; }
+button.primary { background: linear-gradient(135deg, var(--accent-fill), var(--accent-fill-end)); border-color: transparent; color: var(--on-accent); font-weight: 500; }
+button.ghost { background: none; border-color: transparent; color: var(--muted); }
+button.ghost:hover:not(:disabled) { color: var(--fg); border-color: var(--line); }
 button.danger { color: var(--bad); }
 button:disabled { opacity: .45; cursor: default; }
-button.small { padding: 3px 9px; font-size: 13px; }
-input, select, textarea { font: inherit; background: var(--surface); color: var(--fg); border: 1px solid var(--line); border-radius: 9px; padding: 6px 9px; min-width: 0; }
-input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 0; }
+button.small { padding: 4px 10px; font-size: 13px; min-height: 30px; border-radius: 8px; }
+input, select, textarea { font: inherit; background: var(--surface); color: var(--fg); border: 1px solid var(--line-strong); border-radius: 10px; padding: 7px 10px; min-width: 0; }
+/* the field being typed in carries the live motif: violet into cyan, a light travelling every 6 s */
+input:focus, textarea:focus { outline: none; border-color: transparent;
+  background: linear-gradient(var(--surface), var(--surface)) padding-box,
+    linear-gradient(90deg, var(--accent), var(--accent-2), color-mix(in srgb, var(--accent-2) 30%, white), var(--accent-2), var(--accent)) border-box;
+  background-size: 100% 100%, 300% 100%; animation: edge 6s linear infinite; }
+select:focus { outline: none; border-color: var(--accent); }
+input[type=checkbox]:focus { animation: none; background: none; }
+@keyframes edge { from { background-position: 0 0, 100% 0; } to { background-position: 0 0, -200% 0; } }
+input[type=checkbox] { accent-color: var(--accent-fill); }
 label { display: block; font-size: 13px; color: var(--muted); margin: 8px 0 3px; }
-header { position: sticky; top: 0; z-index: 5; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 10px 16px; background: var(--surface); border-bottom: 1px solid var(--line); }
-header h1 { font-size: 18px; margin: 0; letter-spacing: .3px; }
-header .sel { color: var(--muted); font-size: 14px; flex: 1; min-width: 160px; }
-header .sel b { color: var(--fg); }
-.layout { display: grid; grid-template-columns: 280px 1fr; gap: 16px; padding: 16px; max-width: 1400px; margin: 0 auto; }
-@media (max-width: 860px) { .layout { grid-template-columns: 1fr; } }
-.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
+/* the uppercase mono label of the design system: panel titles, table heads, tabs */
+.label, th, .tabs button, .panel-h { font-family: var(--mono); font-size: 11px; font-weight: 500; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+header { position: sticky; top: 0; z-index: 5; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 12px 20px; background: color-mix(in srgb, var(--bg) 82%, transparent); backdrop-filter: blur(12px); }
+/* the hairline under the header: violet into cyan, with a light that travels along it every 6 s */
+header::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 1px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2), color-mix(in srgb, var(--accent-2) 30%, white), var(--accent-2), var(--accent));
+  background-size: 300% 100%; animation: flow 6s linear infinite; opacity: .85; }
+@keyframes flow { from { background-position: 100% 0; } to { background-position: -200% 0; } }
+.brand { display: flex; align-items: center; gap: 9px; font-family: var(--mono); font-size: 12px; color: var(--muted); white-space: nowrap; }
+.brand b { color: var(--fg); letter-spacing: .2em; font-weight: 500; }
+.live { width: 8px; height: 8px; border-radius: 50%; background: var(--good); animation: pulse 2.4s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .35; } }
+header .sel { color: var(--muted); font-size: 13px; flex: 1; min-width: 160px; font-family: var(--mono); }
+header .sel b { color: var(--fg); font-family: var(--display); font-weight: 600; font-size: 15px; }
+.layout { display: grid; grid-template-columns: 290px minmax(0, 1fr); gap: 18px; padding: 18px 20px; max-width: 1440px; margin: 0 auto; }
+@media (max-width: 860px) {
+  .layout { grid-template-columns: 1fr; padding: 14px 12px; }
+  header { padding: 10px 12px; gap: 8px; }
+  header .sel { order: 3; flex-basis: 100%; }
+  header button { min-height: 32px; padding: 4px 10px; font-size: 13px; }
+}
+.card { background: color-mix(in srgb, var(--surface) 94%, transparent); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; min-width: 0; }
+main.card { position: relative; }
+/* corner brackets, as on the store's live index */
+main.card::before, main.card::after { content: ""; position: absolute; width: 12px; height: 12px; pointer-events: none; }
+main.card::before { left: -6px; top: -6px; border-left: 1.5px solid var(--accent); border-top: 1.5px solid var(--accent); }
+main.card::after { right: -6px; bottom: -6px; border-right: 1.5px solid var(--accent-2); border-bottom: 1.5px solid var(--accent-2); }
 .mods { display: flex; flex-direction: column; gap: 8px; }
-.mod { padding: 10px 12px; border: 1px solid var(--line); border-radius: 11px; cursor: pointer; background: var(--raised); }
+.mod { padding: 11px 13px; border: 1px solid var(--line); border-radius: 12px; cursor: pointer; background: var(--surface); transition: border-color .15s, transform .15s; }
+.mod:hover { border-color: color-mix(in srgb, var(--line) 40%, var(--accent)); transform: translateY(-1px); }
 .mod.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
-.mod .t { font-weight: 600; }
-.mod .s { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
-.badges { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
-.badge { font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--raised); border: 1px solid var(--line); color: var(--muted); }
-.badge.good { color: var(--good); border-color: var(--good); }
-.badge.warn { color: var(--warn); border-color: var(--warn); }
-.badge.bad { color: var(--bad); border-color: var(--bad); }
-.badge.accent { color: var(--accent-text); border-color: var(--line-strong); }
-.tabs { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--line); margin-bottom: 14px; }
-.tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; color: var(--muted); padding: 8px 12px; }
+.mod .t { font-family: var(--display); font-weight: 600; font-size: 15px; }
+.mod .s { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; font-family: var(--mono); }
+.badges { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+/* badges: their colour at 14 %, weight 500 */
+.badge { font-size: 11.5px; font-weight: 500; padding: 1px 8px; border-radius: 6px; background: color-mix(in srgb, var(--muted) 14%, transparent); color: var(--muted); font-family: var(--mono); white-space: nowrap; }
+.badge.good { color: var(--good); background: color-mix(in srgb, var(--good) 14%, transparent); }
+.badge.warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
+.badge.bad { color: var(--bad); background: color-mix(in srgb, var(--bad) 14%, transparent); }
+.badge.accent { color: var(--accent-text); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.tabs { display: flex; gap: 2px; flex-wrap: wrap; border-bottom: 1px solid var(--line); margin: -4px 0 16px; }
+.tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 10px 12px; min-height: 0; }
+.tabs button:hover { color: var(--fg); border-color: transparent; }
 .tabs button.active { color: var(--fg); border-bottom-color: var(--accent); }
 .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .row > * { min-width: 0; }
 .grow { flex: 1; }
-.item { border: 1px solid var(--line); border-radius: 11px; padding: 10px 12px; margin-bottom: 8px; background: var(--raised); }
+/* a panel: bordered, its label inside at the top, a figure at the right (the dashboard's panels) */
+.panel { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); margin-bottom: 14px; }
+.panel-h { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 12px 14px 10px; }
+.panel-h .fig { font-family: var(--mono); letter-spacing: 0; text-transform: none; font-size: 12px; color: var(--fg); }
+.panel-h .fig.good { color: var(--good); }
+.panel-b { padding: 0 14px 14px; }
+.item { padding: 12px 14px; border-top: 1px solid var(--line); }
+.panel > .item:first-of-type { border-top: 1px solid var(--line); }
 .item .head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
 .item .head .title { font-weight: 600; }
-.item .head .key { color: var(--muted); font-size: 13px; }
-.chips { display: flex; flex-wrap: wrap; gap: 5px; margin: 6px 0; }
-.chip { font-size: 12.5px; padding: 2px 8px; border-radius: 7px; background: var(--surface); border: 1px solid var(--line); overflow-wrap: anywhere; }
-.chip.pin { border-color: var(--good); }
+.item .head .key { color: var(--muted); font-size: 12px; font-family: var(--mono); }
+.item .acts { opacity: .55; transition: opacity .15s; }
+.item:hover .acts, .item:focus-within .acts { opacity: 1; }
+.chips { display: flex; flex-wrap: wrap; gap: 5px; margin: 7px 0; }
+.chip { font-size: 12px; padding: 2px 8px; border-radius: 7px; background: var(--raised); border: 1px solid var(--line); overflow-wrap: anywhere; font-family: var(--mono); }
+.chip.pin { border-color: color-mix(in srgb, var(--good) 45%, var(--line)); }
 .chip.hook { border-color: var(--line-strong); }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--raised); flex: none; }
+.dot.good { background: var(--good); } .dot.bad { background: var(--bad); animation: pulse 2.4s ease-in-out infinite; } .dot.warn { background: var(--warn); }
 table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
-th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; }
-th { color: var(--muted); font-weight: 500; }
+th, td { text-align: left; padding: 8px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+/* tables fit the window: words wrap as words, long code names (Class.method) may break anywhere, and badges,
+   addresses and a row's buttons stay whole */
+table { table-layout: auto; }
+td .mono, td.mono { overflow-wrap: anywhere; }
+td .badge, td.mono.muted.small, td .badges { white-space: nowrap; }
+td .row { flex-wrap: wrap; justify-content: flex-start; }
+td:last-child { width: 1%; }
+td:last-child .row { flex-wrap: nowrap; }
+tbody tr { transition: background .15s; }
+tbody tr:hover { background: color-mix(in srgb, var(--raised) 60%, transparent); }
 .muted { color: var(--muted); }
 .small { font-size: 13px; }
 pre { background: var(--raised); border: 1px solid var(--line); border-radius: 10px; padding: 10px; overflow: auto; font-size: 12.5px; max-height: 60vh; white-space: pre-wrap; }
-.console { background: #000; color: #D7D4F0; border-radius: 10px; padding: 10px; font-size: 12.5px; max-height: 40vh; overflow: auto; white-space: pre-wrap; font-family: ui-monospace, Consolas, monospace; }
+.console { background: var(--bg); border: 1px solid var(--line); color: #D7D4F0; border-radius: 10px; padding: 10px 12px; font-size: 12.5px; max-height: 40vh; overflow: auto; white-space: pre-wrap; font-family: var(--mono); }
 :root[data-theme="light"] .console { background: #15122B; }
-.job { margin-bottom: 10px; }
-.job summary { cursor: pointer; padding: 6px 0; }
-dialog { background: var(--surface); color: var(--fg); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; width: min(560px, 94vw); }
-dialog::backdrop { background: rgba(0,0,0,.55); }
-dialog h3 { margin: 0 0 6px; }
-.toast { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); background: var(--raised); border: 1px solid var(--line); color: var(--fg); padding: 10px 14px; border-radius: 10px; max-width: 92vw; z-index: 20; white-space: pre-wrap; font-size: 14px; box-shadow: 0 6px 30px rgba(0,0,0,.4); }
+.job { margin-bottom: 10px; border: 1px solid var(--line); border-radius: 12px; padding: 4px 12px 10px; background: var(--surface); }
+.job summary { cursor: pointer; padding: 8px 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+dialog { background: var(--surface); color: var(--fg); border: 1px solid var(--line); border-radius: 18px; padding: 22px; width: min(560px, 94vw); }
+dialog::backdrop { background: rgba(7,7,13,.7); backdrop-filter: blur(4px); }
+dialog h3 { margin: 0 0 6px; font-family: var(--display); font-weight: 600; }
+.toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--surface); border: 1px solid var(--line); color: var(--fg); padding: 10px 14px; border-radius: 12px; max-width: 92vw; z-index: 20; white-space: pre-wrap; font-size: 14px; animation: rise .2s ease-out; }
+@keyframes rise { from { opacity: 0; transform: translate(-50%, 8px); } }
 .toast.ok { border-color: var(--good); }
 .toast.bad { border-color: var(--bad); }
 .hint { font-size: 13px; color: var(--muted); margin: 6px 0 10px; }
 .sec { margin-bottom: 18px; }
-.sec h3 { margin: 0 0 8px; font-size: 15px; }
+.sec h3 { margin: 0 0 10px; font-family: var(--mono); font-size: 11px; font-weight: 500; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+h2, h3 { font-family: var(--display); }
 .hidden { display: none !important; }
 .copy { float: right; }
 .cmdline { display: flex; gap: 8px; }
-.cmdline input { flex: 1; font-family: ui-monospace, "JetBrains Mono", Consolas, Menlo, monospace; }
-.chipbtn { font-size: 12.5px; padding: 2px 9px; border-radius: 7px; font-family: ui-monospace, Consolas, monospace; }
-.job .answer { display: flex; gap: 6px; margin-top: 6px; }
-.job .answer input { flex: 1; font-family: ui-monospace, Consolas, monospace; }
+.cmdline input { flex: 1; font-family: var(--mono); }
+.chipbtn { font-size: 12.5px; padding: 2px 9px; border-radius: 7px; font-family: var(--mono); min-height: 0; }
+.job .answer { display: flex; gap: 6px; margin-top: 8px; }
+.job .answer input { flex: 1; font-family: var(--mono); }
+/* the action bar: one primary, a few secondary, the rest under More */
+.bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; padding: 12px 14px; }
+.more { position: relative; }
+.more > summary { list-style: none; cursor: pointer; font-size: 13px; border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px; background: var(--raised); color: var(--fg); }
+.more > summary::-webkit-details-marker { display: none; }
+.more[open] > summary { border-color: var(--accent); }
+.more .menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 8; min-width: 240px; display: flex; flex-direction: column; gap: 2px; padding: 6px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 12px 40px rgba(0,0,0,.45); animation: rise-in .15s ease-out; }
+@keyframes rise-in { from { opacity: 0; transform: translateY(-4px); } }
+.more .menu button { text-align: left; background: none; border-color: transparent; min-height: 32px; }
+.more .menu button:hover { background: var(--raised); border-color: transparent; }
 .games { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
-.game { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--raised); min-width: 0; }
+.game { display: flex; flex-direction: column; gap: 8px; padding: 13px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); min-width: 0; transition: border-color .15s, transform .15s; }
+.game:hover { border-color: color-mix(in srgb, var(--line) 40%, var(--accent)); transform: translateY(-1px); }
 .game .top { display: flex; gap: 10px; align-items: center; min-width: 0; }
-.game img { width: 64px; height: 64px; border-radius: 15px; flex: none; background: var(--surface); border: 1px solid var(--line); }
-.game .name { font-weight: 600; line-height: 1.25; overflow-wrap: anywhere; }
+.game img { width: 64px; height: 64px; border-radius: 23%; flex: none; background: var(--raised); border: 1px solid var(--line); }
+.game .name { font-family: var(--display); font-weight: 600; line-height: 1.25; overflow-wrap: anywhere; }
 .game .seller { color: var(--muted); font-size: 12.5px; overflow-wrap: anywhere; }
-.game .meta { color: var(--muted); font-size: 12.5px; }
+.game .meta { color: var(--muted); font-size: 12px; font-family: var(--mono); }
 .game .acts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: auto; }
 </style>
 </head>
 <body>
+<div class="light a"></div><div class="light b"></div>
 <header>
-  <h1>Mod Studio</h1>
+  <div class="brand"><span class="live"></span><b>ACCRETION</b>/ mod studio</div>
   <div class="sel" id="sel">no mod selected</div>
   <button id="getBtn">Get .ipa</button>
-  <button id="newBtn" class="primary">New mod</button>
+  <button id="newBtn">New mod</button>
   <button id="themeBtn" title="Dark / light">Theme</button>
 </header>
 <div class="layout">
   <aside class="card">
-    <div class="row" style="margin-bottom:10px"><b class="grow">Mods</b><button class="small" id="reloadMods">Reload</button></div>
+    <div class="row" style="margin-bottom:12px"><span class="label grow">Mods</span><button class="small ghost" id="reloadMods">Reload</button></div>
     <div class="mods" id="mods"></div>
     <p class="hint" id="amRoot"></p>
   </aside>
@@ -130,7 +214,7 @@ dialog h3 { margin: 0 0 6px; }
     <section id="tab-games" class="hidden"></section>
     <section id="tab-console" class="hidden"></section>
     <section class="sec" id="jobsPanel" style="margin-top:18px;border-top:1px solid var(--line);padding-top:12px">
-      <div class="row"><h3 class="grow" style="margin:0">Jobs</h3><button class="small" id="clearJobs">Clear</button></div>
+      <div class="row"><span class="label grow">Jobs</span><button class="small ghost" id="clearJobs">Clear</button></div>
       <p class="hint" id="jobsHint">Output of builds, signing, logs and console commands shows here, under every tab.</p>
       <div id="jobs"></div>
     </section>
@@ -219,48 +303,84 @@ const App = {
     if (!tj) {
       box.append(this.el("p", { class: "hint", text: "This mod has a hand-written Tweak.x and no tweaks.json. Adding a switch here creates one; the Makefile must then list AMTweaks.gen.m and Tweak.x must call AMTweaksRegister() (see README \"Dev loop\")." }));
     }
-    const top = this.el("div", { class: "row", style: "margin-bottom:12px" },
-      this.el("b", { class: "grow", text: `${(tj ? tj.tweaks.length : 0)} menu items` }),
-      this.el("button", { class: "small", onclick: () => this.plainSwitchDialog() }, "Add a plain switch / slider"),
-      this.el("button", { class: "small", onclick: () => this.quick("gen", {}) }, "Regenerate code"));
-    box.append(top);
     const bump = this.el("input", { type: "checkbox" });
-    box.append(this.el("div", { class: "row", style: "margin-bottom:12px;padding:10px;border:1px solid var(--line);border-radius:11px" },
-      this.el("b", { class: "grow", text: "Try it on the phone" }),
-      this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center" }, bump, "bump version"),
-      this.el("button", { class: "small", onclick: () => this.job("build", ["--ipa", ...(bump.checked ? ["--bump"] : [])]) }, "Build .ipa"),
-      this.el("button", { class: "small", disabled: this.detail.last_ipa ? null : "", title: this.detail.last_ipa || "no .ipa built yet", onclick: () => this.job("sign", [this.detail.last_ipa, "--install"]) }, "Sign + install last .ipa"),
-      this.el("button", { class: "small primary", onclick: () => this.job("run", [...(bump.checked ? ["--bump"] : []), "--seconds", "75"]) }, "Build, sign, install, open, log"),
-      this.el("button", { class: "small primary", title: "sends this mod's switches to the installed game: they apply within 2 s, no build, sign or install (needs a build that has live pins)", onclick: () => this.job("push", []) }, "Push switches (no rebuild)"),
-      this.el("button", { class: "small", title: "reads the phone's log for 5 minutes: each switch shows its state in the game here", onclick: async () => { await this.job("log", ["--seconds", "300"]); setTimeout(() => this.refreshLive(), 3000); } }, "Watch the phone (5 min)"),
-      this.el("button", { class: "small", title: "the release post from your template, once every switch is marked works; written to the workspace, never posted", onclick: () => this.job("post", []) }, "Release post"),
-      this.el("button", { class: "small", title: "the post now, marked DRAFT with what is not validated yet", onclick: () => this.job("post", ["--draft"]) }, "Draft post")));
+    const more = (text, title, fn) => this.el("button", { title, onclick: ev => { ev.target.closest("details").open = false; fn(); } }, text);
+    // one primary action; the rest one click away under More
+    box.append(this.el("div", { class: "panel" },
+      this.el("div", { class: "panel-h" }, this.el("span", { text: "Try it on the phone" }), this.el("span", { class: "fig", text: d.last_ipa ? d.last_ipa.split(/[\\/]/).pop() : "no build yet" })),
+      this.el("div", { class: "bar", style: "padding-top:0" },
+        this.el("button", { class: "primary", title: "build the .ipa, sign it, install it, open the game and read its log", onclick: () => this.job("run", [...(bump.checked ? ["--bump"] : []), "--seconds", "75"]) }, "Build and run on the phone"),
+        this.el("button", { title: "sends this mod's switches to the installed game: they apply within 2 s, no build (needs a build that has live pins)", onclick: () => this.job("push", []) }, "Push switches"),
+        this.el("button", { title: "turns the switches on from the PC one category at a time, reads which reach the game, turns them off again (am test)", onclick: () => this.job("test", []) }, "Test switches"),
+        this.el("label", { style: "margin:0 6px;display:inline-flex;gap:6px;align-items:center" }, bump, "bump version"),
+        this.el("span", { class: "grow" }),
+        this.el("details", { class: "more" }, this.el("summary", { text: "More ▾" }),
+          this.el("div", { class: "menu" },
+            more("Build .ipa only", "build without signing or installing", () => this.job("build", ["--ipa", ...(bump.checked ? ["--bump"] : [])])),
+            more("Sign + install the last .ipa", this.detail.last_ipa || "no .ipa built yet", () => this.detail.last_ipa ? this.job("sign", [this.detail.last_ipa, "--install"]) : this.toast("No .ipa built yet: Build .ipa only first", "bad")),
+            more("Watch the phone (5 min)", "reads the phone's log: each switch shows its state here", async () => { await this.job("log", ["--seconds", "300"]); setTimeout(() => this.refreshLive(), 3000); }),
+            more("Private download link (6 months)", "uploads the newest build to private storage and makes a dl.getaccretion.app/s/ link; renew or revoke it with am share", () => this.job("share", ["--months", "6"])),
+            more("My download links", "every share link, its expiry and downloads", () => this.job("share", ["--list"])),
+            more("Release post", "from your template, once every switch is marked works; written locally, never posted", () => this.job("post", [])),
+            more("Draft post", "the post now, marked DRAFT with what is not validated yet", () => this.job("post", ["--draft"])),
+            more("Add a plain switch / slider", "a value for hand-written code in Tweak.x", () => this.plainSwitchDialog()),
+            more("Regenerate code", "rewrite AMTweaks.gen.m from tweaks.json", () => this.quick("gen", {})))))));
     if (tj && tj.watch && tj.watch.length) {
       box.append(this.el("p", { class: "hint", text: "Watch (log every " + (tj.watch_every || 10) + " s): " + tj.watch.map(w => `${w.object} ${w.getter || w.field}`).join(", ") }));
     }
-    setTimeout(() => this.refreshLive(), 0);
-    for (const t of (tj ? tj.tweaks : [])) {
-      const hooks = t.hooks || [], pins = t.pins || [];
-      const jit = hooks.length && hooks.every(h => (d.hooks_json.find(e => (e.namespace ? e.namespace + "." : "") + e.class + "." + e.method === h.method || e.class + "." + e.method === h.method) || {}).needs_jit) && !pins.length && t.jit_label !== false;
-      const chips = [
-        ...hooks.map(h => this.el("span", { class: "chip hook", title: "hook (JIT unless virtual / Unity callback)", text: `${h.method} · ${h.action || "custom"}${h.value !== undefined ? " " + h.value : ""}${h.index !== undefined ? " [arg " + h.index + "]" : ""}` })),
-        ...pins.map(p => this.el("span", { class: "chip pin", title: "pin: no JIT needed", text: `${p.object}${p.via ? " via " + p.via : ""} · ${p.field || p.setter || (p.call + "(" + (p.args || []).join(", ") + ")")}${p.call ? " every " + (p.every ?? 0) + " s" : " " + (p.op === "multiply" ? "× " : "") + (p.when && p.when !== "always" ? p.when + " " : "= ") + JSON.stringify(p.value)}` })),
-      ];
-      const kindText = t.kind === "slider" ? `slider ${t.min}–${t.max}, default ${t.default ?? t.min}` : "switch";
-      box.append(this.el("div", { class: "item" },
-        this.el("div", { class: "head" },
-          this.el("span", { class: "title", text: t.title }),
-          this.el("span", { class: "key", text: `${t.key} · ${kindText}` }),
-          jit ? this.el("span", { class: "badge warn", text: "(JIT)", title: "every hook needs JIT; add a pin for phones without it" }) : null,
-          t.verified ? this.el("span", { class: "badge " + (t.verified.result === "works" ? "good" : "bad"), text: `${t.verified.result} on ${t.verified.app_version} (${t.verified.date})` }) : null,
-          this.el("span", { id: "live-" + t.key })),
-        chips.length ? this.el("div", { class: "chips" }, chips) : this.el("div", { class: "hint", text: "No hook or pin: a value for hand-written code in Tweak.x (am_" + t.key + ")." }),
-        this.el("div", { class: "row" },
-          this.el("button", { class: "small", onclick: () => this.quick("mark", { key: t.key, works: true }) }, "Works on the phone"),
-          this.el("button", { class: "small", onclick: () => this.quick("mark", { key: t.key, fails: true }) }, "Fails"),
-          this.el("button", { class: "small", onclick: () => this.pinDialog({ to: t.key }) }, "Add a pin"),
-          this.el("button", { class: "small danger", onclick: () => { if (confirm(`Remove "${t.title}" and the hooks only it uses?`)) this.quick("remove", { what: t.key }); } }, "Remove"))));
-    }
+    const tweaks = tj ? tj.tweaks : [];
+    const filter = this.el("input", { placeholder: `Filter ${tweaks.length} switches`, value: this.switchFilter || "", style: "flex:1" });
+    const works = tweaks.filter(t => t.verified && t.verified.result === "works").length;
+    box.append(this.el("div", { class: "row", style: "margin-bottom:14px" }, filter,
+      this.el("span", { class: "label", text: `${tweaks.length} switches · ${works} confirmed` })));
+    const list = this.el("div", {});
+    box.append(list);
+    const draw = () => {
+      list.replaceChildren();
+      const q = filter.value.trim().toLowerCase();
+      const groups = new Map();
+      for (const t of tweaks) {
+        if (q && !(t.title + " " + t.key + " " + (t.section || "")).toLowerCase().includes(q)) continue;
+        const sec = t.section || "Other";
+        if (!groups.has(sec)) groups.set(sec, []);
+        groups.get(sec).push(t);
+      }
+      if (!groups.size) list.append(this.el("p", { class: "hint", text: tweaks.length ? `No switch matches “${filter.value}”.` : "No switches yet: Find, Suggest or Scan adds them." }));
+      for (const [sec, items] of groups) {
+        const ok = items.filter(t => t.verified && t.verified.result === "works").length;
+        const panel = this.el("div", { class: "panel" },
+          this.el("div", { class: "panel-h" }, this.el("span", { text: sec }),
+            this.el("span", { class: "fig" + (ok === items.length ? " good" : ""), text: `${ok}/${items.length} confirmed` })));
+        for (const t of items) panel.append(this.switchRow(t));
+        list.append(panel);
+      }
+      setTimeout(() => this.refreshLive(), 0);
+    };
+    filter.addEventListener("input", () => { this.switchFilter = filter.value; draw(); });
+    draw();
+  },
+  switchRow(t) {
+    const d = this.detail;
+    const hooks = t.hooks || [], pins = t.pins || [];
+    const jit = hooks.length && hooks.every(h => (d.hooks_json.find(e => (e.namespace ? e.namespace + "." : "") + e.class + "." + e.method === h.method || e.class + "." + e.method === h.method) || {}).needs_jit) && !pins.length && t.jit_label !== false;
+    const chips = [
+      ...hooks.map(h => this.el("span", { class: "chip hook", title: "hook (JIT unless virtual / Unity callback)", text: `${h.method} · ${h.action || "custom"}${h.value !== undefined ? " " + h.value : ""}${h.index !== undefined ? " [arg " + h.index + "]" : ""}` })),
+      ...pins.map(p => this.el("span", { class: "chip pin", title: "pin: no JIT needed", text: `${p.object}${p.via ? " via " + p.via : ""} · ${p.field || p.setter || (p.call + "(" + (p.args || []).join(", ") + ")")}${p.call ? " every " + (p.every ?? 0) + " s" : " " + (p.op === "multiply" ? "× " : "") + (p.when && p.when !== "always" ? p.when + " " : "= ") + JSON.stringify(p.value)}` })),
+    ];
+    const kindText = t.kind === "slider" ? `slider ${t.min}–${t.max}, default ${t.default ?? t.min}` : "switch";
+    return this.el("div", { class: "item" },
+      this.el("div", { class: "head" },
+        this.el("span", { id: "live-" + t.key }),
+        this.el("span", { class: "title", text: t.title }),
+        this.el("span", { class: "key", text: `${t.key} · ${kindText}` }),
+        jit ? this.el("span", { class: "badge warn", text: "JIT", title: "every hook needs JIT; add a pin for phones without it" }) : null,
+        t.verified ? this.el("span", { class: "badge " + (t.verified.result === "works" ? "good" : "bad"), text: `${t.verified.result} · ${t.verified.app_version}`, title: t.verified.date }) : null),
+      chips.length ? this.el("div", { class: "chips" }, chips) : this.el("div", { class: "hint", text: "No hook or pin: a value for hand-written code in Tweak.x (am_" + t.key + ")." }),
+      this.el("div", { class: "row acts" },
+        this.el("button", { class: "small", onclick: () => this.quick("mark", { key: t.key, works: true }) }, "Works"),
+        this.el("button", { class: "small", onclick: () => this.quick("mark", { key: t.key, fails: true }) }, "Fails"),
+        this.el("button", { class: "small ghost", onclick: () => this.pinDialog({ to: t.key }) }, "Add a pin"),
+        this.el("button", { class: "small ghost danger", onclick: () => { if (confirm(`Remove "${t.title}" and the hooks only it uses?`)) this.quick("remove", { what: t.key }); } }, "Remove")));
   },
   async quick(command, body) {
     try {
@@ -376,6 +496,21 @@ const App = {
       return this.quick("call", body);
     });
   },
+  // A flagged scan row: the scan judges by names only, so a flag can be wrong (9 Kings' in-run gold reads like a
+  // shop currency). The owner may add it after a warning and a confirmation; the rules stay what they are.
+  flaggedDialog(x, then) {
+    const why = { "sold in the shop": "it may be something the game sells (a purchase, premium currency or an unlock)",
+                  "ads": "it may control the game's ads", "accounts and online": "it may touch accounts, cloud saves or online play" }[x.flag] || x.flag;
+    this.dialog(`Flagged: ${x.flag}`, [
+      { type: "note", text: `${x.object} ${x.member}: ${why}.` },
+      { type: "note", text: "The scan reads names only, so this can be wrong: gold earned in a run, for example, reads like a shop currency. Accretion mods never change what a game sells, its ads, or online play, so add this only when you have checked that it is none of those." },
+      { name: "checked", label: "I checked: it isn't sold, an ad, or online play", type: "check" },
+    ], async v => {
+      if (!v.checked) { this.toast("Tick the check first, or Cancel.", "bad"); return false; }
+      setTimeout(then, 0);
+      return true;
+    }, "Continue");
+  },
   plainSwitchDialog() {
     this.dialog("A switch or slider with no hook", [
       { type: "note", text: "Read it in Tweak.x as am_<key> (BOOL, or float for a slider)." },
@@ -401,6 +536,8 @@ const App = {
     const search = async (mode) => {
       try {
         localStorage.setItem("studio.q." + this.mod, q.value);
+        if (mode === "fieldsearch") { const r = await this.api(`/api/mods/${this.mod}/fieldsearch?q=${encodeURIComponent(q.value || ".")}&limit=${Number(limit.value) || 60}`); this.findFields = null; this.findRows = []; this.fieldHits = r; this.renderFindRows(); return; }
+        this.fieldHits = null;
         if (mode === "fields") { const r = await this.api(`/api/mods/${this.mod}/fields?class=${encodeURIComponent(cls.value.trim())}`); this.findFields = r.fields; this.findRows = []; this.findClass = cls.value.trim(); }
         else { const url = cls.value.trim() && mode === "class" ? `class=${encodeURIComponent(cls.value.trim())}` : `q=${encodeURIComponent(q.value || ".")}`; const r = await this.api(`/api/mods/${this.mod}/find?${url}&limit=${Number(limit.value) || 60}`); this.findRows = r.methods; this.findCount = r.count; this.findFields = null; }
         this.renderFindRows();
@@ -408,8 +545,9 @@ const App = {
     };
     q.addEventListener("keydown", ev => { if (ev.key === "Enter") search("q"); });
     cls.addEventListener("keydown", ev => { if (ev.key === "Enter") search("class"); });
-    box.append(this.el("div", { class: "row" }, q, this.el("button", { class: "primary", onclick: () => search("q") }, "Search"), limit),
-      this.el("div", { class: "row", style: "margin-top:8px" }, cls, this.el("button", { onclick: () => search("class") }, "Methods of class"), this.el("button", { onclick: () => search("fields") }, "Fields of class")),
+    box.append(this.el("div", { class: "row" }, q, this.el("button", { class: "primary", onclick: () => search("q") }, "Search methods"), limit),
+      this.el("div", { class: "row", style: "margin-top:8px" }, cls, this.el("button", { onclick: () => search("class") }, "Methods of class"), this.el("button", { onclick: () => search("fields") }, "Fields of class"),
+        this.el("button", { title: "the search above, on field names of every class: which class holds a value (Currency, HealthPoints…)", onclick: () => search("fieldsearch") }, "Search all fields")),
       this.el("p", { class: "hint", text: "Hook… registers a hook (catches calls only with JIT unless the method is virtual or a Unity callback). Pin… writes a field or calls a set_ method on the live objects every half second: works on any phone." }),
       this.el("div", { id: "findOut" }));
     if (q.value) search("q");
@@ -420,6 +558,15 @@ const App = {
   },
   renderFindRows() {
     const out = this.byId("findOut"); if (!out) return; out.replaceChildren();
+    if (this.fieldHits) {
+      const r = this.fieldHits;
+      out.append(this.el("p", { class: "hint", text: `${r.count} fields${r.count > r.fields.length ? " (showing " + r.fields.length + ")" : ""}` }));
+      const tb = this.el("tbody");
+      for (const f of r.fields) tb.append(this.el("tr", {}, this.el("td", { class: "mono", text: `${f.class}.${f.name}` }), this.el("td", { class: "mono muted", text: (f.static ? "static " : "") + f.type }),
+        this.el("td", {}, this.el("button", { class: "small", onclick: () => { this.findClass = f.class; this.api(`/api/mods/${this.mod}/fields?class=${encodeURIComponent(f.class)}`).then(x => { this.fieldHits = null; this.findFields = x.fields; this.renderFindRows(); }).catch(e => this.toast(e.message, "bad")); } }, "Fields of its class"))));
+      out.append(this.el("table", {}, this.el("thead", {}, this.el("tr", {}, ["field", "type", ""].map(h => this.el("th", { text: h })))), tb));
+      return;
+    }
     if (this.findFields) {
       out.append(this.el("p", { class: "hint", text: `${this.findFields.length} fields of ${this.findClass} (offsets are read by name at run time; you never copy them)` }));
       const tb = this.el("tbody");
@@ -586,11 +733,18 @@ const App = {
         const tb = this.el("tbody");
         for (const x of rows) {
           const tag = x.flag ? this.el("span", { class: "badge bad", text: x.flag }) : x.has ? this.el("span", { class: "badge good", text: "in the mod" }) : this.el("span", { class: "badge accent", style: "white-space:nowrap", text: "score " + x.score });
-          const add = x.flag || x.has ? null : this.el("button", { class: "small primary", style: "white-space:nowrap", onclick: () => this.pinDialog({ target: `${x.class}.${x.member}`, object: x.object, value: x.value, when: x.when, title: nice(x.name) }) }, "Add…");
+          const pin = () => this.pinDialog({ target: `${x.class}.${x.member}`, object: x.object, value: x.value, when: x.when, title: nice(x.name) });
+          const add = x.has ? null
+            : x.flag ? this.el("button", { class: "small ghost danger", style: "white-space:nowrap", onclick: () => this.flaggedDialog(x, pin) }, "Add anyway…")
+            : this.el("button", { class: "small", style: "white-space:nowrap", onclick: pin }, "Add…");
           tb.append(this.el("tr", {},
             this.el("td", { text: x.area }),
             this.el("td", {}, this.el("span", { class: "mono", text: `${x.object} ${x.member}` }), this.el("br"), this.el("span", { class: "muted small", text: `${x.ctype} ${x.kind}${x.offset ? " at " + x.offset : ""}${x.value && !x.flag ? " · suggested " + x.value + (x.when !== "always" ? " when lower" : "") : ""}` })),
-            this.el("td", {}, tag), this.el("td", {}, add)));
+            this.el("td", { style: "min-width:150px" }, this.el("div", { class: "badges", style: "margin:0" }, tag,
+              x.learned ? this.el("span", { class: "badge good", title: `${x.learned.works} works, ${x.learned.fails} fails, ${x.learned.reached} reached in other games`, text: `like “${x.learned.title}”` }) : null,
+              x.direction === "lower" ? this.el("span", { class: "badge", text: "lower is better" }) : null,
+              x.saved ? this.el("span", { class: "badge warn", title: "the game keeps this in its save: switching off restores it", text: "kept in the save" }) : null)),
+            this.el("td", {}, add)));
         }
         table.replaceChildren(rows.length ? this.el("table", {}, this.el("thead", {}, this.el("tr", {}, ["area", "target", "", ""].map(h => this.el("th", { text: h })))), tb) : this.el("p", { class: "hint", text: "Nothing matches." }));
       } catch (e) { note.textContent = e.message; }
