@@ -5,11 +5,27 @@ param([switch]$Stop)
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 $port = 8765
+$stateRoot = if ($env:AM_ROOT) { $env:AM_ROOT } else { 'C:\AccretionMods' }
+$registry = Join-Path $stateRoot 'studio\instance.json'
+if (Test-Path -LiteralPath $registry) {
+    try {
+        $instance = Get-Content -LiteralPath $registry -Raw | ConvertFrom-Json
+        $info = Invoke-RestMethod "http://127.0.0.1:$($instance.port)/api/studio" -TimeoutSec 2
+        if ($info.protocol -eq 1 -and $info.root -eq $repo) { $port = [int]$instance.port }
+    } catch { }
+}
 $url = "http://localhost:$port/"
 $listening = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
 if ($Stop) {
-    $listening | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
+    $info = Invoke-RestMethod "http://127.0.0.1:$port/api/studio" -TimeoutSec 2
+    if ($info.protocol -ne 1 -or $info.root -ne $repo) { throw 'This listener is not the registered Studio instance.' }
+    Invoke-RestMethod "http://127.0.0.1:$port/api/studio/stop" -Method Post -ContentType 'application/json' -Body '{}' | Out-Null
     exit 0
+}
+if ($listening) {
+    try { $info = Invoke-RestMethod "http://127.0.0.1:$port/api/studio" -TimeoutSec 2 }
+    catch { throw 'An older Studio or another application occupies this port. Close that window, then launch Studio again.' }
+    if ($info.protocol -ne 1 -or $info.root -ne $repo) { throw 'This port belongs to another application.' }
 }
 if (-not $listening) {
     $uv = (Get-Command uv -ErrorAction SilentlyContinue).Source

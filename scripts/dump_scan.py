@@ -19,7 +19,7 @@ from pathlib import Path
 
 from il2cpp_dump import ADDRESS, FLOATS, INTEGERS, SIGNATURE, TYPE, TYPE_INDEX, Method, split_params
 
-VERSION = 11  # purchase mod targets only: no generated helpers, type rows or metadata
+VERSION = 12  # preserve static reference/getter paths and scalar backing fields for no-JIT analysis
 
 IMAGE = re.compile(r"^// Image \d+: (.+?)(?:\.dll)? - (\d+)\s*$")
 NAMESPACE = re.compile(r"^\s*// Namespace: ?(\S*)")
@@ -27,7 +27,7 @@ CLASS = re.compile(
     r"^(?:(?:public|private|protected|internal|static|sealed|abstract)\s+)*class\s+([A-Za-z_]\w*)(?=[\s:])"  # whole names: not "Enemy" from "Enemy.<>c"
     r"(?:\s*:\s*([\w.]+))?[^/]*// TypeDefIndex: (\d+)"
 )
-FIELD = re.compile(r"^\s+((?:(?:public|private|protected|internal|static|readonly)\s+)*)([\w.<>\[\], ]+?)\s+(\w+); // (0x[0-9A-Fa-f]+)")
+FIELD = re.compile(r"^\s+((?:(?:public|private|protected|internal|static|readonly)\s+)*)([\w.<>\[\], ]+?)\s+([\w<>]+); // (0x[0-9A-Fa-f]+)")
 METHOD = re.compile(r"^\s+(?:(?:public|private|protected|internal|virtual|override|static)\s+)*(\w+)\s+(get|set)_(\w+)\((\w*)[^)]*\)")
 
 NUMERIC = {"int": "int32_t", "float": "float", "long": "int64_t", "bool": "bool", "double": "double"}
@@ -129,7 +129,7 @@ def parse(path):
                     if image.startswith("Assembly-CSharp") and full not in classes:
                         current = classes[full] = {
                             "base": m.group(2) or "", "statics": [], "fields": {}, "props": {}, "getters": set(),
-                            "holds": set(),
+                            "holds": set(), "references": {}, "object_getters": {},
                         }
                         current_name = m.group(1)
                 continue
@@ -144,9 +144,11 @@ def parse(path):
                 if "static" in mods:
                     if ftype == current_name:
                         current["statics"].append(fname)
+                    if ftype not in NUMERIC and "<" not in ftype and "[" not in ftype:
+                        current["references"][fname] = ftype
                 elif ftype in NUMERIC:
                     current["fields"][fname] = {"ctype": NUMERIC[ftype], "offset": offset,
-                                                "private": "public" not in mods}
+                                                "private": "public" not in mods, "readonly": "readonly" in mods}
                 else:
                     current["holds"].add(re.sub(r"[<\[].*", "", ftype).rsplit(".", 1)[-1])
                 continue
@@ -155,6 +157,8 @@ def parse(path):
                 rtype, kind, prop, arg = m.groups()
                 if kind == "get" and rtype in NUMERIC:
                     current["getters"].add(prop)
+                elif kind == "get" and not arg:
+                    current["object_getters"]["get_" + prop] = rtype
                 elif kind == "set" and arg in NUMERIC:
                     current["props"][prop] = NUMERIC[arg]
     return classes
@@ -200,7 +204,7 @@ def build(classes, existing=frozenset(), learned=None):
         for prop, ctype in info["props"].items():
             members.append((f"set_{prop}", prop, ctype, "setter", None, prop in info["getters"], False))
         for fname, f in info["fields"].items():
-            if fname.startswith("<"):
+            if fname.startswith("<") or f.get("readonly"):
                 continue  # compiler backing fields: the setter covers them
             members.append((fname, fname, f["ctype"], "field", f["offset"], False, f["private"]))
         for target, name, ctype, kind, offset, getter, private in members:
@@ -264,7 +268,7 @@ def scan(dump, tweaks=None, learned=None):
     dump = Path(dump)
     cache = dump.with_name("scan.json")
     st = dump.stat()
-    stamp = {"version": VERSION, "size": st.st_size, "mtime": int(st.st_mtime)}
+    stamp = {"version": VERSION, "size": st.st_size, "mtime": st.st_mtime_ns}
     data = None
     if cache.is_file():
         try:

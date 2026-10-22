@@ -187,6 +187,8 @@ h2, h3 { font-family: var(--display); }
   <button id="getBtn">Get .ipa</button>
   <button id="newBtn">New mod</button>
   <button id="themeBtn" title="Dark / light">Theme</button>
+  <span id="studioVersion" class="small muted"></span>
+  <button id="restartStudio" class="hidden">Load update</button>
 </header>
 <div class="layout">
   <aside class="card">
@@ -237,7 +239,7 @@ const App = {
   el(tag, attrs, ...children) {
     const e = document.createElement(tag);
     for (const [k, v] of Object.entries(attrs || {})) {
-      if (k === "class") e.className = v; else if (k === "text") e.textContent = v; else if (k.startsWith("on")) e.addEventListener(k.slice(2), v); else if (v !== null && v !== undefined) e.setAttribute(k, v);
+      if (k === "class") e.className = v; else if (k === "text") e.textContent = v; else if (k.startsWith("on")) e.addEventListener(k.slice(2), v); else if (typeof v === "boolean") { if (v) e.setAttribute(k, ""); } else if (v !== null && v !== undefined) e.setAttribute(k, v);
     }
     for (const c of children.flat()) if (c !== null && c !== undefined) e.append(c.nodeType ? c : document.createTextNode(String(c)));
     return e;
@@ -330,7 +332,7 @@ const App = {
     }
     const tweaks = tj ? tj.tweaks : [];
     const filter = this.el("input", { placeholder: `Filter ${tweaks.length} switches`, value: this.switchFilter || "", style: "flex:1" });
-    const works = tweaks.filter(t => t.verified && t.verified.result === "works").length;
+    const works = tweaks.filter(t => t.verification_state === "works").length;
     box.append(this.el("div", { class: "row", style: "margin-bottom:14px" }, filter,
       this.el("span", { class: "label", text: `${tweaks.length} switches · ${works} confirmed` })));
     const list = this.el("div", {});
@@ -347,7 +349,7 @@ const App = {
       }
       if (!groups.size) list.append(this.el("p", { class: "hint", text: tweaks.length ? `No switch matches “${filter.value}”.` : "No switches yet: Find, Suggest or Scan adds them." }));
       for (const [sec, items] of groups) {
-        const ok = items.filter(t => t.verified && t.verified.result === "works").length;
+        const ok = items.filter(t => t.verification_state === "works").length;
         const panel = this.el("div", { class: "panel" },
           this.el("div", { class: "panel-h" }, this.el("span", { text: sec }),
             this.el("span", { class: "fig" + (ok === items.length ? " good" : ""), text: `${ok}/${items.length} confirmed` })));
@@ -374,12 +376,17 @@ const App = {
         this.el("span", { class: "title", text: t.title }),
         this.el("span", { class: "key", text: `${t.key} · ${kindText}` }),
         jit ? this.el("span", { class: "badge warn", text: "JIT", title: "every hook needs JIT; add a pin for phones without it" }) : null,
-        t.verified ? this.el("span", { class: "badge " + (t.verified.result === "works" ? "good" : "bad"), text: `${t.verified.result} · ${t.verified.app_version}`, title: t.verified.date }) : null),
+        t.verified ? this.el("span", { class: "badge " + (t.verification_state === "works" ? "good" : "warn"), text: `${t.verification_state === "stale" ? "needs retest" : t.verification_state} · ${t.verified.app_version}`, title: t.verified.date }) : null),
       chips.length ? this.el("div", { class: "chips" }, chips) : this.el("div", { class: "hint", text: "No hook or pin: a value for hand-written code in Tweak.x (am_" + t.key + ")." }),
       this.el("div", { class: "row acts" },
         this.el("button", { class: "small", onclick: () => this.quick("mark", { key: t.key, works: true }) }, "Works"),
         this.el("button", { class: "small", onclick: () => this.quick("mark", { key: t.key, fails: true }) }, "Fails"),
         this.el("button", { class: "small ghost", onclick: () => this.pinDialog({ to: t.key }) }, "Add a pin"),
+        jit ? this.el("button", {class:"small", title:"Review the original hooks for supported data alternatives; no automatic conversion", onclick:()=>{
+          const pattern = "^(?:" + hooks.map(h=>h.method.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") + ")$";
+          localStorage.setItem("studio.q." + this.mod, pattern); this.byId("tab-find").dataset.mod = "";
+          this.findRows=[]; this.fieldHits=null; this.findFields=null; this.setTab("find");
+        }}, "Review no-JIT alternatives") : null,
         this.el("button", { class: "small ghost danger", onclick: () => { if (confirm(`Remove "${t.title}" and the hooks only it uses?`)) this.quick("remove", { what: t.key }); } }, "Remove")));
   },
   async quick(command, body) {
@@ -398,6 +405,7 @@ const App = {
     const form = this.el("form", { method: "dialog" }, this.el("h3", { text: title }));
     const inputs = {};
     for (const f of fields) {
+      if (f.type === "code") { form.append(this.el("pre", {text:f.text})); continue; }
       if (f.type === "note") { form.append(this.el("p", { class: "hint", text: f.text })); continue; }
       let input;
       if (f.type === "select") { input = this.el("select", { name: f.name }, f.options.map(o => this.el("option", { value: o[0], text: o[1] }))); input.value = f.value ?? f.options[0][0]; }
@@ -460,8 +468,8 @@ const App = {
       { name: "value", label: "Value", help: "number, true/false, peak, getter:get_X, field:Y, slider", value: preset.value || "", mono: true },
       { name: "when", label: "When", type: "select", options: [["always", "always"], ["lower", "only when the current value is lower"], ["higher", "only when higher"]], value: preset.when || "always" },
       { name: "threshold", label: "Threshold (with when)", value: "", type: "number" },
-      { name: "via", label: "Via getter (optional)", help: "a 0-arg getter on the object that returns the real target", value: "", mono: true },
-      { name: "class", label: "Target class (optional)", help: "when the field belongs to a parent class or the via result", value: "", mono: true },
+      { name: "via", label: "Via getter (optional)", help: "a 0-arg getter on the object that returns the real target", value: preset.via || "", mono: true },
+      { name: "class", label: "Target class (optional)", help: "when the field belongs to a parent class or the via result", value: preset.target_class || "", mono: true },
       { name: "multiply", label: "Multiply (field = base × value, slider)", type: "check" },
       { name: "to", label: "Switch", type: "select", options: toOpts, value: preset.to || "" },
       { name: "title", label: "Menu title (new switch)", value: preset.title || "" },
@@ -485,7 +493,7 @@ const App = {
       { type: "note", text: `${m.full_name}(${m.params.join(", ")})` },
       { name: "args", label: "Arguments", help: "numbers / true / false, space-separated", value: m.params.map(p => (p.split("=")[1] || "0").trim()).join(" "), mono: true },
       { name: "every", label: "Every (seconds)", type: "number", value: "10" },
-      { name: "object", label: "Object", help: "blank = the class's instance field", value: "", mono: true },
+      { name: "object", label: "Object", help: "blank = the class's instance field", value: preset.object || "", mono: true },
       { name: "to", label: "Switch", type: "select", options: toOpts, value: preset.to || "" },
       { name: "title", label: "Menu title (new switch)", value: preset.title || `${m.method} every 10 s` },
       { name: "key", label: "Key (new switch)", value: this.keyFrom(m.full_name), mono: true },
@@ -564,15 +572,17 @@ const App = {
     out.append(this.el("p", { class: "hint", text: `${this.findCount} methods${this.findCount > this.findRows.length ? " (showing " + this.findRows.length + ")" : ""}` }));
     const tb = this.el("tbody");
     for (const m of this.findRows) {
-      const canPin = /^set_/.test(m.method) && m.args === 1;
+      const canPin = !m.ambiguous && /^set_/.test(m.method) && m.args === 1;
       tb.append(this.el("tr", {},
         this.el("td", {}, this.el("span", { class: "mono", text: m.full_name }), this.el("br"), this.el("span", { class: "muted small mono", text: `(${m.params.join(", ")}) → ${m.static ? "static " : ""}${m.return_type}` })),
-        this.el("td", {}, m.needs_jit ? this.el("span", { class: "badge warn", text: "JIT", title: "catches nothing without JIT; use a pin" }) : this.el("span", { class: "badge good", text: m.slot !== null ? "virtual" : "callback", title: "pointer hook works without JIT" })),
+        this.el("td", {}, m.needs_jit ? this.el("span", { class: "badge warn", text: "JIT", title: "Direct interception needs JIT; check available data alternatives" }) : this.el("span", { class: "badge", text: m.slot !== null ? "virtual candidate" : "callback candidate", title: "Pointer hooks may catch virtual/Unity dispatch without JIT; direct calls can bypass them" })),
         this.el("td", { class: "mono muted small", text: m.rva }),
         this.el("td", {}, this.el("div", { class: "row" },
-          this.el("button", { class: "small", onclick: () => this.hookDialog(m) }, "Hook…"),
+          !m.ambiguous ? this.el("button", { class: "small", onclick: () => this.hookDialog(m) }, "Hook…") : this.el("span", {class:"badge warn", text:"ambiguous overload"}),
+          (m.nojit_alternatives || []).map(a=>this.el("button", {class:"small", title:a.evidence, onclick:()=>this.pinDialog({target:`${a.class}.${a.member}`, ...a, title:a.name})}, "No-JIT alternative…")),
+          m.nojit_call ? this.el("button", {class:"small", title:m.nojit_call.evidence, onclick:()=>this.callDialog(m, m.nojit_call)}, "Call without JIT…") : null,
           canPin ? this.el("button", { class: "small", onclick: () => this.pinDialog({ target: m.full_name, title: `${m.class} ${m.method.slice(4)}` }) }, "Pin…") : null,
-          this.el("button", { class: "small", onclick: () => this.callDialog(m) }, "Call…"),
+          !m.ambiguous ? this.el("button", { class: "small", onclick: () => this.callDialog(m) }, "Call…") : null,
           this.el("button", { class: "small", onclick: () => { this.findClass = m.class; this.api(`/api/mods/${this.mod}/fields?class=${encodeURIComponent(m.class)}`).then(r => { this.findFields = r.fields; this.renderFindRows(); }).catch(e => this.toast(e.message, "bad")); } }, "Fields")))));
     }
     out.append(this.el("table", {}, this.el("thead", {}, this.el("tr", {}, ["method", "without JIT", "RVA", ""].map(h => this.el("th", { text: h })))), tb));
@@ -657,8 +667,8 @@ const App = {
         } }, this.el("input", { placeholder: "answer a question from this command (a number, a 2FA code…), Enter sends" }), this.el("button", { class: "small", type: "submit" }, "Send")) : null);
       jobs.prepend(det);
     }
-    const ans = this.byId("jobans-" + j.id); if (ans && j.status !== "running") ans.remove();
-    const st = this.byId("jobst-" + j.id); st.textContent = j.status; st.className = "badge " + (j.status === "done" ? "good" : j.status === "running" ? "accent" : "bad");
+    const ans = this.byId("jobans-" + j.id); if (ans && !["queued", "running"].includes(j.status)) ans.remove();
+    const st = this.byId("jobst-" + j.id); st.textContent = j.status; st.className = "badge " + (j.status === "done" ? "good" : ["queued", "running"].includes(j.status) ? "accent" : "bad");
     const out = this.byId("jobout-" + j.id);
     if (j.lines && j.lines.length) { out.textContent += (out.textContent ? "\n" : "") + j.lines.join("\n"); out.scrollTop = out.scrollHeight; }
     if (j.command === "claude" && j.status !== "running" && !this.byId("jobcmds-" + j.id)) {
@@ -679,7 +689,7 @@ const App = {
     since = since || 0;
     this.api(`/api/jobs/${id}?since=${since}`).then(j => {
       this.showJob(j);
-      if (j.status === "running" || j.status === "stopping") setTimeout(() => this.poll(id, j.next), 1000);
+      if (["queued", "running", "stopping"].includes(j.status)) setTimeout(() => this.poll(id, j.next), 1000);
       else {
         this.toast(`${j.command}: ${j.status}`, j.status === "done" ? "ok" : "bad");
         const made = j.command === "start" && j.status === "done" ? ((this.byId("jobout-" + j.id) || {}).textContent || "").match(/making mods\/([a-z0-9-]+)/) : null;
@@ -689,8 +699,37 @@ const App = {
   },
 
   // ---------------------------------------------------------------- files
+  async snapshotDialog() {
+    try {
+      const data = await this.api(`/api/mods/${this.mod}/snapshots`);
+      if (!data.snapshots.length) { this.toast("No configuration snapshots yet", "ok"); return; }
+      this.dialog("Configuration snapshots", [{name:"id", label:"Snapshot", type:"select",
+        options:data.snapshots.map(s=>[s.id, `${s.created_at} · ${s.label}`])}], async v=>{
+          setTimeout(()=>this.previewSnapshot(v.id), 0); return true;
+        }, "Preview restore");
+    } catch(e) { this.toast(e.message, "bad"); }
+  },
+  async previewSnapshot(id) {
+    try {
+      const preview = await this.api(`/api/mods/${this.mod}/snapshot`, {action:"preview", id});
+      const changes = preview.files.filter(f=>f.changed);
+      if (!changes.length) { this.toast("This snapshot matches the current configuration", "ok"); return; }
+      this.dialog("Review configuration restore", [
+        {type:"note", text:"A recovery snapshot of the current configuration is saved before restoring. Game saves and installed apps are not changed."},
+        ...changes.map(f=>({type:"code", text:f.name + "\n" + (f.diff || (f.after_present ? "File will be created" : "File will be removed"))})),
+      ], async ()=>{
+        try {
+          await this.api(`/api/mods/${this.mod}/snapshot`, {action:"restore",id,expected:preview.expected});
+          this.byId("tab-scan").dataset.mod = ""; await this.refresh(); this.toast("Configuration restored; recovery snapshot saved", "ok"); return true;
+        } catch(e) { this.toast(e.message, "bad"); return false; }
+      }, "Restore configuration");
+    } catch(e) { this.toast(e.message,"bad"); }
+  },
   renderFiles() {
     const d = this.detail, box = this.byId("tab-files"); box.replaceChildren();
+    box.append(this.el("div", {class:"row"},
+      this.el("button", {onclick:async()=>{try{await this.api(`/api/mods/${this.mod}/snapshot`,{action:"create"});this.toast("Snapshot saved","ok");}catch(e){this.toast(e.message,"bad");}}}, "Save configuration snapshot"),
+      this.el("button", {onclick:()=>this.snapshotDialog()}, "Preview / restore configuration")));
     const pre = (title, text) => this.el("div", { class: "sec" }, this.el("h3", {}, title, this.el("button", { class: "small copy", onclick: () => navigator.clipboard.writeText(text).then(() => this.toast("copied", "ok")) }, "Copy")), this.el("pre", { text }));
     box.append(this.el("div", { class: "sec" }, this.el("h3", { text: "Paths" }), this.el("pre", { text: [`mod:        mods/${d.name}`, `base .ipa:  ${d.base_ipa || "(not remembered; dump finds it by bundle ID in intake/ and Downloads)"}`, `dump:       ${d.dump ? "present" : "none"}`, `last dylib: ${d.last_dylib || "-"}`, `last ipa:   ${d.last_ipa || "-"}`].join("\n") })),
       pre("tweaks.json", d.tweaks_json ? JSON.stringify(d.tweaks_json, null, 2) : "(none)"),
@@ -698,50 +737,70 @@ const App = {
   },
 
   // ---------------------------------------------------------------- scan (no-JIT candidates in the dump)
+  scanActions(x) {
+    const pin = target => this.pinDialog({ target: `${target.class}.${target.member}`, object: target.object, value: target.value,
+      when: target.when, via: target.via, target_class: target.target_class, title: target.name.replace(/^set_/, "").replace(/([a-z0-9])([A-Z])/g, "$1 $2") });
+    const inspect = () => this.dialog(`${x.class}.${x.member}`, [
+      {type:"note", text:x.signature || `${x.ctype} ${x.member}`},
+      {type:"note", text: x.explanation || "Identify an object path before changing this field."},
+      {type:"note", text:`Assembly: ${x.assembly || "game code"}`},
+    ], async () => true, "Close");
+    return this.el("div", {class:"row"},
+      !x.has && !x.inspect_only ? this.el("button", {class:"small", onclick:()=>pin(x)}, "Add…") : null,
+      !x.has && x.method && !x.ambiguous ? this.el("button", {class:"small", onclick:()=>this.hookDialog(x.method)}, "Hook…") : null,
+      (x.nojit_alternatives || []).map(a=>this.el("button", {class:"small", title:a.evidence + "; candidate until phone-tested", onclick:()=>pin(a)}, "No-JIT alternative…")),
+      x.nojit_call ? this.el("button", {class:"small", title:x.nojit_call.evidence, onclick:()=>this.callDialog(x.method, x.nojit_call)}, "Call without JIT…") : null,
+      x.inspect_only ? this.el("button", {class:"small", onclick:inspect}, "Inspect…") : null);
+  },
   renderScan() {
     const box = this.byId("tab-scan");
     if (box.dataset.mod === this.mod && box.childElementCount) return;
     box.dataset.mod = this.mod; box.replaceChildren();
     const area = this.el("select", {}, [["", "All areas"], ["In-app purchases", "In-app purchases"], ["Survival", "Survival"], ["Combat", "Combat"], ["Pet", "Pet & companion"], ["Items", "Items & crafting"], ["Progress", "Progress"], ["Exploration", "Exploration"], ["Other", "Other"]].map(o => this.el("option", { value: o[0], text: o[1] })));
     const find = this.el("input", { placeholder: "filter: regex on Class.member", class: "mono", style: "flex:1;min-width:180px" });
+    const mode = this.el("select", {}, [["all", "All actions"], ["no-jit", "No JIT paths"], ["pin", "Pin"], ["hook", "Hook"], ["investigate", "Needs investigation"]].map(o => this.el("option", {value:o[0], text:o[1]})));
+    const verified = this.el("select", {}, [["all", "All test results"], ["works", "Verified on this version"], ["fails", "Failed"], ["stale", "Needs retest"], ["untested", "Untested"]].map(o => this.el("option", {value:o[0], text:o[1]})));
     const flagged = this.el("input", { type: "checkbox" });
     const hideHas = this.el("input", { type: "checkbox" }); hideHas.checked = true;
     const note = this.el("p", { class: "hint" });
     const table = this.el("div", {});
-    let shownLimit = 300;
-    const more = this.el("button", { class: "small", text: "Show next 300", hidden: true, onclick: () => { shownLimit += 300; load(false); } });
+    let offset = 0, loadedCount = 0, request = 0;
+    const more = this.el("button", { class: "small", text: "Show next 300", hidden: true, onclick: () => load(false) });
     const nice = name => name.replace(/^set_/, "").replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/_/g, " ");
     const load = async (reset = true) => {
-      if (reset !== false) shownLimit = 300;
-      note.textContent = "Scanning the dump…"; table.replaceChildren();
+      const ticket = ++request;
+      if (reset !== false) { offset = 0; loadedCount = 0; table.replaceChildren(); }
+      note.textContent = "Scanning the dump…";
       more.hidden = true;
       try {
-        const r = await this.api(`/api/mods/${this.mod}/scan?limit=${shownLimit}&area=${encodeURIComponent(area.value)}&find=${encodeURIComponent(find.value.trim())}${flagged.checked ? "&flagged=1" : ""}`);
+        const r = await this.api(`/api/mods/${this.mod}/scan?limit=300&offset=${offset}&area=${encodeURIComponent(area.value)}&find=${encodeURIComponent(find.value.trim())}&mode=${mode.value}&verified=${verified.value}&hide_has=${hideHas.checked ? 1 : 0}${flagged.checked ? "&flagged=1" : ""}`);
+        if (ticket !== request) return;
         const rows = r.rows.filter(x => !hideHas.checked || !x.has);
-        note.textContent = `${r.matched ?? r.total} mod targets; showing ${rows.length}. Add creates a pin; Hook targets a concrete method. Fields without an automatic object path need investigation. Generated helpers and metadata are hidden.`;
-        more.hidden = (r.matched ?? r.rows.length) <= shownLimit;
-        const tb = this.el("tbody");
+        loadedCount += rows.length; offset = r.next_offset;
+        note.textContent = `${r.matched ?? r.total} mod targets; showing ${loadedCount}. Add creates a pin; Hook targets a concrete method. Fields without an automatic object path need investigation. Generated helpers and metadata are hidden.`;
+        more.hidden = !r.has_more;
+        const existingBody = table.querySelector("tbody");
+        const tb = existingBody || this.el("tbody");
         for (const x of rows) {
-          const tag = x.has ? this.el("span", { class: "badge good", text: "in the mod" }) : this.el("span", { class: "badge accent", style: "white-space:nowrap", text: x.method ? (x.method.needs_jit ? "hook · JIT" : "hook · no JIT") : x.inspect_only ? "needs object" : "score " + x.score });
-          const pin = () => this.pinDialog({ target: `${x.class}.${x.member}`, object: x.object, value: x.value, when: x.when, title: nice(x.name) });
-          const inspect = () => this.dialog(`${x.class}.${x.member}`, [
-            { type: "note", text: x.signature }, { type: "note", text: `Assembly: ${x.assembly}` },
-            { type: "note", text: x.method ? (x.method.needs_jit ? "This method needs JIT to intercept direct calls." : "This virtual method or Unity callback can be hooked without JIT.") : "This field has no automatic object path. Use Find to identify its owner before adding a pin." },
-          ], async () => true, "Close");
-          const add = x.inspect_only ? this.el("div", { class: "row" },
-            x.method && !x.has ? this.el("button", { class: "small", onclick: () => this.hookDialog(x.method) }, "Hook…") : null,
-            this.el("button", { class: "small", onclick: inspect }, "Inspect…")) : x.has ? null : this.el("button", { class: "small", style: "white-space:nowrap", onclick: pin }, "Add…");
+          const tag = x.has ? this.el("span", { class: "badge good", text: "in the mod" }) : this.el("span", { class: "badge accent", style: "white-space:nowrap", text: x.method ? (x.method.needs_jit ? "hook · JIT" : "pointer hook candidate") : x.inspect_only ? "needs object" : "score " + x.score });
+          const add = this.scanActions(x);
+          const variants = x.variants && x.variants.length > 1 ? this.el("details", {},
+            this.el("summary", {class:"small muted", text:`${x.variants.length} related targets / signatures`}),
+            x.variants.map(v=>this.el("div", {class:"sec"}, this.el("code", {text:v.signature || `${v.ctype} ${v.member}`}), this.scanActions(v)))) : null;
           tb.append(this.el("tr", {},
             this.el("td", { text: x.area }),
-            this.el("td", {}, this.el("span", { class: "mono", text: `${x.object} ${x.member}` }), this.el("br"), this.el("span", { class: "muted small", text: `${x.ctype} ${x.kind}${x.offset ? " at " + x.offset : ""}${x.value ? " · suggested " + x.value + (x.when !== "always" ? " when " + x.when : "") : ""}` })),
+            this.el("td", {}, this.el("span", { class: "mono", text: `${x.object} ${x.member}` }), this.el("br"), this.el("span", { class: "muted small", text: `${x.ctype} ${x.kind}${x.offset ? " at " + x.offset : ""}${x.value ? " · suggested " + x.value + (x.when !== "always" ? " when " + x.when : "") : ""}` }), variants),
             this.el("td", { style: "min-width:150px" }, this.el("div", { class: "badges", style: "margin:0" }, tag,
               x.flag ? this.el("span", { class: "badge", text: x.flag }) : null,
+              this.el("span", {class:"badge " + (x.verification && x.verification.state === "works" ? "good" : ""),
+                text: !x.verification || x.verification.state === "untested" ? "untested" : x.verification.state === "stale" ? "needs retest" : x.verification.state,
+                title:JSON.stringify(x.verification || {})}),
               x.learned ? this.el("span", { class: "badge good", title: `${x.learned.works} works, ${x.learned.fails} fails, ${x.learned.reached} reached in other games`, text: `like “${x.learned.title}”` }) : null,
               x.direction === "lower" ? this.el("span", { class: "badge", text: "lower is better" }) : null,
               x.saved ? this.el("span", { class: "badge warn", title: "the game keeps this in its save: switching off restores it", text: "kept in the save" }) : null)),
             this.el("td", {}, add)));
         }
-        table.replaceChildren(rows.length ? this.el("table", {}, this.el("thead", {}, this.el("tr", {}, ["area", "target", "", ""].map(h => this.el("th", { text: h })))), tb) : this.el("p", { class: "hint", text: "Nothing matches." }));
+        if (!existingBody) table.replaceChildren(rows.length ? this.el("table", {}, this.el("thead", {}, this.el("tr", {}, ["area", "target", "", ""].map(h => this.el("th", { text: h })))), tb) : this.el("p", { class: "hint", text: "Nothing matches." }));
       } catch (e) { note.textContent = e.message; }
     };
     const explain = async () => {
@@ -758,11 +817,11 @@ const App = {
         this.toast("Claude is ranking the candidates: its answer streams into Jobs, with an Add button on each command", "ok");
       } catch (e) { this.toast(e.message, "bad"); }
     };
-    [area, flagged, hideHas].forEach(i => i.addEventListener("change", load));
+    [area, mode, verified, flagged, hideHas].forEach(i => i.addEventListener("change", load));
     find.addEventListener("keydown", ev => { if (ev.key === "Enter") load(); });
     box.append(
       this.el("p", { class: "hint", text: "Game fields and setters that a no-JIT pin can reach are scored by name. In-app purchases also includes mutable numeric/boolean fields and concrete hookable Store/IAP methods. Generated helpers, type-only rows, delegate caches and metadata are hidden. Topic labels are informational; names do not prove behaviour. Same list in a console: am scan <mod>." }),
-      this.el("div", { class: "row", style: "margin-bottom:8px" }, area, find,
+      this.el("div", { class: "row", style: "margin-bottom:8px" }, area, mode, verified, find,
         this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center" }, hideHas, "hide what the mod has"),
         this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center" }, flagged, "only topic-labelled"),
         this.el("button", { class: "small", onclick: load }, "Scan"),
@@ -1052,6 +1111,41 @@ const App = {
   },
 
   init() {
+    this.api("/api/jobs").then(data=>{
+      for (const job of data.jobs) {
+        this.showJob(job);
+        if (["queued", "running", "stopping"].includes(job.status)) this.poll(job.id);
+        else {
+          const details = this.byId("job-" + job.id); details.open = false;
+          let loaded = false;
+          details.addEventListener("toggle", async()=>{
+            if (!details.open || loaded) return; loaded = true;
+            try { this.showJob(await this.api(`/api/jobs/${job.id}?since=0`)); } catch(e) {loaded=false;this.toast(e.message,"bad");}
+          });
+        }
+      }
+    }).catch(e=>this.toast(e.message,"bad"));
+    const checkVersion = async () => {
+      try {
+        const v = await this.api("/api/studio");
+        this.byId("studioVersion").textContent = v.stale ? "Studio update available" : "Studio " + v.loaded;
+        this.byId("restartStudio").classList.toggle("hidden", !v.stale);
+        this.byId("restartStudio").disabled = v.busy;
+      } catch (e) { this.byId("studioVersion").textContent = "Server unavailable; reconnecting…"; }
+    };
+    this.byId("restartStudio").onclick = async () => {
+      try {
+        await this.api("/api/studio/restart", {});
+        let attempts = 0;
+        const reconnect = async () => {
+          try { const status = await this.api("/api/studio"); if (!status.stale) { location.reload(); return; } } catch(e) { /* server is restarting */ }
+          if (++attempts < 30) setTimeout(reconnect, 1000); else this.toast("Studio has not reconnected yet; use the launcher to reopen it", "bad");
+        };
+        setTimeout(reconnect, 500);
+      }
+      catch (e) { this.toast(e.message, "bad"); }
+    };
+    checkVersion(); setInterval(checkVersion, 10000);
     const theme = localStorage.getItem("studio.theme") || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
     document.documentElement.dataset.theme = theme;
     this.byId("themeBtn").addEventListener("click", () => { const t = document.documentElement.dataset.theme === "light" ? "dark" : "light"; document.documentElement.dataset.theme = t; localStorage.setItem("studio.theme", t); });

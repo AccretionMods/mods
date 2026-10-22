@@ -264,6 +264,17 @@ decrypted copy (am fetch) if none is here, the report (it stops when the game ca
 folder and its dump (am new), then the best no-JIT candidates. In Studio: Start a mod and Report on a
 Games card; Start ends on the new mod's Scan tab.
 
+Studio reuses its registered local instance and shows **Load update** when the source changes. Updates
+wait for active jobs and configuration changes to finish. Scan filters distinguish Pin, Hook, No JIT,
+investigation and test status; related fields/getters/setters expand into exact signature variants.
+Cached scans page through all matching groups. **Review no-JIT alternatives** identifies compatible
+property pins and explicit timed calls where the runtime supports them; these require testing and do
+not replace direct interception automatically. Results from another game version appear as stale.
+
+Files includes configuration snapshots, diff preview and restore with a recovery snapshot. Job history
+survives restarts with redacted output; interrupted jobs remain interrupted. Conflicting mod mutations
+and device operations queue. Runtime history/snapshots stay under AM_ROOT/studio outside the repo.
+
 Scan's **In-app purchases** area keeps Store/IAP mod targets: pin-compatible values, mutable numeric or
 boolean fields, and concrete methods supported by the hook tool. Generated classes and delegate caches,
 type-only rows, constructors, constants and metadata are hidden. **Add** creates a pin; **Hook** uses a

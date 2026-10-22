@@ -327,9 +327,11 @@ _dump_cache = {}
 
 def dump_methods(mod):
     p = dump_path(mod)
-    if p not in _dump_cache:
-        _dump_cache[p] = methods(str(p))
-    return _dump_cache[p]
+    stat = p.stat()
+    stamp = (stat.st_mtime_ns, stat.st_size, stat.st_ino)
+    if p not in _dump_cache or _dump_cache[p][0] != stamp:
+        _dump_cache[p] = (stamp, methods(str(p)))
+    return _dump_cache[p][1]
 
 
 TYPE_KIND = re.compile(

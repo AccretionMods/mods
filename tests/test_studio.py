@@ -105,6 +105,10 @@ public class OnlineState : MonoBehaviour // TypeDefIndex: 111
             return e.code, json.loads(e.read())
 
     def test_mods_and_detail(self):
+        status, studio = self.get("/api/studio")
+        self.assertEqual(status, 200)
+        self.assertEqual(studio["protocol"], 1)
+        self.assertIn("loaded", studio)
         status, data = self.get("/api/mods")
         self.assertEqual(status, 200)
         self.assertEqual([m["name"] for m in data["mods"]], ["game-plus"])
@@ -214,18 +218,50 @@ public class OnlineState : MonoBehaviour // TypeDefIndex: 111
         status, data = self.get("/api/nothing")
         self.assertEqual(status, 404)
 
+    def test_snapshot_preview_and_restore_through_api(self):
+        status, saved = self.post("/api/mods/game-plus/snapshot", {"action": "create"})
+        self.assertEqual(status, 200, saved)
+        source = dev.mod_dir("game-plus") / "Tweak.x"
+        before = source.read_bytes() if source.exists() else None
+        source.write_text("temporary local edit", encoding="utf-8")
+        status, preview = self.post("/api/mods/game-plus/snapshot", {"action": "preview", "id": saved["id"]})
+        self.assertEqual(status, 200, preview)
+        self.assertTrue(any(f["changed"] for f in preview["files"]))
+        status, restored = self.post("/api/mods/game-plus/snapshot", {"action": "restore", "id": saved["id"], "expected": preview["expected"]})
+        self.assertEqual(status, 200, restored)
+        self.assertIn("recovery_id", restored)
+        self.assertEqual(source.read_bytes() if source.exists() else None, before)
+    def test_restart_waits_for_configuration_actions(self):
+        with server.action_scope():
+            status, state = self.get('/api/studio')
+            self.assertEqual(status, 200)
+            self.assertTrue(state['busy'])
+            status, response = self.post('/api/studio/restart', {})
+            self.assertEqual(status, 400, response)
+        self.assertFalse(server.RESTARTING.is_set())
+        server.RESTARTING.set()
+        try:
+            with self.assertRaises(dev.DevError):
+                with server.action_scope():
+                    pass
+            with self.assertRaises(dev.DevError):
+                server.start_job('check', ['game-plus'])
+        finally:
+            server.RESTARTING.clear()
+
     def test_jobs(self):
         status, job = self.post("/api/jobs", {"command": "check", "mod": "game-plus"})
         self.assertEqual(status, 200, job)
         for _ in range(100):
             status, job = self.get(f"/api/jobs/{job['id']}")
-            if job["status"] != "running":
+            if job["status"] not in ("queued", "running"):
                 break
             import time
 
             time.sleep(0.1)
         self.assertIn(job["status"], ("done", "failed"))
         self.assertTrue(any("hooks" in line for line in job["lines"]), job)
+
         status, _data = self.post("/api/jobs", {"command": "rm", "mod": "game-plus"})
         self.assertEqual(status, 400)
         # sign and install take a file: the mod name must not be put in front of it
@@ -296,7 +332,7 @@ public class OnlineState : MonoBehaviour // TypeDefIndex: 111
         self.assertTrue(job["interactive"])
         for _ in range(100):
             status, job = self.get(f"/api/jobs/{job['id']}")
-            if job["status"] != "running":
+            if job["status"] not in ("queued", "running"):
                 break
             import time
 
