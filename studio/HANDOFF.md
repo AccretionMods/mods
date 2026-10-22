@@ -13,10 +13,12 @@ chose a local web app in this repo over a desktop app, a Claude panel or an iOS 
 - `studio/index.html`: the page (vanilla JS, Accretion's design tokens, dark/light).
 - Binds 127.0.0.1 by default. `--host 0.0.0.0` exposes it on the LAN with no login: trusted Wi-Fi only.
 - Apple ID prompts (2FA) can't be answered through the page: sign in once from a console (`am sign ... --install`).
+- **Run with Claude Code** (2026-10-22): `/api/claude` -> `claude -p --output-format stream-json` job (this PC only),
+  read-only = Read/Grep/Glob + read-only dev.py via uv, no edits; else acceptEdits + any dev.py, no other shell.
+  Checked for real: narrow task on Wanderer Dev, 107 s, $1.44, recommendation with commands, no files changed.
 - **Prompt builder** (2026-10-22, owner chose it over a library / run-Claude / context pack): `studio/prompts.json` tasks
   + `/api/mods/<mod>/context` facts (switch results from tweaks.json `verified`, log errors from Studio's last log/run job)
-  -> prompt with missing-detail hints. Replaced the three fixed prompts (they were the owner's examples). Next option
-  named: a Run button that sends the prompt to Claude Code headless.
+  -> prompt with missing-detail hints. Replaced the three fixed prompts (they were the owner's examples). 
 - **Console tab** (2026-10-22): `/api/console` runs any dev.py command as an interactive job (`/api/jobs/<id>/input`
   answers prompts), this PC only; regexes kept (shlex, no escapes); `dev.build_parser()`. Prompts for Claude (update,
   explore dump, narrow approach). Switches tab: build / sign + install / run. Jobs panel under every tab. Checked in
