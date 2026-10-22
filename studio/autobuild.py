@@ -1,13 +1,15 @@
-"""Auto-build a mod's menu with the model picked in Mod Studio (Claude Code or aider), as one Studio job.
+"""Auto-build a mod's menu with the model picked in Mod Studio (Claude Code, Codex or aider), as one Studio job.
 
-  python studio/autobuild.py <mod> [--engine claude|aider] [--limit 10]
+  python studio/autobuild.py <mod> [--engine claude|codex|aider] [--limit 10] [--no-install]
 
 1. the scan's best no-JIT candidates not yet in the mod, without the topic-labelled ones (what the game sells,
    ads, accounts, online play) and without inspect-only rows;
 2. the model picks up to --limit and answers with `am pin <mod> ...` lines only (read only: it changes nothing);
 3. each line runs through dev.py pin (which checks it against the dump); the new switches get the scan's area as
    their menu section;
-4. dev.py gen, then dev.py build <mod> --ipa --bump. Installing on the phone stays the owner's click (Run).
+4. dev.py gen, then dev.py build <mod> --ipa --bump;
+5. only when all of that went well: dev.py sign <the .ipa> --install, then 45 s of the device log with the game
+   opened, so each new switch's status line shows in the job (the owner's choice, 2026-10-22).
 
 Studio snapshots the mod's files first (Files tab restores them).
 """
@@ -85,6 +87,19 @@ def ask(engine, prompt):
     return answer
 
 
+def stream_log(mod, seconds):
+    """The device log with the game (re)opened, its status and hook-report lines echoed as they come."""
+    say(f"$ am log {mod} --seconds {seconds} --launch")
+    env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+    proc = subprocess.Popen([sys.executable, str(ROOT / "scripts" / "dev.py"), "log", mod, "--seconds", str(seconds),
+                             "--launch"], cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                            encoding="utf-8", errors="replace", env=env)
+    for line in proc.stdout:
+        if re.search(r"status |hooks:|pin .* applied|error|crash", line, re.IGNORECASE):
+            say("  " + line.rstrip()[-200:])
+    return proc.wait() == 0
+
+
 def dev_py(*args):
     say("$ am " + " ".join(shlex.quote(a) for a in args))
     run = subprocess.run([sys.executable, str(ROOT / "scripts" / "dev.py"), *args], cwd=ROOT, text=True,
@@ -99,6 +114,7 @@ def main(argv=None):
     p.add_argument("mod")
     p.add_argument("--engine", choices=server.ENGINES, default="claude")
     p.add_argument("--limit", type=int, default=10)
+    p.add_argument("--no-install", action="store_true", help="stop after the build")
     args = p.parse_args(argv)
     mod, limit = args.mod, max(1, min(args.limit, 25))
     folder = dev.mod_dir(mod)
@@ -107,7 +123,7 @@ def main(argv=None):
         say(f"{mod} has a hand-written menu (no tweaks.json): auto-build adds pins to tweaks.json mods only")
         return 1
 
-    say(f"==> 1/4 scan: the best no-JIT candidates for {mod}")
+    say(f"==> 1/5 scan: the best no-JIT candidates for {mod}")
     rows = candidates(mod, 40)
     if not rows:
         say("nothing new to add: every scan candidate is in the mod already, labelled, or inspect-only")
@@ -115,7 +131,7 @@ def main(argv=None):
     say(f"    {len(rows)} candidates")
 
     who = {"aider": "aider (free model)", "codex": "Codex (GPT)"}.get(args.engine, "Claude Code")
-    say(f"==> 2/4 {who} picks up to {limit}")
+    say(f"==> 2/5 {who} picks up to {limit}")
     answer = ask(args.engine, prompt_for(mod, meta, rows, limit))
     lines = []
     for line in answer:
@@ -128,7 +144,7 @@ def main(argv=None):
         say("the model gave no am pin line for this mod: nothing added, nothing built")
         return 1
 
-    say(f"==> 3/4 adding {len(lines)} switches")
+    say(f"==> 3/5 adding {len(lines)} switches")
     area = {f"{r['class']}.{r['member']}": r["area"] for r in rows}  # the scan's area becomes the menu section
     sections, added = {}, 0
     for cmd in lines:
@@ -153,11 +169,20 @@ def main(argv=None):
         say("none of the model's lines passed dev.py pin: nothing to build")
         return 1
 
-    say("==> 4/4 gen and build")
+    say("==> 4/5 gen and build")
     if not (dev_py("gen", mod) and dev_py("build", mod, "--ipa", "--bump")):
         say("the build failed: the switches are in tweaks.json; fix or remove them (Files tab restores the snapshot)")
         return 1
-    say(f"==> done: {added} new switches built. Run installs it on the phone; the dots show which ones work.")
+    ipa = dev.load_state(mod).get("last_ipa")
+    if args.no_install or not ipa:
+        say(f"==> done: {added} new switches built. Run installs it on the phone; the dots show which ones work.")
+        return 0
+    say("==> 5/5 install on the phone and watch the new switches")
+    if not dev_py("sign", ipa, "--install"):
+        say(f"==> built but not installed (is the phone on USB and unlocked?): {ipa}. Run installs it.")
+        return 1
+    stream_log(mod, 45)
+    say(f"==> done: {added} new switches built and installed. Turn them on in the game: green dots work, red say why.")
     return 0
 
 
