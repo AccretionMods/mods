@@ -230,10 +230,12 @@ const App = {
       this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center" }, bump, "bump version"),
       this.el("button", { class: "small", onclick: () => this.job("build", ["--ipa", ...(bump.checked ? ["--bump"] : [])]) }, "Build .ipa"),
       this.el("button", { class: "small", disabled: this.detail.last_ipa ? null : "", title: this.detail.last_ipa || "no .ipa built yet", onclick: () => this.job("sign", [this.detail.last_ipa, "--install"]) }, "Sign + install last .ipa"),
-      this.el("button", { class: "small primary", onclick: () => this.job("run", [...(bump.checked ? ["--bump"] : []), "--seconds", "75"]) }, "Build, sign, install, open, log")));
+      this.el("button", { class: "small primary", onclick: () => this.job("run", [...(bump.checked ? ["--bump"] : []), "--seconds", "75"]) }, "Build, sign, install, open, log"),
+      this.el("button", { class: "small", title: "reads the phone's log for 5 minutes: each switch shows its state in the game here", onclick: async () => { await this.job("log", ["--seconds", "300"]); setTimeout(() => this.refreshLive(), 3000); } }, "Watch the phone (5 min)")));
     if (tj && tj.watch && tj.watch.length) {
       box.append(this.el("p", { class: "hint", text: "Watch (log every " + (tj.watch_every || 10) + " s): " + tj.watch.map(w => `${w.object} ${w.getter || w.field}`).join(", ") }));
     }
+    setTimeout(() => this.refreshLive(), 0);
     for (const t of (tj ? tj.tweaks : [])) {
       const hooks = t.hooks || [], pins = t.pins || [];
       const jit = hooks.length && hooks.every(h => (d.hooks_json.find(e => (e.namespace ? e.namespace + "." : "") + e.class + "." + e.method === h.method || e.class + "." + e.method === h.method) || {}).needs_jit) && !pins.length && t.jit_label !== false;
@@ -247,7 +249,8 @@ const App = {
           this.el("span", { class: "title", text: t.title }),
           this.el("span", { class: "key", text: `${t.key} · ${kindText}` }),
           jit ? this.el("span", { class: "badge warn", text: "(JIT)", title: "every hook needs JIT; add a pin for phones without it" }) : null,
-          t.verified ? this.el("span", { class: "badge " + (t.verified.result === "works" ? "good" : "bad"), text: `${t.verified.result} on ${t.verified.app_version} (${t.verified.date})` }) : null),
+          t.verified ? this.el("span", { class: "badge " + (t.verified.result === "works" ? "good" : "bad"), text: `${t.verified.result} on ${t.verified.app_version} (${t.verified.date})` }) : null,
+          this.el("span", { id: "live-" + t.key })),
         chips.length ? this.el("div", { class: "chips" }, chips) : this.el("div", { class: "hint", text: "No hook or pin: a value for hand-written code in Tweak.x (am_" + t.key + ")." }),
         this.el("div", { class: "row" },
           this.el("button", { class: "small", onclick: () => this.quick("mark", { key: t.key, works: true }) }, "Works on the phone"),
@@ -499,7 +502,7 @@ const App = {
   async job(command, args, mod) {
     try {
       const body = { command, args: (args || []).filter(a => a !== null && a !== undefined) };
-      if (command !== "new" && command !== "fetch") body.mod = mod || this.mod;
+      if (!["new", "fetch", "start", "report"].includes(command)) body.mod = mod || this.mod;
       const j = await this.api("/api/jobs", body);
       this.showJob(j);
       this.poll(j.id);
@@ -542,7 +545,11 @@ const App = {
     this.api(`/api/jobs/${id}?since=${since}`).then(j => {
       this.showJob(j);
       if (j.status === "running" || j.status === "stopping") setTimeout(() => this.poll(id, j.next), 1000);
-      else { this.toast(`${j.command}: ${j.status}`, j.status === "done" ? "ok" : "bad"); this.loadMods().then(() => { if (this.mod) this.refresh(); }); }
+      else {
+        this.toast(`${j.command}: ${j.status}`, j.status === "done" ? "ok" : "bad");
+        const made = j.command === "start" && j.status === "done" ? ((this.byId("jobout-" + j.id) || {}).textContent || "").match(/making mods\/([a-z0-9-]+)/) : null;
+        this.loadMods().then(async () => { if (made) { await this.select(made[1]); this.setTab("scan"); } else if (this.mod) this.refresh(); });
+      }
     }).catch(e => this.toast(e.message, "bad"));
   },
 
@@ -610,6 +617,22 @@ const App = {
         this.el("button", { class: "small primary", onclick: explain }, "Explain and rank with Claude")),
       note, table);
     load();
+  },
+
+  // Each switch's state on the phone, from the menu's status lines in Studio's log and run jobs.
+  async refreshLive() {
+    if (this.tab !== "switches" || !this.mod) return;
+    const mod = this.mod;
+    let live;
+    try { live = await this.api(`/api/mods/${mod}/live`); } catch (e) { return; }
+    if (mod !== this.mod) return;
+    for (const [key, st] of Object.entries(live.switches)) {
+      const span = this.byId("live-" + key); if (!span) continue;
+      const text = st.state === "ok" ? "on the phone: working" : st.state === "off" ? "on the phone: off" : "on the phone: " + st.reason;
+      span.replaceChildren(this.el("span", { class: "badge " + (st.state === "ok" ? "good" : st.state === "off" ? "" : "bad"), text }));
+    }
+    clearTimeout(this.liveTimer);
+    if (live.watching) this.liveTimer = setTimeout(() => this.refreshLive(), 3000);
   },
 
   // ---------------------------------------------------------------- console
@@ -775,7 +798,10 @@ const App = {
     ];
     const newMod = g.mods.length
       ? this.el("button", { class: "small", onclick: () => { this.select(g.mods[0].name); this.setTab("switches"); } }, "Open mod")
-      : this.el("button", { class: "small primary", onclick: () => this.newModDialog(g.bundle, g.name) }, "New mod");
+      : this.el("button", { class: "small primary", title: "decrypted copy, moddability report, mod folder + dump, then the scan, in one job", onclick: () => {
+          if (confirm(`Start a mod for ${g.name}? Studio gets a decrypted copy (if none is here), reports whether it can be modded, makes the mod folder and its dump, and opens the scan.`)) this.job("start", [g.bundle, "--region", ["us", "jp", "cn", "vn"].includes(region) ? region : "us"]);
+        } }, "Start a mod");
+    const report = g.ipa ? this.el("button", { class: "small", title: "engine, decrypted, online, ads and purchases", onclick: () => this.job("report", [g.ipa.path]) }, "Report") : null;
     return this.el("div", { class: "game" },
       this.el("div", { class: "top" },
         this.el("img", { src: g.icon, alt: "", loading: "lazy" }),
@@ -786,6 +812,7 @@ const App = {
       this.el("div", { class: "acts" },
         this.el("button", { class: "small", onclick: () => this.getIpaDialog(g.bundle, region) }, "Get .ipa"),
         newMod,
+        report,
         this.el("button", { class: "small", onclick: () => this.gamesLike && this.gamesLike(g.bundle, g.name) }, "Like this"),
         g.url ? this.el("a", { href: g.url, target: "_blank", rel: "noopener", class: "small", style: "align-self:center" }, "App Store") : null));
   },

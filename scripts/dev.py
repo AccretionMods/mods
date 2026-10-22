@@ -36,6 +36,10 @@ it); signing and device logs need the phone on USB and run on Windows (plumesign
          [--platform iphone] [--force]                           (AM_DECRYPT_URL; default decrypt.34306.lol, a third party)
   dev.py fetch --login [--email E] | --logout | --account        the site account a new decrypt needs
   dev.py fetch --save-login | --forget-login                     keep it in Windows Credential Manager; fetch signs in
+  dev.py start <bundle-id | file.ipa> [--name N] [--title T]      new game in one go: decrypted copy, report,
+                                                                 mod folder + dump, scan with the best candidates
+  dev.py report <mod | file.ipa> [--json]                        is it worth modding: engine, decrypted, online,
+                                                                 ads and purchases; scan counts once dumped
   dev.py scan <mod> [--area Combat] [--find word] [--limit 40]   no-JIT switch candidates in the dump, scored,
          [--flagged] [--json] [--text]                            with what is sold/online flagged (Studio: Scan tab)
   dev.py games [top-free|top-paid|top-grossing|new-free|new-paid|similar] [--region us] [--json] [--all]
@@ -77,6 +81,7 @@ sys.path.insert(0, str(HERE))
 
 import dev_learn
 import dump_scan
+import moddability
 import games
 import gen_tweaks
 import ipa_fetch
@@ -1837,6 +1842,82 @@ def scan_rows(mod, area=None, find=None, flagged=False):
     return result, rows
 
 
+def report_for(target):
+    """(facts, scan or None) for a mod name or an .ipa path."""
+    path = Path(target)
+    mod = None
+    if not path.is_file():
+        if not (ROOT / "mods" / target / "mod.json").is_file():
+            raise DevError(f"{target} is neither an .ipa nor a mod")
+        mod = target
+        path = find_base(mod, read_json(mod_dir(mod) / "mod.json"))
+    try:
+        facts = moddability.inspect_ipa(path)
+    except (ValueError, KeyError, zipfile.BadZipFile) as e:
+        raise DevError(f"can't read {path}: {e}") from e
+    if mod is None:  # an .ipa: use the dump of a mod for the same game, if one exists
+        mod = next((m["name"] for m in mods_by_target().get(facts["bundle"], [])), None)
+    scan = None
+    if mod:
+        try:
+            scan = dump_scan.scan(dump_path(mod), load_tweaks(mod_dir(mod), read_json(mod_dir(mod) / "mod.json")))
+        except DevError:
+            scan = None
+    return facts, scan
+
+
+def cmd_report(args):
+    facts, scan = report_for(args.target)
+    if args.json:
+        level, lines = moddability.verdict(facts, scan)
+        print(json.dumps(dict(facts, verdict=level, notes=lines), indent=2))
+    else:
+        print(moddability.report_text(facts, scan))
+    return 0
+
+
+def cmd_start(args):
+    """A new game in one go: a decrypted copy, the report, the mod folder and its dump, then the scan."""
+    target = args.target
+    if Path(target).is_file():
+        ipa = Path(target)
+    else:
+        have = [r for r in local_ipas() if r["bundle"] == target]
+        if have:
+            ipa = Path(sorted(have, key=lambda r: version_tuple(r["version"] or "0"))[-1]["path"])
+            print(f"==> decrypted copy already here: {ipa}")
+        else:
+            print(f"==> getting a decrypted copy of {target}")
+            try:
+                ipa = ipa_fetch.fetch(am_root(), target, args.region, "iphone", source=args.source)
+            except ipa_fetch.FetchError as e:
+                raise DevError(str(e)) from e
+    facts = moddability.inspect_ipa(ipa)
+    level, _ = moddability.verdict(facts)
+    print(moddability.report_text(facts))
+    if level == "not supported":
+        raise DevError("stopped: this game can't be modded with our tools (see the verdict)")
+    slug = re.sub(r"[^a-z0-9]+", "-", (facts["name"] or facts["bundle"]).lower()).strip("-") or "game"
+    name = args.name or f"{slug}-plus"
+    existing = [m["name"] for m in mods_by_target().get(facts["bundle"], [])]
+    if existing and not args.name:
+        raise DevError(f"{facts['bundle']} already has mods/{existing[0]}: open it, or pass --name for another one")
+    print(f"==> making mods/{name} and its dump (a minute or two)")
+    cmd_new(argparse.Namespace(name=name, ipa=str(ipa), title=args.title or f"{facts['name']}+",
+                               category="games", no_dump=False))
+    scan = dump_scan.scan(dump_path(name), load_tweaks(mod_dir(name), read_json(mod_dir(name) / "mod.json")))
+    level, lines = moddability.verdict(facts, scan)
+    print(f"==> verdict with the dump: {level.upper()}")
+    for line in lines:
+        print(f"    - {line}")
+    print("==> best no-JIT candidates (Studio: Scan tab; Explain and rank with Claude):")
+    for r in scan["rows"][:12]:
+        when = f" --when {r['when']}" if r["when"] != "always" else ""
+        print(f"    {r['area']:<16} am pin {name} {r['class']}.{r['member']} --object \"{r['object']}\" --value {r['value']}{when}")
+    print(f"==> next: pick switches (am pin ... --title), then am run {name}")
+    return 0
+
+
 def cmd_scan(args):
     result, rows = scan_rows(args.mod, args.area, args.find, args.flagged)
     rows = rows[: args.limit]
@@ -2174,6 +2255,19 @@ def build_parser():
     s = sub.add_parser("learn", help="import a mod's hooks.json into the pattern store")
     s.add_argument("mod")
     s.set_defaults(fn=cmd_learn)
+
+    s = sub.add_parser("report", help="is a game worth modding: engine, decrypted, online, ads, purchases")
+    s.add_argument("target", help="a mod name or an .ipa file")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_report)
+
+    s = sub.add_parser("start", help="a new game in one go: copy, report, mod folder + dump, scan")
+    s.add_argument("target", help="the game's bundle ID or a decrypted .ipa")
+    s.add_argument("--name", help="mod folder name (default: <app>-plus)")
+    s.add_argument("--title", help="menu title (default: <app>+)")
+    s.add_argument("--region", default="us", choices=ipa_fetch.REGIONS)
+    s.add_argument("--source", default="34306", choices=list(ipa_fetch.SOURCES))
+    s.set_defaults(fn=cmd_start)
 
     s = sub.add_parser("scan", help="no-JIT switch candidates in the dump, scored; sold/online flagged")
     s.add_argument("mod")

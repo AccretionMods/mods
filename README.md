@@ -257,6 +257,19 @@ function that makes it plain `am`). With no command it prints the help. Three mo
   the switch and on the pattern, so what worked ranks higher next time and what failed drops out. Methods
   named for purchases or online play are never suggested (README rules), nor are Unity callbacks.
 
+#### A new game (`am start`, `am report`)
+
+`am report <mod | file.ipa>` says in a second whether a game is worth modding with these tools: decrypted
+or not, the engine (Unity IL2CPP needed), and the multiplayer, online, ads and purchase code it ships; with
+a dump, the scan's candidate counts. `am start <bundle-id | file.ipa>` does a new game in one go: a
+decrypted copy (am fetch) if none is here, the report (it stops when the game can't be modded), the mod
+folder and its dump (am new), then the best no-JIT candidates. In Studio: Start a mod and Report on a
+Games card; Start ends on the new mod's Scan tab.
+
+While the game runs, the mod's menu logs each switch's state (`[AccretionMods] status <key> ok|off|waiting:
+...`), on change and every 20 s. Studio's Switches tab shows them from its log and run jobs ("on the phone:
+working"), and Watch the phone (5 min) keeps them current.
+
 #### App Store games from a console (`am games`)
 
 The Games tab's lists, for a console or a script (`--json` prints the rows the page gets from

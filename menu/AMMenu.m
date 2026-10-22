@@ -1,5 +1,6 @@
 #import "AMMenu.h"
 #import <os/lock.h>
+#import <os/log.h>
 
 static NSString *AMKey(NSString *key) {
     return [@"AM_" stringByAppendingString:key];
@@ -30,12 +31,19 @@ void AMMenuStatus(const char *key, bool ok, const char *reason) {
         e = &sStatus[sStatusCount++];
         strlcpy(e->key, key, sizeof e->key);
     }
+    bool changed = false;
+    char line[220] = "";
     if (e) {
+        const char *why = ok ? "" : (reason ?: "not reaching the game");
+        changed = e->at == 0 || e->ok != ok || strcmp(e->reason, why) != 0;
         e->ok = ok;
-        strlcpy(e->reason, ok ? "" : (reason ?: "not reaching the game"), sizeof e->reason);
+        strlcpy(e->reason, why, sizeof e->reason);
         e->at = CFAbsoluteTimeGetCurrent();
+        if (changed) snprintf(line, sizeof line, "status %s %s%s", key, ok ? "ok" : "waiting: ", why);
     }
     os_unfair_lock_unlock(&sStatusLock);
+    // Mod Studio reads these from the device log (am log) to show each switch's state live
+    if (changed) os_log(OS_LOG_DEFAULT, "[AccretionMods] %{public}s", line);
 }
 
 // Whether a switch's cheat is working now, and the line shown under its title.
@@ -359,6 +367,7 @@ static UIColor *AMNeon(BOOL ok) {
     AMItem *item = self.items[s.tag];
     [NSUserDefaults.standardUserDefaults setBool:s.on forKey:AMKey(item.key)];
     if (item.onSwitch) item.onSwitch(s.on);
+    if (!s.on) os_log(OS_LOG_DEFAULT, "[AccretionMods] status %{public}@ off", item.key);
     UITableViewCell *cell = [self.tableView cellForRowAtIndexPath:[self pathOfFlat:s.tag]];
     if (cell) {
         [self showStatusOf:item inCell:cell];
@@ -607,10 +616,15 @@ static NSString *const AMButtonSpot = @"AM__buttonSpot";  // where the button wa
 // them does, yellow when some do.
 - (void)updateBadge {
     NSUInteger on = 0, failing = 0;
+    static NSUInteger ticks;
+    BOOL resend = ++ticks % 20 == 0;  // every 20 s the whole state again, for a log capture started late
     for (AMItem *item in _items) {
         if (item.isList || item.isSlider || ![NSUserDefaults.standardUserDefaults boolForKey:AMKey(item.key)]) continue;
         on++;
-        if (!AMStatusFor(item.key, NULL)) failing++;
+        NSString *line = nil;
+        BOOL ok = AMStatusFor(item.key, &line);
+        if (!ok) failing++;
+        if (resend) os_log(OS_LOG_DEFAULT, "[AccretionMods] status %{public}@ %{public}@", item.key, ok ? @"ok" : [@"waiting: " stringByAppendingString:line]);
     }
     for (AMButton *button in _buttons) {
         button.ringState = on == 0 ? AMRingNone : failing == 0 ? AMRingGood : failing == on ? AMRingBad : AMRingSome;

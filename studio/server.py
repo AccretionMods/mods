@@ -10,7 +10,8 @@ fetch) run as jobs: a `python dev.py <command> ...` subprocess whose output the 
 
 API (JSON): GET /api/mods, /api/mods/<mod>, /api/mods/<mod>/find?q=&limit=, /api/mods/<mod>/fields?class=,
 /api/mods/<mod>/suggest, /api/mods/<mod>/scan?area=&find=&flagged=1&text=1 (no-JIT candidates,
-scripts/dump_scan.py), /api/mods/<mod>/context (facts for the prompt builder), /api/prompts
+scripts/dump_scan.py), /api/mods/<mod>/live (switch states the phone logged),
+/api/mods/<mod>/context (facts for the prompt builder), /api/prompts
 (studio/prompts.json), /api/bases, /api/fetch/account, /api/fetch/search?q=&region=&platform=,
 /api/games?list=top-free|top-paid|top-grossing|new-free|new-paid|similar|search|like&region=&q=&bundle=
 (scripts/games.py through dev.games_list; also `dev.py games`), /api/games/info?bundle=&region=;
@@ -66,6 +67,8 @@ JOB_COMMANDS = {
     "new",
     "check",
     "fetch",
+    "start",
+    "report",
 }
 QUICK = {"add", "pin", "call", "tweak", "remove", "gen", "mark"}
 MOD_NAME = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
@@ -338,6 +341,25 @@ def mod_detail(name):
 
 
 LOG_ERROR = re.compile(r"error|exception|crash|fault|fail|not found|null|abort|terminat", re.IGNORECASE)
+
+
+LIVE_STATUS = re.compile(r"\[AccretionMods\] status (\w+) (ok|off|waiting: (.*))$")
+
+
+def live_status(name):
+    """Each switch's last state on the phone, from the menu's "status" log lines in Studio's log and run jobs
+    for this mod (oldest job first, so the newest line wins): {key: {"state", "reason"}}, and whether one runs."""
+    states, watching = {}, False
+    for job in sorted(JOBS.values(), key=lambda j: j.started):
+        if job.command not in ("log", "run") or job.argv[:1] != [name]:
+            continue
+        watching = watching or job.status == "running"
+        for line in job.lines:
+            m = LIVE_STATUS.search(line.rstrip())
+            if m:
+                state = "waiting" if m.group(2).startswith("waiting") else m.group(2)
+                states[m.group(1)] = {"state": state, "reason": (m.group(3) or "").strip()}
+    return {"switches": states, "watching": watching}
 
 
 def mod_context(name):
@@ -660,6 +682,8 @@ class Handler(BaseHTTPRequestHandler):
                         "classes": result["classes"], "total": len(result["rows"]), "flagged": len(result["flagged"]),
                         "rows": rows[: int(q.get("limit", 300))],
                     })
+                if rest == ["live"]:
+                    return self.send_json(live_status(name))
                 if rest == ["context"]:
                     return self.send_json(mod_context(name))
                 if rest == ["suggest"]:
@@ -687,7 +711,7 @@ class Handler(BaseHTTPRequestHandler):
             command = body.get("command", "")
             argv = []
             # sign and install take a file, not a mod; new makes the mod; fetch takes an app
-            if command not in ("new", "sign", "install", "fetch"):
+            if command not in ("new", "sign", "install", "fetch", "start", "report"):
                 argv.append(self.mod_name(str(body.get("mod", ""))))
             argv += [str(a) for a in body.get("args", [])]
             job = start_job(command, argv)
