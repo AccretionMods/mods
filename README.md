@@ -188,7 +188,13 @@ mod": ranked by the themes and genres they share with our mods' games, from `scr
 Apple's public RSS, Lookup and Search APIs, cached half an hour), marks the ones we already mod and the
 ones with a decrypted copy waiting, flags online or multiplayer games (hidden by default: no online
 cheats), and has Get .ipa, New mod (or Open mod) and Like this on each card. Enter in its box searches the
-whole App Store (a name or a bundle ID); `am games` gives the same lists in a console (below). Quick commands
+whole App Store (a name or a bundle ID); `am games` gives the same lists in a console (below). Console
+runs any `dev.py` command typed as `am ...` (dump, `find` with any regex, fields, add, pin, build, sign, run,
+log, update, games, fetch…), with buttons that fill in the selected mod, ↑/↓ history, an answer box under a
+job for its questions (pick's number, the Apple ID 2FA code), and "Prompts for Claude": Update this app,
+Explore the dump for tweaks and Help me narrow down the best approach, filled in for the mod and copied to
+paste into Claude Code. The console answers only this PC, even with `--host 0.0.0.0`. The Switches tab has
+Build .ipa, Sign + install and Build, sign, install, open, log; job output shows under every tab. Quick commands
 run through `dev.py`'s own functions; long ones run `dev.py` as a subprocess. The first Apple ID
 sign-in (2FA) must be done once from a console, then the page's phone buttons work. The server binds
 127.0.0.1; `--host 0.0.0.0` shows the page on the Wi-Fi with no login, for a trusted network only.

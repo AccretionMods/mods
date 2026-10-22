@@ -1926,7 +1926,8 @@ def cmd_fetch(args):
     return 0
 
 
-def main(argv=None):
+def build_parser():
+    """dev.py's argument parser (Mod Studio's Console reads the command list from it)."""
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -2172,7 +2173,11 @@ def main(argv=None):
         help="34306: decrypt.34306.lol (API, captcha -> browser); decrypt.day, armconverter: in the browser",
     )
     s.set_defaults(fn=cmd_fetch)
+    return p
 
+
+def main(argv=None):
+    p = build_parser()
     if not argv and len(sys.argv) == 1:
         p.print_help()
         return 0

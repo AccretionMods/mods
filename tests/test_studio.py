@@ -180,6 +180,33 @@ class Api(unittest.TestCase):
         self.assertEqual(status, 200, job)
         self.assertEqual(job["args"], ["C:/no/such.ipa", "--install"])
         self.post(f"/api/jobs/{job['id']}/stop", {})
+        # console: any dev.py command, regexes kept as typed, answers only for console jobs
+        status, data = self.get("/api/console/commands")
+        self.assertIn("find", data["commands"])
+        self.assertIn("dump", data["commands"])
+        self.assertEqual(
+            server.split_line(r'am find game-plus "Damage|Hp" \d+Hp\b'),
+            ["find", "game-plus", "Damage|Hp", r"\d+Hp\b"],
+        )
+        status, job = self.post("/api/console", {"line": 'am find game-plus "Damage|Player"'})
+        self.assertEqual(status, 200, job)
+        self.assertTrue(job["interactive"])
+        for _ in range(100):
+            status, job = self.get(f"/api/jobs/{job['id']}")
+            if job["status"] != "running":
+                break
+            import time
+
+            time.sleep(0.1)
+        self.assertEqual(job["status"], "done", job)
+        self.assertTrue(any("DamagePlayer" in line for line in job["lines"]), job)
+        status, data = self.post("/api/console", {"line": "rm -rf /"})
+        self.assertEqual(status, 400)
+        status, data = self.post("/api/console", {"line": 'find "unclosed'})
+        self.assertEqual(status, 400)
+        status, check = self.post("/api/jobs", {"command": "check", "mod": "game-plus"})
+        status, data = self.post(f"/api/jobs/{check['id']}/input", {"text": "1"})
+        self.assertEqual(status, 400)  # only console jobs take answers
         status, data = self.get("/api/games?list=top-free&region=../x")
         self.assertEqual(status, 400)
         self.assertIn("region", data["error"])

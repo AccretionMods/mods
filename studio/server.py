@@ -15,6 +15,8 @@ API (JSON): GET /api/mods, /api/mods/<mod>, /api/mods/<mod>/find?q=&limit=, /api
 POST /api/fetch/login {"email", "password"} (passed to the decrypt site, never saved), /api/fetch/logout; POST /api/mods/<mod>/<add|pin|call|tweak|remove|gen|mark> with the
 command's options as JSON (the same names as dev.py's flags, dashes as underscores); POST /api/jobs
 {"command": "build", "mod": "...", "args": ["--ipa"]}, GET /api/jobs/<id>?since=N, POST /api/jobs/<id>/stop.
+Console: POST /api/console {"line": "find my-mod \"Damage|Hp\""} runs any dev.py command as a job (this PC only),
+GET /api/console/commands, POST /api/jobs/<id>/input {"text": "2"} answers a console job's prompt.
 
 Binds 127.0.0.1: only this PC. --host 0.0.0.0 shows it to the Wi-Fi with no login, for a trusted network.
 """
@@ -25,6 +27,7 @@ import io
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import threading
@@ -64,8 +67,9 @@ MOD_NAME = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 
 class Job:
-    def __init__(self, command, argv):
-        self.id = f"{int(time.time() * 1000):x}"
+    def __init__(self, command, argv, interactive=False):
+        self.id = f"{int(time.time() * 1000):x}{len(JOBS):x}"
+        self.interactive = interactive  # console jobs take typed answers (pick, plumesign's 2FA code)
         self.command = command
         self.argv = argv
         self.lines = []
@@ -88,7 +92,7 @@ class Job:
         try:
             self.proc = subprocess.Popen(
                 cmd,
-                stdin=subprocess.DEVNULL,
+                stdin=subprocess.PIPE if self.interactive else subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -110,6 +114,14 @@ class Job:
             else ("stopped" if self.status == "stopping" else "failed")
         )
 
+    def send(self, text):
+        """A typed answer for a console job's prompt."""
+        if not (self.interactive and self.proc and self.proc.poll() is None and self.proc.stdin):
+            raise dev.DevError("this job is not waiting for input")
+        self.lines.append(f"> {text}")
+        self.proc.stdin.write(text + "\n")
+        self.proc.stdin.flush()
+
     def stop(self):
         if self.proc and self.proc.poll() is None:
             self.status = "stopping"
@@ -123,21 +135,53 @@ class Job:
             "status": self.status,
             "code": self.code,
             "started": self.started,
+            "interactive": self.interactive,
             "lines": self.lines[since:],
             "next": len(self.lines),
         }
 
 
-def start_job(command, argv):
-    if command not in JOB_COMMANDS:
+def start_job(command, argv, interactive=False):
+    if command not in JOB_COMMANDS and not (interactive and command in console_commands()):
         raise dev.DevError(f"{command} is not a job command")
     for a in argv:
         if not isinstance(a, str) or "\n" in a:
             raise dev.DevError("bad argument")
-    job = Job(command, argv)
+    job = Job(command, argv, interactive)
     JOBS[job.id] = job
     threading.Thread(target=job.run, daemon=True).start()
     return job
+
+
+def console_commands():
+    """Every dev.py command, for the Console tab."""
+    return sorted(dev.build_parser()._subparsers._group_actions[0].choices)
+
+
+def split_line(line):
+    """A console line as arguments: quotes group words, backslashes stay (regexes like \\d+|Hp\\b)."""
+    lex = shlex.shlex(line, posix=True)
+    lex.whitespace_split = True
+    lex.escape = ""
+    try:
+        words = list(lex)
+    except ValueError as e:
+        raise dev.DevError(f"console: {e}") from e
+    while words and words[0].lower() in ("am", "dev.py", "python", "py", "scripts\\am.ps1", "scripts/dev.py"):
+        words.pop(0)
+    return words
+
+
+def console(line):
+    """Run a typed `am ...` line as a streamed job: any dev.py command, or help [command]."""
+    words = split_line(line)
+    if not words:
+        raise dev.DevError("console: type a command, or help")
+    if words[0] in ("help", "-h", "--help"):
+        return start_job("--help", [], True) if len(words) == 1 else start_job(words[1], ["--help"], True)
+    if words[0] not in console_commands():
+        raise dev.DevError(f"console: no command {words[0]!r}; commands: {', '.join(console_commands())}")
+    return start_job(words[0], words[1:], True)
 
 
 def capture(fn, *args):
@@ -375,6 +419,11 @@ class Handler(BaseHTTPRequestHandler):
             raise dev.DevError("a JSON object is expected")
         return data
 
+    def local_only(self):
+        """The console runs commands on this PC: only this PC may use it, even with --host 0.0.0.0."""
+        if self.client_address[0] not in ("127.0.0.1", "::1", "::ffff:127.0.0.1"):
+            raise dev.DevError("the console only answers this PC (127.0.0.1)")
+
     def mod_name(self, part):
         if (
             not MOD_NAME.match(part)
@@ -420,6 +469,8 @@ class Handler(BaseHTTPRequestHandler):
             )
         if parts[1:] == ["bases"]:
             return self.send_json(bases())
+        if parts[1:] == ["console", "commands"]:
+            return self.send_json({"commands": console_commands()})
         if parts[1:] == ["games"]:
             return self.send_json(
                 dev.games_list(q.get("list", "top-free"), q.get("region", "us"), q.get("q"), q.get("bundle"))
@@ -472,6 +523,16 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         parts = [p for p in url.path.split("/") if p]
         body = self.body_json()
+        if parts == ["api", "console"]:
+            self.local_only()
+            return self.send_json(console(str(body.get("line", ""))).view())
+        if len(parts) == 4 and parts[:2] == ["api", "jobs"] and parts[3] == "input":
+            self.local_only()
+            job = JOBS.get(parts[2])
+            if not job:
+                return self.send_json({"error": "no such job"}, HTTPStatus.NOT_FOUND)
+            job.send(str(body.get("text", "")))
+            return self.send_json(job.view(len(job.lines)))
         if parts == ["api", "jobs"]:
             command = body.get("command", "")
             argv = []
