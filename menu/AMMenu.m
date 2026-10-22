@@ -391,6 +391,12 @@ static UIColor *AMResolved(UIColor *c, UITraitCollection *t) {
 // draws its own slice: the top (rounded corners, top edge), a middle (the two sides), the bottom, or a whole
 // card (a folded category), with a hairline between rows.
 static const CGFloat AMSide = 16;   // a panel's distance from the screen edge
+static const CGFloat AMMaxWidth = 640;  // panels never grow wider: landscape centres them like a reading column
+
+// The side inset for a given width: 16 pt, or more so the panels stay at most AMMaxWidth wide.
+static CGFloat AMInset(CGFloat width) {
+    return MAX(AMSide, floor((width - AMMaxWidth) / 2));
+}
 static const CGFloat AMPad = 14;    // inside a panel
 static const CGFloat AMRadius = 12;
 
@@ -439,7 +445,8 @@ typedef NS_ENUM(NSInteger, AMPiece) { AMPieceTop, AMPieceMiddle, AMPieceBottom, 
     BOOL top = self.piece == AMPieceTop || self.piece == AMPieceWhole;
     BOOL bottom = self.piece == AMPieceBottom || self.piece == AMPieceWhole;
     CGRect b = self.bounds;
-    CGFloat x0 = AMSide + 0.5, x1 = b.size.width - AMSide - 0.5, R = AMRadius;
+    CGFloat side = AMInset(b.size.width);
+    CGFloat x0 = side + 0.5, x1 = b.size.width - side - 0.5, R = AMRadius;
     CGFloat y0 = top ? 0.5 : 0, y1 = bottom ? b.size.height - 0.5 : b.size.height;
     UIRectCorner corners = (top ? UIRectCornerTopLeft | UIRectCornerTopRight : 0) | (bottom ? UIRectCornerBottomLeft | UIRectCornerBottomRight : 0);
     _fill.path = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(x0, y0, x1 - x0, y1 - y0) byRoundingCorners:corners
@@ -552,7 +559,8 @@ static UITextField *AMSearchField(NSUInteger count) {
 
 - (void)layoutSubviews {
     [super layoutSubviews];
-    CGRect r = CGRectMake(AMSide, 14, self.bounds.size.width - 2 * AMSide, 40);
+    CGFloat side = AMInset(self.bounds.size.width);
+    CGRect r = CGRectMake(side, 14, self.bounds.size.width - 2 * side, 40);
     self.field.frame = r;
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
@@ -641,6 +649,90 @@ static UITextField *AMSearchField(NSUInteger count) {
 
 @end
 
+// Accretion's mark, small and alive: a bright star inside two tilted rings (violet into pink, as on the app
+// icon), a light running round the rings and the star breathing. Core Animation only; still with Reduce Motion.
+@interface AMLogo : UIView
+@end
+
+@implementation AMLogo {
+    CAShapeLayer *_rings[2], *_glints[2];
+    CALayer *_star;
+}
+
+- (instancetype)init {
+    if ((self = [super initWithFrame:CGRectMake(0, 0, 22, 22)])) {
+        self.userInteractionEnabled = NO;
+        self.isAccessibilityElement = NO;
+        UIColor *colors[2] = {[UIColor colorWithRed:0.55 green:0.36 blue:0.96 alpha:1], [UIColor colorWithRed:0.93 green:0.36 blue:0.62 alpha:1]};
+        CGFloat tilts[2] = {-0.45, 0.35};
+        for (int i = 0; i < 2; i++) {
+            CAShapeLayer *ring = [CAShapeLayer layer];
+            ring.frame = self.bounds;
+            ring.path = [UIBezierPath bezierPathWithOvalInRect:CGRectMake(1, 7 - i, 20, 8 + 2 * i)].CGPath;
+            ring.fillColor = UIColor.clearColor.CGColor;
+            ring.strokeColor = [colors[i] colorWithAlphaComponent:0.85].CGColor;
+            ring.lineWidth = 1.4;
+            ring.affineTransform = CGAffineTransformMakeRotation(tilts[i]);
+            [self.layer addSublayer:ring];
+            _rings[i] = ring;
+            CAShapeLayer *glint = [CAShapeLayer layer];  // the light that runs round the ring
+            glint.frame = self.bounds;
+            glint.path = ring.path;
+            glint.fillColor = UIColor.clearColor.CGColor;
+            glint.strokeColor = [UIColor colorWithRed:1 green:0.95 blue:0.86 alpha:1].CGColor;
+            glint.lineWidth = 1.6;
+            glint.lineCap = kCALineCapRound;
+            glint.strokeStart = 0;
+            glint.strokeEnd = 0.12;
+            glint.affineTransform = ring.affineTransform;
+            [self.layer addSublayer:glint];
+            _glints[i] = glint;
+        }
+        _star = [CALayer layer];
+        _star.frame = CGRectMake(8, 8, 6, 6);
+        _star.cornerRadius = 3;
+        _star.backgroundColor = [UIColor colorWithRed:1 green:0.97 blue:0.9 alpha:1].CGColor;
+        _star.shadowColor = [UIColor colorWithRed:1 green:0.85 blue:0.7 alpha:1].CGColor;
+        _star.shadowOffset = CGSizeZero;
+        _star.shadowRadius = 3;
+        _star.shadowOpacity = 0.9;
+        [self.layer addSublayer:_star];
+    }
+    return self;
+}
+
+- (CGSize)intrinsicContentSize { return CGSizeMake(22, 22); }
+
+- (void)didMoveToWindow {
+    [super didMoveToWindow];
+    for (int i = 0; i < 2; i++) [_glints[i] removeAllAnimations];
+    [_star removeAllAnimations];
+    if (!self.window || AMStill()) { for (int i = 0; i < 2; i++) _glints[i].hidden = YES; return; }
+    for (int i = 0; i < 2; i++) {
+        _glints[i].hidden = NO;
+        CABasicAnimation *start = [CABasicAnimation animationWithKeyPath:@"strokeStart"];
+        start.fromValue = @0;
+        start.toValue = @0.88;
+        CABasicAnimation *end = [CABasicAnimation animationWithKeyPath:@"strokeEnd"];
+        end.fromValue = @0.12;
+        end.toValue = @1;
+        CAAnimationGroup *run = [CAAnimationGroup animation];
+        run.animations = @[start, end];
+        run.duration = i ? 4.4 : 3.2;
+        run.repeatCount = HUGE_VALF;
+        [_glints[i] addAnimation:run forKey:@"run"];
+    }
+    CABasicAnimation *breathe = [CABasicAnimation animationWithKeyPath:@"shadowRadius"];
+    breathe.fromValue = @2;
+    breathe.toValue = @5;
+    breathe.duration = 1.2;
+    breathe.autoreverses = YES;
+    breathe.repeatCount = HUGE_VALF;
+    [_star addAnimation:breathe forKey:@"breathe"];
+}
+
+@end
+
 #pragma mark - Rows
 
 // Every row sits in its category's panel: a slice of the border as its background, content inside the panel's padding.
@@ -657,9 +749,17 @@ static UITextField *AMSearchField(NSUInteger count) {
         self.backgroundView = [AMPanelPiece new];
         self.contentView.preservesSuperviewLayoutMargins = NO;
         self.contentView.insetsLayoutMarginsFromSafeArea = NO;
-        self.contentView.layoutMargins = UIEdgeInsetsMake(12, AMSide + AMPad, 12, AMSide + AMPad);
+        self.contentView.layoutMargins = UIEdgeInsetsMake(10, AMSide + AMPad, 10, AMSide + AMPad);
     }
     return self;
+}
+
+// the content follows the panel's inset (wider in landscape, see AMInset)
+- (void)layoutSubviews {
+    CGFloat side = AMInset(self.bounds.size.width) + AMPad;
+    UIEdgeInsets m = self.contentView.layoutMargins;
+    if (fabs(m.left - side) > 0.5) self.contentView.layoutMargins = UIEdgeInsetsMake(m.top, side, m.bottom, side);
+    [super layoutSubviews];
 }
 
 - (void)setPiece:(AMPiece)piece rule:(BOOL)rule {
@@ -716,7 +816,7 @@ static UITextField *AMSearchField(NSUInteger count) {
             [_detail.bottomAnchor constraintEqualToAnchor:m.bottomAnchor constant:-2],
             [_toggle.trailingAnchor constraintEqualToAnchor:m.trailingAnchor],
             [_toggle.centerYAnchor constraintEqualToAnchor:self.contentView.centerYAnchor],
-            [self.contentView.heightAnchor constraintGreaterThanOrEqualToConstant:56],
+            [self.contentView.heightAnchor constraintGreaterThanOrEqualToConstant:48],
         ]];
     }
     return self;
@@ -826,6 +926,7 @@ static UITextField *AMSearchField(NSUInteger count) {
 @property (nonatomic, strong) AMPanelPiece *piece;
 @property (nonatomic, strong) UILabel *label, *right;
 @property (nonatomic, strong) UIControl *tap;
+@property (nonatomic, strong) UIButton *off;  // turns the category's switches off; shown while one is on
 @end
 
 @implementation AMSectionHead
@@ -838,17 +939,29 @@ static UITextField *AMSearchField(NSUInteger count) {
         _right = [UILabel new];
         _right.textAlignment = NSTextAlignmentRight;
         _tap = [UIControl new];
-        for (UIView *v in @[_label, _right, _tap]) [self.contentView addSubview:v];
+        _off = [UIButton buttonWithType:UIButtonTypeSystem];
+        [_off setAttributedTitle:AMLabel(@"Off", AM_ACCENT_TEXT) forState:UIControlStateNormal];
+        _off.layer.cornerRadius = 8;
+        _off.layer.borderWidth = 1;
+        _off.layer.borderColor = AMResolved(AM_LINE_STRONG, UITraitCollection.currentTraitCollection).CGColor;
+        _off.accessibilityLabel = @"Turn this category off";
+        for (UIView *v in @[_label, _right, _tap, _off]) [self.contentView addSubview:v];  // off above tap
     }
     return self;
 }
 
 - (void)layoutSubviews {
     [super layoutSubviews];
-    CGFloat w = self.contentView.bounds.size.width, x = AMSide + AMPad, inner = w - 2 * x;
-    self.label.frame = CGRectMake(x, 16, inner * 0.6, 16);
-    self.right.frame = CGRectMake(x + inner * 0.4, 16, inner * 0.6, 16);
+    CGFloat w = self.contentView.bounds.size.width, x = AMInset(w) + AMPad, inner = w - 2 * x;
+    self.label.frame = CGRectMake(x, 14, inner * 0.6, 16);
+    self.right.frame = CGRectMake(x + inner * 0.4, 14, inner * 0.6, 16);
     self.tap.frame = self.contentView.bounds;
+    if (!self.off.hidden) {
+        self.off.frame = CGRectMake(x + inner - 44, 9, 44, 26);
+        CGRect r = self.right.frame;
+        r.size.width -= 54;  // the count moves left of the button
+        self.right.frame = r;
+    }
 }
 
 @end
@@ -968,6 +1081,16 @@ static NSString *const AMOpenSections = @"AM__openSections";
     table.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
     self.navigationItem.rightBarButtonItem =
         [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(close)];
+    // the title with our mark beside it
+    UILabel *name = [UILabel new];
+    name.text = self.title;
+    name.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
+    name.textColor = AM_FG;
+    UIStackView *titleView = [[UIStackView alloc] initWithArrangedSubviews:@[[AMLogo new], name]];
+    titleView.spacing = 8;
+    titleView.alignment = UIStackViewAlignmentCenter;
+    self.navigationItem.titleView = titleView;
+    [self refreshAllOff];
     if (self.items.count > 12) {
         self.search = AMSearchField(self.items.count);
         self.search.delegate = self;
@@ -999,6 +1122,8 @@ static NSString *const AMOpenSections = @"AM__openSections";
         if (v == self.tableView.tableHeaderView) self.tableView.tableHeaderView = v;
         else self.tableView.tableFooterView = v;
     }
+    CGFloat side = AMInset(width) + 4;
+    self.note.frame = CGRectMake(side, 10, MAX(width - 2 * side, 0), self.note.superview.bounds.size.height - 20);
 }
 
 // The flowing hairline under the title bar (the bar's own shadow line is cleared for it).
@@ -1038,6 +1163,7 @@ static NSString *const AMOpenSections = @"AM__openSections";
     if (!head) {
         head = [[AMSectionHead alloc] initWithReuseIdentifier:@"head"];
         [head.tap addTarget:self action:@selector(headerTapped:) forControlEvents:UIControlEventTouchUpInside];
+        [head.off addTarget:self action:@selector(categoryOff:) forControlEvents:UIControlEventTouchUpInside];
     }
     [self configureHeader:head section:section];
     return head;
@@ -1059,6 +1185,9 @@ static NSString *const AMOpenSections = @"AM__openSections";
         [r appendAttributedString:AMLabel(tail, AM_MUTED)];
     }
     head.right.attributedText = r;
+    head.off.hidden = on == 0;
+    head.off.accessibilityIdentifier = title;
+    [head setNeedsLayout];
     head.tap.isAccessibilityElement = YES;
     head.tap.accessibilityTraits = UIAccessibilityTraitButton;
     head.tap.accessibilityLabel = [NSString stringWithFormat:@"%@, %lu switches, %lu on, %@", title,
@@ -1066,7 +1195,7 @@ static NSString *const AMOpenSections = @"AM__openSections";
 }
 
 - (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section {
-    return self.shownTitles[section].length ? 48 : CGFLOAT_MIN;
+    return self.shownTitles[section].length ? 44 : CGFLOAT_MIN;
 }
 
 - (CGFloat)tableView:(UITableView *)tableView heightForFooterInSection:(NSInteger)section {
@@ -1075,6 +1204,51 @@ static NSString *const AMOpenSections = @"AM__openSections";
 
 - (UIView *)tableView:(UITableView *)tableView viewForFooterInSection:(NSInteger)section {
     return [UIView new];
+}
+
+// Off: every switch of these items off and every slider back to its default (restorable pins put the game's own
+// values back as their switch goes off).
+- (void)turnOff:(NSArray<NSNumber *> *)flats {
+    NSUInteger count = 0;
+    NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
+    for (NSNumber *n in flats) {
+        AMItem *item = self.items[n.integerValue];
+        if (!AMItemOn(item)) continue;
+        count++;
+        if (item.isSlider) {
+            [d setFloat:item.defaultValue forKey:AMKey(item.key)];
+            if (item.onSlider) item.onSlider(item.defaultValue);
+        } else {
+            [d setBool:NO forKey:AMKey(item.key)];
+            if (item.onSwitch) item.onSwitch(NO);
+            os_log(OS_LOG_DEFAULT, "[AccretionMods] status %{public}@ off", item.key);
+        }
+    }
+    if (!count) return;
+    [[[UINotificationFeedbackGenerator alloc] init] notificationOccurred:UINotificationFeedbackTypeSuccess];
+    [self.tableView reloadData];
+    [self refreshAllOff];
+}
+
+- (void)categoryOff:(UIButton *)button {
+    NSUInteger s = [self.allTitles indexOfObject:button.accessibilityIdentifier ?: @""];
+    if (s != NSNotFound) [self turnOff:self.allRows[s]];
+}
+
+- (void)allOff {
+    NSMutableArray *all = [NSMutableArray new];
+    for (NSUInteger i = 0; i < self.items.count; i++) [all addObject:@(i)];
+    [self turnOff:all];
+}
+
+// "All off" at the top left, while anything is on
+- (void)refreshAllOff {
+    BOOL any = NO;
+    for (AMItem *item in self.items) if (AMItemOn(item)) { any = YES; break; }
+    if (any == (self.navigationItem.leftBarButtonItem != nil)) return;
+    self.navigationItem.leftBarButtonItem = any
+        ? [[UIBarButtonItem alloc] initWithTitle:@"All off" style:UIBarButtonItemStylePlain target:self action:@selector(allOff)]
+        : nil;
 }
 
 - (void)headerTapped:(UIControl *)tap {
@@ -1163,6 +1337,7 @@ static NSString *const AMOpenSections = @"AM__openSections";
     if (resize) {
         [UIView performWithoutAnimation:^{ [self.tableView beginUpdates]; [self.tableView endUpdates]; }];
     }
+    [self refreshAllOff];
 }
 
 - (void)viewWillAppear:(BOOL)animated {
@@ -1533,12 +1708,14 @@ static NSString *const AMButtonSpot = @"AM__buttonSpot";  // where the button wa
     static NSUInteger ticks;
     BOOL resend = ++ticks % 20 == 0;  // every 20 s the whole state again, for a log capture started late
     for (AMItem *item in _items) {
-        if (item.isList || item.isSlider || ![NSUserDefaults.standardUserDefaults boolForKey:AMKey(item.key)]) continue;
-        on++;
+        if (item.isList || !AMItemOn(item)) continue;
         NSString *line = nil;
         BOOL ok = AMStatusFor(item.key, &line);
-        if (!ok) failing++;
+        // every 20 s the state of every switch and slider that is on again, for a log reader that attached late
         if (resend) os_log(OS_LOG_DEFAULT, "[AccretionMods] status %{public}@ %{public}@", item.key, ok ? @"ok" : [@"waiting: " stringByAppendingString:line]);
+        if (item.isSlider) continue;  // the ring sums up the switches
+        on++;
+        if (!ok) failing++;
     }
     for (AMButton *button in _buttons) {
         button.ringState = on == 0 ? AMRingNone : failing == 0 ? AMRingGood : failing == on ? AMRingBad : AMRingSome;

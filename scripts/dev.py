@@ -1541,8 +1541,9 @@ def cmd_log(args):
     return 0
 
 
-def stream_log(mod, seconds, on_line, quiet=False):
-    """The mod's device-log lines for `seconds`, each to on_line(text); returns how many."""
+def stream_log(mod, seconds, on_line, quiet=False, on_ready=None):
+    """The mod's device-log lines for `seconds`, each to on_line(text); returns how many. on_ready() runs once the
+    log is connected (am test turns switches on only then: a status line logged before that is lost)."""
     folder = mod_dir(mod)
     meta = read_json(folder / "mod.json")
     tag = meta.get("display_name") or meta["name"]
@@ -1588,6 +1589,9 @@ def stream_log(mod, seconds, on_line, quiet=False):
         q.put(None)
 
     threading.Thread(target=reader, daemon=True).start()
+    if on_ready:
+        time.sleep(3)  # pymobiledevice3 takes a moment to attach to the device log
+        on_ready()
     end = time.time() + seconds
     lines = 0
     try:
@@ -1783,9 +1787,9 @@ def cmd_test(args):
     try:
         for title, keys in rounds:
             test_id = uuid.uuid4().hex[:8]
-            push_live(args.mod, found[0], {"id": test_id, "on": keys})
             seen = []
-            stream_log(args.mod, args.seconds, seen.append, quiet=True)
+            stream_log(args.mod, args.seconds, seen.append, quiet=True,
+                       on_ready=lambda: push_live(args.mod, found[0], {"id": test_id, "on": keys}))
             got = test_results(seen, keys)
             results.update(got)
             ok = sum(1 for v in got.values() if v == "reached")
