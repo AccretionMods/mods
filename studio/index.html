@@ -778,6 +778,7 @@ const App = {
     for (const line of text.split("\n")) {
       let m;
       if ((m = line.match(/^==> (\d)\/5/))) { step = +m[1]; pct = [0, 2, 5, 60, 75, 90][step]; detail = ""; }
+      else if ((m = line.match(/^--- batch (\d+)\/(\d+) done/))) { pct = 5 + 55 * m[1] / m[2]; detail = `${m[1]} of ${m[2]} batches answered`; }
       else if ((m = line.match(/^--- batch (\d+)\/(\d+)/))) { pct = 5 + 55 * (m[1] - 1) / m[2]; detail = `batch ${m[1]} of ${m[2]}`; }
       else if ((m = line.match(/^--- switch (\d+)\/(\d+)/))) { pct = 60 + 15 * (m[1] - 1) / m[2]; detail = `switch ${m[1]} of ${m[2]}`; }
       else if (/^\$ am gen /.test(line)) { pct = 76; detail = "generating the menu"; }

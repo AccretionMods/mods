@@ -39,6 +39,51 @@ class Api(unittest.TestCase):
         with self.assertRaises(dev.DevError):
             server.start_claude("a prompt long enough", True, "claude", "", "max")
 
+    def test_autobuild_reads_json_picks_and_builds_the_pin_itself(self):
+        import autobuild
+        rows = [{"class": "Player", "object": "Player.instance", "member": "health", "name": "health",
+                 "ctype": "int32_t", "kind": "field", "area": "Survival"},
+                {"class": "Player", "object": "Player.instance", "member": "set_God", "name": "God",
+                 "ctype": "bool", "kind": "setter", "area": "Survival"}]
+        answer = ["```json", '[{"row": 1, "value": 99.6, "when": "lower", "title": "Full health"},',
+                  ' {"row": 2, "value": "true", "title": "God mode"}, {"row": 7, "value": 1}]', "```",
+                  "Here: {\"row\": \"x\"}", "am pin game-plus Player.health --value 5 --as hp"]
+        found, skipped = autobuild.picks("game-plus", rows, answer)
+        self.assertEqual([k for k, _ in found], ["row", "row", "cmd"])
+        self.assertTrue(any("row 7" in s for s in skipped) and any("not a number" in s for s in skipped))
+        self.assertEqual(autobuild.value_for(rows[0], 99.6), "100")
+        self.assertEqual(autobuild.value_for(rows[1], "true"), "true")
+        self.assertIsNone(autobuild.value_for(rows[1], 5))
+        self.assertIsNone(autobuild.value_for(rows[0], "lots"))
+        self.assertEqual(autobuild.value_for(dict(rows[0], ctype="float"), 1.5), "1.5")
+        taken = {"fullHealth"}
+        argv, why = autobuild.pin_argv("game-plus", rows[0], found[0][1][1], taken)
+        self.assertIsNone(why)
+        self.assertEqual(argv[:8], ["pin", "game-plus", "Player.health", "--object", "Player.instance",
+                                    "--value", "100", "--when"])
+        self.assertEqual(argv[argv.index("--as") + 1], "fullHealth2")  # taken: numbered
+
+    def test_autobuild_pins_in_process_without_gen(self):
+        import autobuild
+        folder = dev.mod_dir("game-plus")
+        before = (folder / "tweaks.json").read_text(encoding="utf-8") if (folder / "tweaks.json").is_file() else None
+        try:
+            ok, text = autobuild.pin_here(["pin", "game-plus", "PurchaseState.Gems", "--object",
+                                           "PurchaseState.instance", "--value", "500", "--as", "gemsTest",
+                                           "--title", "Gems"])
+            self.assertTrue(ok, text)
+            data = json.loads((folder / "tweaks.json").read_text(encoding="utf-8"))
+            self.assertIn("gemsTest", [t["key"] for t in data["tweaks"]])
+            self.assertIs(autobuild.dev.cmd_gen, dev.cmd_gen)  # put back
+            ok, text = autobuild.pin_here(["pin", "game-plus", "PurchaseState.Nothing", "--value", "1"])
+            self.assertFalse(ok)
+            self.assertIn("no field", text)
+        finally:
+            if before is None:
+                (folder / "tweaks.json").unlink(missing_ok=True)
+            else:
+                (folder / "tweaks.json").write_text(before, encoding="utf-8")
+
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()

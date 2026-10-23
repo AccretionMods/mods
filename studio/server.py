@@ -277,6 +277,8 @@ class Job:
             self.persist()
         if self.proc and self.proc.poll() is None:
             self.status = "stopping"
+            if sys.platform == "win32":  # the whole tree: auto-build runs several model processes at once
+                subprocess.run(["taskkill", "/T", "/F", "/PID", str(self.proc.pid)], capture_output=True, check=False)
             self.proc.kill()
 
     def view(self, since=0):

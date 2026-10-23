@@ -81,6 +81,10 @@ chose a local web app in this repo over a desktop app, a Claude panel or an iOS 
     requests a day per model per project (seen on 3.6-flash), so a 9-batch Auto-build fits once or twice a day; CI
     uses 3.5-flash(-lite), a separate quota. Checked: a real Gemini answer through aider in 7 s, pickers in the page.
     Not tried: a full Auto-build with Gemini.
+  - Auto-build asks several batches at once (Claude/Codex 3, aider/Gemini 2, `--workers`), retries a failed or
+    rate-limited batch once, and reads JSON answers (`{"row", "value", "when", "title"}`): Studio builds each pin from
+    the scan row, checks the value against its type and runs dev.py pin in-process (gen once in step 4). Older
+    `am pin` lines still count. Stop kills the model processes too (taskkill /T). Unit-tested; not yet run end to end.
 - Earlier (v1, 2026-10-22): built and checked in the built-in browser against the Wanderer example mod: mod list, Switches (18 items with and checked in the built-in browser against the Wanderer example mod: mod list, Switches (18 items with
   hook/pin chips, watch line), Find (regex search, class methods, fields, Hook/Pin/Call forms: a pin added through
   the page landed in tweaks.json and the generated code), Suggest (36 rows from 58 learned patterns), Build & Phone
