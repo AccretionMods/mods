@@ -60,8 +60,21 @@ chose a local web app in this repo over a desktop app, a Claude panel or an iOS 
   only); the `fetch` job waits for the download in Downloads and files it in intake/. Build & phone tab: "Get the
   newest from the decrypt site". Checked in the page against the live site (paused, captcha shown); no real download yet.
 
-## State (2026-10-22)
-- v1 built and checked in the built-in browser against the Wanderer example mod: mod list, Switches (18 items with
+## State (2026-10-23)
+- Branch codex/studio-feature-scope (pushed, main merged in). Added this session, all checked in a test copy of Studio
+  (AM_ROOT C:\AccretionMods-storetest, port 8779, launch config `mod-studio-storetest`) and against the live store:
+  - Store tab (`store_view.py`): store numbers, admin link (linked as b•••@me.com: token in AM_ROOT/studio/admin.json),
+    moderation (store `studio` function, `op=moderation|act`), our mods with Publish/Remove jobs (`store_publish.py`:
+    PR with auto-merge, then the tweak release or the cloud build, which the job now waits for), endpoints, keys and
+    GitHub secret ages, workflow runs, screenshot links.
+  - Auto-build progress bar (step, %, time) and a step bar for publish jobs.
+  - Screenshot links (`shots.py`, store `shots` function): phone screenshot through Accretion Link's tool server
+    (`accretion-link-cli serve`), 3m/6m/1y, renew/delete; post drafts put the mod's live links in place of LINK ONLY.
+  - Menu image page (`/menu-image`, `menu_image.py`): the menu drawn as on the phone (sheet, nav, search, 30 pt rows,
+    green/red/off states, Mix), PNG or upload as a post link. Measured against a phone screenshot; fonts differ
+    (Segoe UI here, SF Pro on the phone).
+  - Not tried by hand: the phone-screenshot and Menu image upload buttons.
+- Earlier (v1, 2026-10-22): built and checked in the built-in browser against the Wanderer example mod: mod list, Switches (18 items with and checked in the built-in browser against the Wanderer example mod: mod list, Switches (18 items with
   hook/pin chips, watch line), Find (regex search, class methods, fields, Hook/Pin/Call forms: a pin added through
   the page landed in tweaks.json and the generated code), Suggest (36 rows from 58 learned patterns), Build & Phone
   (check-hooks job streamed into the console), Files; phone width (375 px) with no horizontal scroll; dark/light.
