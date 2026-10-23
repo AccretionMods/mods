@@ -5,5 +5,4 @@ base app and the libraries cyan bundles, under their own licences:
 
 | Component | Used in | Licence |
 |---|---|---|
-| [Swift Radio](https://github.com/analogcode/Swift-Radio-Pro) | `swiftradio-plus` | MIT, see `Swift-Radio-Pro.txt` |
 | [ElleKit](https://github.com/evelyneee/ellekit) (as CydiaSubstrate.framework) | every mod that hooks methods | its licence ships inside the .ipa at `Frameworks/CydiaSubstrate.framework/LICENSE` |

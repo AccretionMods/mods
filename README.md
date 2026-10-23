@@ -443,7 +443,7 @@ Turn off **Publish** to build and check only.
 folders (in WSL, for example `~/mods`):
 
 ```sh
-scripts/local_ipa.sh swiftradio-plus "" ~/out
+scripts/local_ipa.sh thewanderer-plus "" ~/out
 ```
 
 It installs [cyan](https://github.com/asdfzxcvbn/pyzule-rw) into `~/.cyan` the first time (pinned
@@ -455,7 +455,7 @@ Substrate; cyan bundles it in automatically.
 Publish a local build without the upload key (any machine with `gh` and write access):
 
 ```sh
-scripts/stage.sh swiftradio-plus ~/out/swiftradio-plus_4.0.0-mod1.0.0_accretion.ipa [15.0]
+scripts/stage.sh thewanderer-plus ~/out/thewanderer-plus_10.1-mod1.0.9_accretion.ipa [15.0]
 ```
 
 This puts the .ipa in a draft release (visible only to people with write access) and starts the
@@ -463,7 +463,7 @@ This puts the .ipa in a draft release (visible only to people with write access)
 draft. Or directly, with the upload key on your machine (`.upload-key` or `ACCRETION_UPLOAD_KEY`):
 
 ```sh
-python3 scripts/publish.py --mod swiftradio-plus --ipa ~/out/swiftradio-plus_4.0.0-mod1.0.0_accretion.ipa [--min-os 15.0]
+python3 scripts/publish.py --mod thewanderer-plus --ipa ~/out/thewanderer-plus_10.1-mod1.0.9_accretion.ipa [--min-os 15.0]
 ```
 
 then commit and push the updated `releases.json` and `mods.json`.
