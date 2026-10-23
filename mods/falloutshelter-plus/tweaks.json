@@ -1,0 +1,166 @@
+{
+  "title": "Fallout Shelter+",
+  "log_tag": "Fallout Shelter+",
+  "tweaks": [
+    {
+      "key": "noEncounterDamage",
+      "title": "No encounter damage",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "SurvivalModeEncounter[]",
+          "when": "higher",
+          "field": "m_damage",
+          "ctype": "int32_t",
+          "value": 0
+        }
+      ],
+      "section": "Combat"
+    },
+    {
+      "key": "instantRoomBuild",
+      "title": "Instant room building",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RoomInfo[]",
+          "when": "higher",
+          "field": "m_BuildingTime",
+          "ctype": "float",
+          "value": 0
+        }
+      ],
+      "section": "Exploration"
+    },
+    {
+      "key": "easyEncounters",
+      "title": "Easy wasteland encounters",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "WastelandEncounter[]",
+          "when": "higher",
+          "setter": "set_DifficultyValue",
+          "ctype": "float",
+          "value": 0
+        }
+      ],
+      "section": "Exploration"
+    },
+    {
+      "key": "critDamageMax",
+      "title": "Max critical hit damage",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "CriticalHitMiniGame[]",
+          "when": "always",
+          "field": "m_damageRatio",
+          "ctype": "float",
+          "value": 99
+        }
+      ],
+      "section": "Combat"
+    },
+    {
+      "key": "objectivesNoScaling",
+      "title": "Objectives don't get harder",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "ObjectiveRequirement[]",
+          "when": "always",
+          "field": "m_requirementIncreasePerLevel",
+          "ctype": "int32_t",
+          "value": 0
+        }
+      ],
+      "section": "Progress"
+    },
+    {
+      "key": "freeCrafting",
+      "title": "Free crafting",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RecipeCraftingWindow[]",
+          "when": "always",
+          "field": "DebugFreeCrafting",
+          "ctype": "bool",
+          "value": true
+        }
+      ],
+      "section": "Items & crafting"
+    },
+    {
+      "key": "objectivesAlwaysSatisfied",
+      "title": "Objectives always met",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "ObjectiveRequirement[]",
+          "when": "always",
+          "field": "m_satisfied",
+          "ctype": "bool",
+          "value": true
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "objectiveRewardMin",
+      "title": "Objective reward at least 99",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "Objective[]",
+          "when": "lower",
+          "field": "m_reward",
+          "ctype": "int32_t",
+          "value": 99
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "roomsAlwaysPowered",
+      "title": "Rooms always powered",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "Room[]",
+          "when": "always",
+          "field": "m_hasPower",
+          "ctype": "bool",
+          "value": true
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "questAlwaysSucceeds",
+      "title": "Quests always succeed",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "WastelandTeam[]",
+          "when": "always",
+          "field": "m_isQuestSucceeded",
+          "ctype": "bool",
+          "value": true
+        }
+      ],
+      "section": "Other"
+    }
+  ]
+}
