@@ -2823,7 +2823,7 @@ def build_parser():
     s.add_argument("--name", help="mod folder name (default: <app>-plus)")
     s.add_argument("--title", help="menu title (default: <app>+)")
     s.add_argument("--region", default="us", choices=ipa_fetch.REGIONS)
-    s.add_argument("--source", default="34306", choices=list(ipa_fetch.SOURCES))
+    s.add_argument("--source", default="telegram", choices=list(ipa_fetch.SOURCES))
     s.set_defaults(fn=cmd_start)
 
     s = sub.add_parser("scan", help="no-JIT switch candidates in the dump, scored; sold/online flagged")
@@ -2866,8 +2866,9 @@ def build_parser():
     s.add_argument("--import", dest="import_file", help="check a downloaded .ipa and move it into intake/")
     s.add_argument("--no-browser", action="store_true", help="fail instead of opening the site for a captcha")
     s.add_argument(
-        "--source", default="34306", choices=list(ipa_fetch.SOURCES),
-        help="34306: decrypt.34306.lol (API, captcha -> browser); decrypt.day, armconverter: in the browser",
+        "--source", default="telegram", choices=list(ipa_fetch.SOURCES),
+        help="telegram (default): the owner's Telegram decrypt bot (telegram_fetch.py login once); 34306: "
+        "decrypt.34306.lol (API, captcha -> browser); decrypt.day, armconverter: in the browser",
     )
     s.set_defaults(fn=cmd_fetch)
     return p

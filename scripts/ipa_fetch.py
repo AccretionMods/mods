@@ -42,6 +42,7 @@ POLL_SECONDS = 5  # the site allows 30 requests a minute per address
 WATCH_SECONDS = 3  # how often Downloads is looked at
 # name -> (page to open, {region} filled in; True when it is an unfaird site whose API fetch uses)
 SOURCES = {
+    "telegram": (None, None),  # the owner's Telegram decrypt bot (scripts/telegram_fetch.py): the main source
     "34306": (None, True),  # AM_DECRYPT_URL or DEFAULT_SITE
     "decrypt.day": ("https://decrypt.day/home", False),
     "armconverter": ("https://armconverter.com/store/{region}", False),
@@ -406,7 +407,7 @@ def record_origin(path, site_url, bundle, region, info, via):
     return record
 
 
-def import_ipa(root, path, bundle=None, site_url=None, region=None, say=print):
+def import_ipa(root, path, bundle=None, site_url=None, region=None, say=print, via="browser"):
     """Check a downloaded .ipa and move it into intake/ with its origin record; a bad file stays where it is."""
     path = Path(path)
     if not path.is_file():
@@ -420,7 +421,7 @@ def import_ipa(root, path, bundle=None, site_url=None, region=None, say=print):
         n += 1
     if out.resolve() != path.resolve():
         shutil.move(str(path), str(out))
-    record = record_origin(out, site_url or site(), info.get("CFBundleIdentifier"), region, info, "browser")
+    record = record_origin(out, site_url or site(), info.get("CFBundleIdentifier"), region, info, via)
     say(f"saved {out} ({record['version']}, decrypted, sha256 {record['sha256'][:12]}…)")
     return out
 
@@ -437,13 +438,15 @@ def by_hand(root, page, target, region, say, wait_limit):
 
 
 def fetch(root, target, region="us", platform="iphone", force=False, folder=None, say=print, client=None,
-          browser=True, wait_limit=1800, source="34306"):
+          browser=True, wait_limit=1800, source="34306"):  # dev.py and Studio pass their default, "telegram"
     """Lookup, decrypt on the site if needed, download into intake/, check. Returns the .ipa path.
 
     When the site wants a captcha, or the source has no API, it opens in the browser and this waits for the
-    owner's download."""
+    owner's download. "telegram" asks the owner's Telegram decrypt bot instead (scripts/telegram_fetch.py)."""
     if source not in SOURCES:
         raise FetchError(f"no source {source!r}: {', '.join(SOURCES)}")
+    if source == "telegram":
+        return telegram(root, target, region, wait_limit, say)
     page, api = SOURCES[source]
     if not api:
         if not is_bundle_id(target):
@@ -461,6 +464,37 @@ def fetch(root, target, region="us", platform="iphone", force=False, folder=None
             raise CaptchaRequired(f"{e}; download it on the site, then run fetch --import <file.ipa>") from e
         say(f"{c.base} wants a captcha, which only a person can answer.")
         return by_hand(root, c.base + "/", target, region, say, wait_limit)
+
+
+TELETHON = "telethon>=1.40,<2"
+# Telethon decrypts every downloaded chunk; without cryptg it does it in pure Python (~0.3 MB/s, 2026-10-23)
+CRYPTG = "cryptg>=0.4"
+
+
+def telegram(root, target, region="us", wait_limit=1800, say=print):
+    """scripts/telegram_fetch.py fetch through uv with Telethon (nothing to install): the bot's .ipa in intake/."""
+    import subprocess
+
+    uv = shutil.which("uv") or str(Path.home() / ".local" / "bin" / ("uv.exe" if os.name == "nt" else "uv"))
+    script = Path(__file__).with_name("telegram_fetch.py")
+    cmd = [uv, "run", "--no-project", "--python", "3.12", "--with", TELETHON, "--with", CRYPTG, "python", str(script), "fetch",
+           target, "--region", region, "--wait", str(int(wait_limit))]
+    env = {**os.environ, "AM_ROOT": str(root), "PYTHONUTF8": "1"}
+    try:
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8",
+                             errors="replace", env=env)
+    except OSError as e:
+        raise FetchError(f"couldn't start the Telegram fetch ({e}); is uv installed?") from e
+    last = ""
+    for line in p.stdout:
+        line = line.rstrip()
+        if line.startswith('{"path"'):
+            last = line
+        elif line:
+            say(line)
+    if p.wait() != 0 or not last:
+        raise FetchError("the Telegram bot gave no decrypted .ipa (see the lines above)")
+    return Path(json.loads(last)["path"])
 
 
 def _fetch_api(c, root, target, region, platform, force, folder, say):
