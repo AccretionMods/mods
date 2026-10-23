@@ -11,6 +11,7 @@
 // am_hooks_data.c, written by scripts/embed_hooks.py from the mod's hooks.json
 extern const AMHookSpec am_hook_specs[];
 extern const size_t am_hook_spec_count;
+extern void am_hook_specs_reveal(void);  // the names are encoded in the .dylib (runtime/am_hide.h)
 
 static AMHookReplacement replacements[64];
 static size_t replacement_count = 0;
@@ -106,6 +107,7 @@ static void attempt(int triesLeft) {
         api.read_memory = readMemory;
         AMHookMode mode = hookMode();
         logLine(mode == AM_HOOK_CODE ? "JIT is on: code hooks" : "no JIT: pointer hooks (virtual methods and Unity callbacks)");
+        am_hook_specs_reveal();
         AMHookReport r = am_il2cpp_install(&api, am_hook_specs, am_hook_spec_count,
                                            replacements, replacement_count, mode, substrateHook, logLine);
         NSString *summary = [NSString stringWithFormat:@"hooks: %d installed, %d missing, %d without replacement, %d failed, %d vtable slots",

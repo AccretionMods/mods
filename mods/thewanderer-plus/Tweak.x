@@ -147,20 +147,20 @@ static void *findObject(const char *className, const char *staticField) {
     static int loggedCount;
     const char *why = NULL;
     void *found = NULL;
-    void *(*domain_get)(void) = il2cpp("il2cpp_domain_get");
-    void *(*assembly_open)(void *, const char *) = il2cpp("il2cpp_domain_assembly_open");
-    void *(*assembly_get_image)(void *) = il2cpp("il2cpp_assembly_get_image");
-    void *(*class_from_name)(void *, const char *, const char *) = il2cpp("il2cpp_class_from_name");
-    void *(*method_from_name)(void *, const char *, int) = il2cpp("il2cpp_class_get_method_from_name");
-    void *(*field_from_name)(void *, const char *) = il2cpp("il2cpp_class_get_field_from_name");
-    void (*field_static_get)(void *, void *) = il2cpp("il2cpp_field_static_get_value");
-    void *(*class_get_type)(void *) = il2cpp("il2cpp_class_get_type");
-    void *(*type_get_object)(void *) = il2cpp("il2cpp_type_get_object");
-    void *(*runtime_invoke)(void *, void *, void **, void **) = il2cpp("il2cpp_runtime_invoke");
+    void *(*domain_get)(void) = il2cpp(AMS("il2cpp_domain_get"));
+    void *(*assembly_open)(void *, const char *) = il2cpp(AMS("il2cpp_domain_assembly_open"));
+    void *(*assembly_get_image)(void *) = il2cpp(AMS("il2cpp_assembly_get_image"));
+    void *(*class_from_name)(void *, const char *, const char *) = il2cpp(AMS("il2cpp_class_from_name"));
+    void *(*method_from_name)(void *, const char *, int) = il2cpp(AMS("il2cpp_class_get_method_from_name"));
+    void *(*field_from_name)(void *, const char *) = il2cpp(AMS("il2cpp_class_get_field_from_name"));
+    void (*field_static_get)(void *, void *) = il2cpp(AMS("il2cpp_field_static_get_value"));
+    void *(*class_get_type)(void *) = il2cpp(AMS("il2cpp_class_get_type"));
+    void *(*type_get_object)(void *) = il2cpp(AMS("il2cpp_type_get_object"));
+    void *(*runtime_invoke)(void *, void *, void **, void **) = il2cpp(AMS("il2cpp_runtime_invoke"));
     if (!domain_get || !assembly_open || !assembly_get_image || !class_from_name || !method_from_name ||
         !class_get_type || !type_get_object || !runtime_invoke) { why = "il2cpp exports missing"; goto done; }
     void *domain = domain_get();
-    void *game = assembly_open(domain, "Assembly-CSharp"), *core = assembly_open(domain, "UnityEngine.CoreModule");
+    void *game = assembly_open(domain, AMS("Assembly-CSharp")), *core = assembly_open(domain, AMS("UnityEngine.CoreModule"));
     if (!game || !core) { why = "assembly not open"; goto done; }
     void *klass = class_from_name(assembly_get_image(game), "", className);
     if (!klass) { why = "class not found"; goto done; }
@@ -169,8 +169,8 @@ static void *findObject(const char *className, const char *staticField) {
         if (field) { field_static_get(field, &found); if (found) goto done; why = "static field is null"; }
         else why = "static field not found";
     }
-    void *object = class_from_name(assembly_get_image(core), "UnityEngine", "Object");
-    void *find = object ? method_from_name(object, "FindFirstObjectByType", 1) : NULL;
+    void *object = class_from_name(assembly_get_image(core), AMS("UnityEngine"), AMS("Object"));
+    void *find = object ? method_from_name(object, AMS("FindFirstObjectByType"), 1) : NULL;
     if (!find) { if (!why) why = "FindFirstObjectByType not found"; goto done; }
     void *args[1] = {type_get_object(class_get_type(klass))};
     void *exception = NULL;
@@ -198,7 +198,7 @@ static void keepStatsTick(void) {
     if (!sKeepStats && !sPlayerNoDamage) return;
     CFAbsoluteTime t = CFAbsoluteTimeGetCurrent();
     if (!sStats || t - sStatsFoundAt > 1) {
-        void *found = findObject("StatHandler", "instance");
+        void *found = findObject(AMS("StatHandler"), AMS("instance"));
         if (found && !sStats) os_log(OS_LOG_DEFAULT, "[The Wanderer+] StatHandler found");
         sStats = found;
         sStatsFoundAt = t;
@@ -266,14 +266,14 @@ static void hook_LockUpdate(void *self, const void *mi) {
 // calls on the thread the VM already runs on. The Lock is looked up while a lockpick is open.
 // Calls an instance method of a game class by name through il2cpp_runtime_invoke (a data call, no JIT).
 static BOOL callMethodOut(void *obj, const char *className, const char *method, int argc, void **argv, void **out) {
-    void *(*domain_get)(void) = il2cpp("il2cpp_domain_get");
-    void *(*assembly_open)(void *, const char *) = il2cpp("il2cpp_domain_assembly_open");
-    void *(*assembly_get_image)(void *) = il2cpp("il2cpp_assembly_get_image");
-    void *(*class_from_name)(void *, const char *, const char *) = il2cpp("il2cpp_class_from_name");
-    void *(*method_from_name)(void *, const char *, int) = il2cpp("il2cpp_class_get_method_from_name");
-    void *(*runtime_invoke)(void *, void *, void **, void **) = il2cpp("il2cpp_runtime_invoke");
+    void *(*domain_get)(void) = il2cpp(AMS("il2cpp_domain_get"));
+    void *(*assembly_open)(void *, const char *) = il2cpp(AMS("il2cpp_domain_assembly_open"));
+    void *(*assembly_get_image)(void *) = il2cpp(AMS("il2cpp_assembly_get_image"));
+    void *(*class_from_name)(void *, const char *, const char *) = il2cpp(AMS("il2cpp_class_from_name"));
+    void *(*method_from_name)(void *, const char *, int) = il2cpp(AMS("il2cpp_class_get_method_from_name"));
+    void *(*runtime_invoke)(void *, void *, void **, void **) = il2cpp(AMS("il2cpp_runtime_invoke"));
     if (!obj || !domain_get || !assembly_open || !assembly_get_image || !class_from_name || !method_from_name || !runtime_invoke) return NO;
-    void *game = assembly_open(domain_get(), "Assembly-CSharp");
+    void *game = assembly_open(domain_get(), AMS("Assembly-CSharp"));
     void *klass = game ? class_from_name(assembly_get_image(game), "", className) : NULL;
     void *m = klass ? method_from_name(klass, method, argc) : NULL;
     if (!m) return NO;
@@ -285,8 +285,8 @@ static BOOL callMethodOut(void *obj, const char *className, const char *method, 
 #define callMethod(obj, cls, method, argc, argv) callMethodOut(obj, cls, method, argc, argv, NULL)
 
 static NSString *il2cppString(void *str) {
-    const uint16_t *(*chars)(void *) = il2cpp("il2cpp_string_chars");
-    int32_t (*length)(void *) = il2cpp("il2cpp_string_length");
+    const uint16_t *(*chars)(void *) = il2cpp(AMS("il2cpp_string_chars"));
+    int32_t (*length)(void *) = il2cpp(AMS("il2cpp_string_length"));
     if (!str || !chars || !length) return nil;
     return [[NSString alloc] initWithCharacters:chars(str) length:(NSUInteger)length(str)];
 }
@@ -300,7 +300,7 @@ static NSMutableArray<NSValue *> *sCatalogue;  // Items pointers, in the order o
 static NSArray<NSDictionary<NSString *, NSString *> *> *buildCatalogue(void) {
     NSMutableArray<NSDictionary *> *rows = [NSMutableArray new];
     sCatalogue = [NSMutableArray new];
-    void *manager = findObject("ItemManager", "instance");
+    void *manager = findObject(AMS("ItemManager"), AMS("instance"));
     void *holder = manager ? *(void **)((char *)manager + 0x20) : NULL;
     if (!holder) return rows;
     static const int lists[] = {0x18, 0x28, 0x30, 0x40, 0x48};
@@ -316,7 +316,7 @@ static NSArray<NSDictionary<NSString *, NSString *> *> *buildCatalogue(void) {
             if (!it || [seen containsObject:@((uintptr_t)it)]) continue;
             [seen addObject:@((uintptr_t)it)];
             void *nameObject = NULL;
-            callMethodOut(it, "Items", "get_DisplayName", 0, NULL, &nameObject);
+            callMethodOut(it, AMS("Items"), AMS("get_DisplayName"), 0, NULL, &nameObject);
             NSString *name = il2cppString(nameObject) ?: il2cppString(*(void **)(it + 0x20)) ?: @"(unnamed)";
             BOOL weapon = it[0x101] || it[0x122], ammo = it[0x102] || it[0x11D], wearable = it[0x103];
             BOOL material = it[0x104] || it[0x110], water = it[0x129], consumable = it[0x100];
@@ -346,8 +346,8 @@ static void spawnItem(NSInteger index) {
     int32_t amount = MAX(1, (int32_t)sSpawnAmount);
     uint8_t exploring = 0, showText = 1;
     void *argv[4] = {item, &exploring, &amount, &showText};
-    BOOL ok = callMethod(item, "Items", "AddItem", 4, argv);
-    os_log(OS_LOG_DEFAULT, "[The Wanderer+] spawn item %{public}ld x%{public}d: %{public}s", (long)index, amount, ok ? "ok" : "failed");
+    BOOL ok = callMethod(item, AMS("Items"), AMS("AddItem"), 4, argv);
+    os_log(OS_LOG_DEFAULT, "[The Wanderer+] spawn item %{public}ld x%{public}d: %{public}s", (long)index, amount, ok ? "ok" : AMS("failed"));
     char text[48];
     snprintf(text, sizeof text, ok ? "Added x%d" : "The game refused it", amount);
     AMMenuPickResult(ok, text);
@@ -360,11 +360,11 @@ static void giveTick(void) {
     CFAbsoluteTime t = CFAbsoluteTimeGetCurrent();
     if (t - sLastGiveAt < 10) return;
     sLastGiveAt = t;
-    void *inv = findObject("InventoryData", "instance");
+    void *inv = findObject(AMS("InventoryData"), AMS("instance"));
     int32_t level = -1;
     void *argv[1] = {&level};
-    if (sGiveItems) os_log(OS_LOG_DEFAULT, "[The Wanderer+] give random item: %{public}s", callMethod(inv, "InventoryData", "GiveRandomItem", 1, argv) ? "ok" : "failed");
-    if (sGiveWeapons) os_log(OS_LOG_DEFAULT, "[The Wanderer+] give random weapon: %{public}s", callMethod(inv, "InventoryData", "GiveRandomWeapon", 1, argv) ? "ok" : "failed");
+    if (sGiveItems) os_log(OS_LOG_DEFAULT, "[The Wanderer+] give random item: %{public}s", callMethod(inv, AMS("InventoryData"), AMS("GiveRandomItem"), 1, argv) ? "ok" : AMS("failed"));
+    if (sGiveWeapons) os_log(OS_LOG_DEFAULT, "[The Wanderer+] give random weapon: %{public}s", callMethod(inv, AMS("InventoryData"), AMS("GiveRandomWeapon"), 1, argv) ? "ok" : AMS("failed"));
 }
 
 // No-JIT versions of the combat, skill and pet switches (owner, 2026-10-21: "like Fallout"). Each tick writes
@@ -374,22 +374,22 @@ static void giveTick(void) {
 // HealthMax 0x7C; FightCompanion.Damage 0x38 (long); PlayerStats.Rads 0x44.
 static void *findObjects(const char *className, int32_t *count) {  // UnityEngine.Object.FindObjectsByType(Type, Include, None)
     *count = 0;
-    void *(*domain_get)(void) = il2cpp("il2cpp_domain_get");
-    void *(*assembly_open)(void *, const char *) = il2cpp("il2cpp_domain_assembly_open");
-    void *(*assembly_get_image)(void *) = il2cpp("il2cpp_assembly_get_image");
-    void *(*class_from_name)(void *, const char *, const char *) = il2cpp("il2cpp_class_from_name");
-    void *(*method_from_name)(void *, const char *, int) = il2cpp("il2cpp_class_get_method_from_name");
-    void *(*class_get_type)(void *) = il2cpp("il2cpp_class_get_type");
-    void *(*type_get_object)(void *) = il2cpp("il2cpp_type_get_object");
-    void *(*runtime_invoke)(void *, void *, void **, void **) = il2cpp("il2cpp_runtime_invoke");
+    void *(*domain_get)(void) = il2cpp(AMS("il2cpp_domain_get"));
+    void *(*assembly_open)(void *, const char *) = il2cpp(AMS("il2cpp_domain_assembly_open"));
+    void *(*assembly_get_image)(void *) = il2cpp(AMS("il2cpp_assembly_get_image"));
+    void *(*class_from_name)(void *, const char *, const char *) = il2cpp(AMS("il2cpp_class_from_name"));
+    void *(*method_from_name)(void *, const char *, int) = il2cpp(AMS("il2cpp_class_get_method_from_name"));
+    void *(*class_get_type)(void *) = il2cpp(AMS("il2cpp_class_get_type"));
+    void *(*type_get_object)(void *) = il2cpp(AMS("il2cpp_type_get_object"));
+    void *(*runtime_invoke)(void *, void *, void **, void **) = il2cpp(AMS("il2cpp_runtime_invoke"));
     if (!domain_get || !assembly_open || !assembly_get_image || !class_from_name || !method_from_name ||
         !class_get_type || !type_get_object || !runtime_invoke) return NULL;
     void *domain = domain_get();
-    void *game = assembly_open(domain, "Assembly-CSharp"), *core = assembly_open(domain, "UnityEngine.CoreModule");
+    void *game = assembly_open(domain, AMS("Assembly-CSharp")), *core = assembly_open(domain, AMS("UnityEngine.CoreModule"));
     if (!game || !core) return NULL;
     void *klass = class_from_name(assembly_get_image(game), "", className);
-    void *object = class_from_name(assembly_get_image(core), "UnityEngine", "Object");
-    void *find = klass && object ? method_from_name(object, "FindObjectsByType", 3) : NULL;
+    void *object = class_from_name(assembly_get_image(core), AMS("UnityEngine"), AMS("Object"));
+    void *find = klass && object ? method_from_name(object, AMS("FindObjectsByType"), 3) : NULL;
     if (!find) return NULL;
     int32_t include = 0, sortNone = 0;  // active objects only, unsorted
     void *args[3] = {type_get_object(class_get_type(klass)), &include, &sortNone};
@@ -407,15 +407,15 @@ static void setInt(void *obj, const char *cls, const char *setter, int32_t value
 
 static int64_t sDamageBase = -1, sDamageSet = -1;
 static void noJitTick(void) {
-    char *skills = findObject("SkillsManager", "instance");
+    char *skills = findObject(AMS("SkillsManager"), AMS("instance"));
     if (skills) {
         if (sNoWear) skills[0x7B] = 1;                                     // WeaponsNeverBreak
         if (sAlwaysCrit) *(int32_t *)(skills + 0x94) = 100;                // CriticalHit, percent
-        if (sSkillPoints && orig_SkillPoints && orig_SkillPoints(skills, NULL) < 50) setInt(skills, "SkillsManager", "set_SkillPoints", 99);
+        if (sSkillPoints && orig_SkillPoints && orig_SkillPoints(skills, NULL) < 50) setInt(skills, AMS("SkillsManager"), AMS("set_SkillPoints"), 99);
     }
     if (sEnemiesMiss || sEnemiesNoHeal) {
         int32_t n = 0;
-        void *enemies = findObjects("Enemy", &n);
+        void *enemies = findObjects(AMS("Enemy"), &n);
         for (int32_t i = 0; i < n; i++) {
             char *e = ((void **)((char *)enemies + 0x20))[i];
             if (!e) continue;
@@ -423,18 +423,18 @@ static void noJitTick(void) {
             if (sEnemiesNoHeal) e[0xB8] = 0;                                              // no health potion
         }
     }
-    char *pet = findObject("Pet", "p");
+    char *pet = findObject(AMS("Pet"), "p");
     if (pet && (sPetFull || sPetNoDamage)) {
         int32_t max = *(int32_t *)(pet + 0x90);
-        if (orig_get_PetHealth && max > 0 && orig_get_PetHealth(pet, NULL) < max) setInt(pet, "Pet", "set_PetHealth", max);
+        if (orig_get_PetHealth && max > 0 && orig_get_PetHealth(pet, NULL) < max) setInt(pet, AMS("Pet"), AMS("set_PetHealth"), max);
         if (sPetFull) {
-            if (orig_get_PetHunger && orig_get_PetHunger(pet, NULL) < 100) setInt(pet, "Pet", "set_PetHunger", 100);
-            if (orig_get_PetThirst && orig_get_PetThirst(pet, NULL) < 100) setInt(pet, "Pet", "set_PetThirst", 100);
+            if (orig_get_PetHunger && orig_get_PetHunger(pet, NULL) < 100) setInt(pet, AMS("Pet"), AMS("set_PetHunger"), 100);
+            if (orig_get_PetThirst && orig_get_PetThirst(pet, NULL) < 100) setInt(pet, AMS("Pet"), AMS("set_PetThirst"), 100);
         }
     }
-    char *companion = findObject("RandomCompanion", "instance");
+    char *companion = findObject(AMS("RandomCompanion"), AMS("instance"));
     if (companion && sCompanionNoDamage) *(int32_t *)(companion + 0x78) = *(int32_t *)(companion + 0x7C);
-    char *player = findObject("PlayerCompanion", "instance");
+    char *player = findObject(AMS("PlayerCompanion"), AMS("instance"));
     if (player && sWeaponDamage > 1) {
         int64_t *damage = (int64_t *)(player + 0x38);
         if (*damage != sDamageSet) sDamageBase = *damage;   // the game recalculated it: new base
@@ -443,8 +443,8 @@ static void noJitTick(void) {
         sDamageSet = want;
     }
     if (sNoRadiationDamage) {
-        void *stats = findObject("StatHandler", "instance"), *playerStats = NULL;
-        if (stats) callMethodOut(stats, "StatHandler", "get_playerStats", 0, NULL, &playerStats);
+        void *stats = findObject(AMS("StatHandler"), AMS("instance")), *playerStats = NULL;
+        if (stats) callMethodOut(stats, AMS("StatHandler"), AMS("get_playerStats"), 0, NULL, &playerStats);
         if (playerStats) *(int32_t *)((char *)playerStats + 0x44) = 0;  // Rads
     }
 }
@@ -458,7 +458,7 @@ static void startTicker(void) {
         keepStatsTick();
         noJitTick();
         giveTick();
-        if (sKeepLockpicks) keepLockpick(findObject("Lock", NULL));
+        if (sKeepLockpicks) keepLockpick(findObject(AMS("Lock"), NULL));
     });
     dispatch_resume(sTicker);
 }
@@ -471,48 +471,48 @@ static void applyKeepAwake(void) {
 
 static void registerHooks(void) {
     // any phone (Unity callbacks)
-    REG("ExperienceLevel.Update", ExperienceUpdate);
-    REG("Lock.Update", LockUpdate);
-    REG("FoodThirstStats.Update", HudUpdate);
-    REG("PerkManager.get_HungerAmount", get_HungerAmount);
-    REG("PerkManager.get_ThirstAmount", get_ThirstAmount);
+    REG(AMS("ExperienceLevel.Update"), ExperienceUpdate);
+    REG(AMS("Lock.Update"), LockUpdate);
+    REG(AMS("FoodThirstStats.Update"), HudUpdate);
+    REG(AMS("PerkManager.get_HungerAmount"), get_HungerAmount);
+    REG(AMS("PerkManager.get_ThirstAmount"), get_ThirstAmount);
 
     // (JIT)
-    REG("PlayerCompanion.TakeDamage", PlayerTakeDamage);
-    REG("Enemy.DamagePlayer", EnemyDamagePlayer);
-    REG("Enemy.DealDamageToPlayer", EnemyDealDamageToPlayer);
-    REG("PlayerCompanion.BleedDamage", PlayerBleed);
-    REG("PetCompanion.TakeDamage", PetTakeDamage);
-    REG("Enemy.DamagePet", EnemyDamagePet);
-    REG("RandomCompanion.TakeDamage", CompanionTakeDamage);
-    REG("Enemy.UseHealthPotion", EnemyHealthPotion);
-    REG("GameManager.TakeRadiationDamage", RadiationDamage);
-    REG("Enemy.get_AttackSuccessRate", AttackSuccessRate);
-    REG("Enemy.Enemy_CriticalHitChance", EnemyCrit);
-    REG("Enemy.Player_CriticalHitChance", PlayerCrit);
-    REG("ItemStack.GetScaledDamage", ScaledDamage);
-    REG("ItemStack.GetScaledDamageWithStrength", ScaledDamageStrength);
-    REG("InventoryData.ConsumeHandCraftAccessibleItems", ConsumeCraftItems);
-    REG("InventoryData.HasHandCraftAccessibleItemCount", HasCraftItems);
-    REG("InventoryData.SetDurability", SetDurability);
-    REG("SkillsManager.get_SkillPoints", SkillPoints);
-    REG("StatHandler.get_HealthMax", get_HealthMax);
-    REG("StatHandler.get_Health", get_Health);
-    REG("StatHandler.set_Health", set_Health);
-    REG("StatHandler.get_Hunger", get_Hunger);
-    REG("StatHandler.set_Hunger", set_Hunger);
-    REG("StatHandler.get_Thirst", get_Thirst);
-    REG("StatHandler.set_Thirst", set_Thirst);
-    REG("StatHandler.get_Morale", get_Morale);
-    REG("StatHandler.set_Morale", set_Morale);
-    REG("Pet.get_PetHunger", get_PetHunger);
-    REG("Pet.set_PetHunger", set_PetHunger);
-    REG("Pet.get_PetThirst", get_PetThirst);
-    REG("Pet.set_PetThirst", set_PetThirst);
-    REG("Pet.get_PetHealth", get_PetHealth);
-    REG("Pet.set_PetHealth", set_PetHealth);
-    REG("Lock.get_LockPickHealth", get_LockPickHealth);
-    REG("Lock.set_LockPickHealth", set_LockPickHealth);
+    REG(AMS("PlayerCompanion.TakeDamage"), PlayerTakeDamage);
+    REG(AMS("Enemy.DamagePlayer"), EnemyDamagePlayer);
+    REG(AMS("Enemy.DealDamageToPlayer"), EnemyDealDamageToPlayer);
+    REG(AMS("PlayerCompanion.BleedDamage"), PlayerBleed);
+    REG(AMS("PetCompanion.TakeDamage"), PetTakeDamage);
+    REG(AMS("Enemy.DamagePet"), EnemyDamagePet);
+    REG(AMS("RandomCompanion.TakeDamage"), CompanionTakeDamage);
+    REG(AMS("Enemy.UseHealthPotion"), EnemyHealthPotion);
+    REG(AMS("GameManager.TakeRadiationDamage"), RadiationDamage);
+    REG(AMS("Enemy.get_AttackSuccessRate"), AttackSuccessRate);
+    REG(AMS("Enemy.Enemy_CriticalHitChance"), EnemyCrit);
+    REG(AMS("Enemy.Player_CriticalHitChance"), PlayerCrit);
+    REG(AMS("ItemStack.GetScaledDamage"), ScaledDamage);
+    REG(AMS("ItemStack.GetScaledDamageWithStrength"), ScaledDamageStrength);
+    REG(AMS("InventoryData.ConsumeHandCraftAccessibleItems"), ConsumeCraftItems);
+    REG(AMS("InventoryData.HasHandCraftAccessibleItemCount"), HasCraftItems);
+    REG(AMS("InventoryData.SetDurability"), SetDurability);
+    REG(AMS("SkillsManager.get_SkillPoints"), SkillPoints);
+    REG(AMS("StatHandler.get_HealthMax"), get_HealthMax);
+    REG(AMS("StatHandler.get_Health"), get_Health);
+    REG(AMS("StatHandler.set_Health"), set_Health);
+    REG(AMS("StatHandler.get_Hunger"), get_Hunger);
+    REG(AMS("StatHandler.set_Hunger"), set_Hunger);
+    REG(AMS("StatHandler.get_Thirst"), get_Thirst);
+    REG(AMS("StatHandler.set_Thirst"), set_Thirst);
+    REG(AMS("StatHandler.get_Morale"), get_Morale);
+    REG(AMS("StatHandler.set_Morale"), set_Morale);
+    REG(AMS("Pet.get_PetHunger"), get_PetHunger);
+    REG(AMS("Pet.set_PetHunger"), set_PetHunger);
+    REG(AMS("Pet.get_PetThirst"), get_PetThirst);
+    REG(AMS("Pet.set_PetThirst"), set_PetThirst);
+    REG(AMS("Pet.get_PetHealth"), get_PetHealth);
+    REG(AMS("Pet.set_PetHealth"), set_PetHealth);
+    REG(AMS("Lock.get_LockPickHealth"), get_LockPickHealth);
+    REG(AMS("Lock.set_LockPickHealth"), set_LockPickHealth);
 }
 
 %ctor {

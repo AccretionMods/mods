@@ -24,8 +24,20 @@ if [ -f "$dir/tweaks.json" ]; then
     python3 "$root/scripts/gen_tweaks.py" "$dir" >&2
 fi
 
+# Game names a hand-written Tweak.x writes as AMS("Name") are encoded in a copy that is compiled instead
+# (scripts/hide_strings.py, runtime/am_hide.h); the source keeps them plain.
+files_override=()
+rm -f "$dir/Tweak.hidden.x"
+if [ -f "$dir/Tweak.x" ] && grep -q 'AMS("' "$dir/Tweak.x"; then
+    python3 "$root/scripts/hide_strings.py" "$dir/Tweak.x" "$dir/Tweak.hidden.x" >&2
+    name="$(sed -n 's/^TWEAK_NAME *= *//p' "$dir/Makefile" | head -1 | tr -d '[:space:]')"
+    files="$(sed -n "s/^${name}_FILES *= *//p" "$dir/Makefile" | head -1)"
+    files_override=("${name}_FILES=${files/Tweak.x/Tweak.hidden.x}")
+fi
+
 rm -rf "$dir/.theos" "$dir/packages"
-make -C "$dir" FINALPACKAGE=1 >&2
+# hidden visibility: the .dylib exports nothing (nothing links against it; the game only loads it)
+make -C "$dir" FINALPACKAGE=1 ADDITIONAL_CFLAGS=-fvisibility=hidden "${files_override[@]}" >&2
 
 dylib="$(find "$dir/.theos/obj" -maxdepth 2 -name '*.dylib' -print -quit)"
 [ -n "$dylib" ] || { echo "build made no .dylib" >&2; exit 1; }

@@ -60,6 +60,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from hide import ams_bytes
 from il2cpp_dump import SIGNATURE, split_params
 
 ACTIONS = ("skip", "return", "multiply", "arg", "custom")
@@ -170,6 +171,12 @@ def c_value(value, ctype_):
     if ctype_ in NUMERIC:
         return str(int(value))
     raise TweaksError(f"a value of C type {ctype_} can't be written as a constant")
+
+
+def hidden(text):
+    """A game name (class, field, method) as an encoded C expression: never plain text in the .dylib
+    (runtime/am_hide.h)."""
+    return ams_bytes(text)
 
 
 def c_string(text):
@@ -411,24 +418,24 @@ def pin_objects(pin):
     lines = []
     if every:
         lines.append(
-            f"        int32_t n = 0; void *arr = AMIl2cppFindObjects({c_string(cls)}, &n);"
+            f"        int32_t n = 0; void *arr = AMIl2cppFindObjects({hidden(cls)}, &n);"
         )
         lines.append(
             "        for (int32_t i = 0; i < n; i++) { void *obj = AMIl2cppArrayAt(arr, i); if (!obj) continue;"
         )
     elif static:
         lines.append(
-            f"        void *obj = AMIl2cppStaticObject({c_string(cls)}, {c_string(static)}); if (obj) {{"
+            f"        void *obj = AMIl2cppStaticObject({hidden(cls)}, {hidden(static)}); if (obj) {{"
         )
     else:
         lines.append(
-            f"        void *obj = AMIl2cppFindObject({c_string(cls)}); if (obj) {{"
+            f"        void *obj = AMIl2cppFindObject({hidden(cls)}); if (obj) {{"
         )
     target_cls = cls
     closers = ["        }"]
     if pin.get("via"):
         lines.append(
-            f"            void *via = NULL; obj = AMIl2cppCall(obj, {c_string(cls)}, {c_string(pin['via'])}, 0, NULL, &via) ? via : NULL; if (obj) {{"
+            f"            void *via = NULL; obj = AMIl2cppCall(obj, {hidden(cls)}, {hidden(pin['via'])}, 0, NULL, &via) ? via : NULL; if (obj) {{"
         )
         target_cls = pin.get("class") or cls
         closers = ["            }", "        }"]
@@ -446,12 +453,12 @@ def pin_value(pin, var, ctype_, cls, state):
         return [], f"{state}_peak"
     if isinstance(value, dict) and "getter" in value:
         return [
-            f"            void *vb = NULL; {ctype_} *vp = AMIl2cppCall(obj, {c_string(cls)}, {c_string(value['getter'])}, 0, NULL, &vb) ? AMIl2cppUnbox(vb) : NULL;",
+            f"            void *vb = NULL; {ctype_} *vp = AMIl2cppCall(obj, {hidden(cls)}, {hidden(value['getter'])}, 0, NULL, &vb) ? AMIl2cppUnbox(vb) : NULL;",
             f"            if (!vp) goto {state}_next;",
         ], "(*vp)"
     if isinstance(value, dict):
         return [
-            f"            {ctype_} *vp = AMIl2cppField(obj, {c_string(cls)}, {c_string(value['field'])});",
+            f"            {ctype_} *vp = AMIl2cppField(obj, {hidden(cls)}, {hidden(value['field'])});",
             f"            if (!vp) goto {state}_next;",
         ], "(*vp)"
     return [], c_value(value, ctype_)
@@ -499,15 +506,15 @@ def render_restore(pin, key, index):
     lines = [f"        {{  // restore pin {index}"] + ["    " + line for line in objects]
     lines.append(f"                if (obj == {state}_obj) {{")
     if pin.get("op") == "multiply":
-        lines.append(f"                    {ctype_} *p = AMIl2cppField(obj, {c_string(cls)}, {c_string(pin['field'])});")
+        lines.append(f"                    {ctype_} *p = AMIl2cppField(obj, {hidden(cls)}, {hidden(pin['field'])});")
         lines.append(f"                    if (p && *p == {state}_set) {{ *p = {state}_base; restored = true; }}")
     elif pin.get("field"):
-        lines.append(f"                    {ctype_} *p = AMIl2cppField(obj, {c_string(cls)}, {c_string(pin['field'])});")
+        lines.append(f"                    {ctype_} *p = AMIl2cppField(obj, {hidden(cls)}, {hidden(pin['field'])});")
         lines.append(f"                    if (p && {state}_has && {state}_wrote_ok && *p == {state}_wrote) {{ *p = {state}_orig; restored = true; }}")
     else:
         getter = "get_" + pin["setter"][4:]
-        lines.append(f"                    void *b = NULL; {ctype_} *cur = {state}_has && {state}_wrote_ok && AMIl2cppCall(obj, {c_string(cls)}, {c_string(getter)}, 0, NULL, &b) ? AMIl2cppUnbox(b) : NULL;")
-        lines.append(f"                    if (cur && *cur == {state}_wrote) {{ {ctype_} v = {state}_orig; void *argv[1] = {{&v}}; if (AMIl2cppCall(obj, {c_string(cls)}, {c_string(pin['setter'])}, 1, argv, NULL)) restored = true; }}")
+        lines.append(f"                    void *b = NULL; {ctype_} *cur = {state}_has && {state}_wrote_ok && AMIl2cppCall(obj, {hidden(cls)}, {hidden(getter)}, 0, NULL, &b) ? AMIl2cppUnbox(b) : NULL;")
+        lines.append(f"                    if (cur && *cur == {state}_wrote) {{ {ctype_} v = {state}_orig; void *argv[1] = {{&v}}; if (AMIl2cppCall(obj, {hidden(cls)}, {hidden(pin['setter'])}, 1, argv, NULL)) restored = true; }}")
     lines.append("                }")
     lines += ["    " + c for c in closers]
     if pin.get("op") == "multiply":
@@ -547,9 +554,9 @@ def render_note(t):
     lines.append("    {")
     lines += objects
     if pin.get("field"):
-        lines.append(f"            {ctype_} *v = AMIl2cppField(obj, {c_string(cls)}, {c_string(pin['field'])});")
+        lines.append(f"            {ctype_} *v = AMIl2cppField(obj, {hidden(cls)}, {hidden(pin['field'])});")
     else:
-        lines.append(f"            void *b = NULL; {ctype_} *v = AMIl2cppCall(obj, {c_string(cls)}, {c_string('get_' + pin['setter'][4:])}, 0, NULL, &b) ? AMIl2cppUnbox(b) : NULL;")
+        lines.append(f"            void *b = NULL; {ctype_} *v = AMIl2cppCall(obj, {hidden(cls)}, {hidden('get_' + pin['setter'][4:])}, 0, NULL, &b) ? AMIl2cppUnbox(b) : NULL;")
     lines.append(f"            if (v) AMNoteValue({c_string(key)}, (double)*v);")
     lines += closers
     lines.append("    }")
@@ -567,7 +574,7 @@ def render_pin(pin, var, kind, key, index, waiting=None):
     # the menu's status dot (AMMenuStatus): tried this tick, found the object, reached (read or wrote) it
     # what the player reads under a red dot: the tweak's own hint ("Start a fight to see it work"), or a default
     missing = c_string(waiting or "Waiting for the game: load a save first")
-    unreachable = c_string(f"Needs an update for this game version ({cls}.{what}): run am check")
+    unreachable = hidden(f"Needs an update for this game version ({cls}.{what}): run am check")
     status_start = f"            tried = true; if (!why) why = {missing};"
     status_found = f"            found = true; why = {unreachable};"
     if pin.get("call"):
@@ -589,7 +596,7 @@ def render_pin(pin, var, kind, key, index, waiting=None):
             f"            {decl + '; ' if decl else ''}void *argv[{max(len(pairs), 1)}] = {{{argv}}};"
         )
         lines.append(
-            f"            if (AMIl2cppCall(obj, {c_string(cls)}, {c_string(pin['call'])}, {len(pairs)}, argv, NULL)) applied = reached = true;"
+            f"            if (AMIl2cppCall(obj, {hidden(cls)}, {hidden(pin['call'])}, {len(pairs)}, argv, NULL)) applied = reached = true;"
         )
         lines += closers
         if every:
@@ -609,7 +616,7 @@ def render_pin(pin, var, kind, key, index, waiting=None):
     limit = c_value(pin["threshold"], ctype_) if "threshold" in pin else value
     if pin.get("field"):
         lines.append(
-            f"            {ctype_} *p = AMIl2cppField(obj, {c_string(cls)}, {c_string(pin['field'])});"
+            f"            {ctype_} *p = AMIl2cppField(obj, {hidden(cls)}, {hidden(pin['field'])});"
         )
         lines.append(f"            if (!p) goto {state}_next;")
         lines.append("            reached = true;")
@@ -629,7 +636,7 @@ def render_pin(pin, var, kind, key, index, waiting=None):
                     f"            if ({state}_obj != obj) {{ {state}_obj = obj; {state}_orig = *p; {state}_has = true; {state}_wrote_ok = false; {state}_fights = 0; }}"
                 )
                 # the game fights back: what the pin wrote half a second ago is gone again, tick after tick
-                fights = c_string(f"The game resets {pin['field']} faster than this switch writes it: it may not hold")
+                fights = hidden(f"The game resets {pin['field']} faster than this switch writes it: it may not hold")
                 lines.append(
                     f"            if ({state}_wrote_ok && *p != {state}_wrote) {{ if (++{state}_fights >= {FIGHT_TICKS}) fought = {fights}; }} else {state}_fights = 0;"
                 )
@@ -642,12 +649,12 @@ def render_pin(pin, var, kind, key, index, waiting=None):
         if cmp_ is None and pin["value"] != "peak":
             if restorable(pin):
                 lines.append(
-                    f"            if ({state}_obj != obj) {{ {state}_obj = obj; void *ob = NULL; {ctype_} *o = AMIl2cppCall(obj, {c_string(cls)}, {c_string(getter)}, 0, NULL, &ob) ? AMIl2cppUnbox(ob) : NULL;"
+                    f"            if ({state}_obj != obj) {{ {state}_obj = obj; void *ob = NULL; {ctype_} *o = AMIl2cppCall(obj, {hidden(cls)}, {hidden(getter)}, 0, NULL, &ob) ? AMIl2cppUnbox(ob) : NULL;"
                     f" {state}_has = o != NULL; if (o) {state}_orig = *o; {state}_wrote_ok = false; }}"
                 )
             lines.append(f"            {ctype_} v = {value}; void *argv[1] = {{&v}};")
             lines.append(
-                f"            if (AMIl2cppCall(obj, {c_string(cls)}, {c_string(setter)}, 1, argv, NULL)) {{ applied = reached = true;"
+                f"            if (AMIl2cppCall(obj, {hidden(cls)}, {hidden(setter)}, 1, argv, NULL)) {{ applied = reached = true;"
                 + (f" {state}_wrote = v; {state}_wrote_ok = true;" if restorable(pin) else "")
                 + " }"
             )
@@ -657,7 +664,7 @@ def render_pin(pin, var, kind, key, index, waiting=None):
                     f"pin {key}/{index}: when/peak on a setter needs a set_ name (its get_ is read)"
                 )
             lines.append(
-                f"            void *boxed = NULL; {ctype_} *cur = AMIl2cppCall(obj, {c_string(cls)}, {c_string(getter)}, 0, NULL, &boxed) ? AMIl2cppUnbox(boxed) : NULL;"
+                f"            void *boxed = NULL; {ctype_} *cur = AMIl2cppCall(obj, {hidden(cls)}, {hidden(getter)}, 0, NULL, &boxed) ? AMIl2cppUnbox(boxed) : NULL;"
             )
             lines.append(f"            if (!cur) goto {state}_next;")
             lines.append("            reached = true;")
@@ -667,10 +674,10 @@ def render_pin(pin, var, kind, key, index, waiting=None):
                 )
             cond = "true" if cmp_ is None else f"*cur {cmp_} {limit}"
             # read back right after the setter: one that ignores or clamps the value turns the dot red
-            took = c_string(f"{cls}.{setter} didn't take the value (the game clamps or recomputes it)")
+            took = hidden(f"{cls}.{setter} didn't take the value (the game clamps or recomputes it)")
             lines.append(
-                f"            if ({cond}) {{ {ctype_} v = {value}; void *argv[1] = {{&v}}; if (AMIl2cppCall(obj, {c_string(cls)}, {c_string(setter)}, 1, argv, NULL)) {{ applied = true;"
-                f" void *rb = NULL; {ctype_} *back = AMIl2cppCall(obj, {c_string(cls)}, {c_string(getter)}, 0, NULL, &rb) ? AMIl2cppUnbox(rb) : NULL;"
+                f"            if ({cond}) {{ {ctype_} v = {value}; void *argv[1] = {{&v}}; if (AMIl2cppCall(obj, {hidden(cls)}, {hidden(setter)}, 1, argv, NULL)) {{ applied = true;"
+                f" void *rb = NULL; {ctype_} *back = AMIl2cppCall(obj, {hidden(cls)}, {hidden(getter)}, 0, NULL, &rb) ? AMIl2cppUnbox(rb) : NULL;"
                 f" if (back && *back != v) {{ reached = false; why = {took}; }} }} }}"
             )
     if any(f"goto {state}_next" in line for line in lines):
@@ -724,11 +731,11 @@ def render_watch(watch, every):
         body += objects
         if w.get("getter"):
             body.append(
-                f"            void *b = NULL; {ctype_} *v = AMIl2cppCall(obj, {c_string(cls)}, {c_string(w['getter'])}, 0, NULL, &b) ? AMIl2cppUnbox(b) : NULL;"
+                f"            void *b = NULL; {ctype_} *v = AMIl2cppCall(obj, {hidden(cls)}, {hidden(w['getter'])}, 0, NULL, &b) ? AMIl2cppUnbox(b) : NULL;"
             )
         else:
             body.append(
-                f"            {ctype_} *v = AMIl2cppField(obj, {c_string(cls)}, {c_string(w['field'])});"
+                f"            {ctype_} *v = AMIl2cppField(obj, {hidden(cls)}, {hidden(w['field'])});"
             )
         body.append(
             f'            if (v) w{i} = [NSString stringWithFormat:@"{spec}", {cast}*v];'

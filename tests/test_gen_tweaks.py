@@ -1,4 +1,5 @@
 import json
+import re
 import os
 import sys
 import tempfile
@@ -8,6 +9,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
 import dev
 import gen_tweaks
+import hide
+
+# The generated code hides game names (AMS_BYTES, runtime/am_hide.h); these tests read the plain names, and
+# HiddenNames checks the hiding itself.
+HIDDEN = gen_tweaks.hidden
+gen_tweaks.hidden = gen_tweaks.c_string
 
 HOOKS = {
     "engine": "unity-il2cpp",
@@ -722,3 +729,20 @@ class Pins(unittest.TestCase):
         }
         _h, m = gen_tweaks.render(data, HOOKS, "x")
         self.assertIn('title:@"A"', m)
+
+
+class HiddenNames(unittest.TestCase):
+    def setUp(self):
+        gen_tweaks.hidden = HIDDEN
+
+    def tearDown(self):
+        gen_tweaks.hidden = gen_tweaks.c_string
+
+    def test_names_are_encoded_and_decode_back(self):
+        _h, m = gen_tweaks.render(PIN_TWEAKS, HOOKS, "game-plus")
+        self.assertNotIn('"StatHandler"', m)
+        self.assertIn("AMS_BYTES(11, ", m)
+        encoded = re.search(r"AMS_BYTES\(11, ([^)]*)\)", m).group(1)
+        data = bytes(int(x, 16) ^ ((hide.KEY + 31 * i) & 0xFF) for i, x in enumerate(encoded.split(", ")))
+        self.assertEqual(data, b"StatHandler")
+

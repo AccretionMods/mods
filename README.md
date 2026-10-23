@@ -125,6 +125,14 @@ never copy, restyle or replace it. Change the look only in `menu/AMMenu.m`, so e
   the current save first and is put in place at the next launch. The store's `saves` function and #/link page
   (getaccretion.github.io) are the other side.
 
+### Hidden names in builds
+
+A built `.dylib` exports no symbols (`-fvisibility=hidden`) and carries no game class, method or field name as
+plain text: `scripts/embed_hooks.py` and `scripts/gen_tweaks.py` write them encoded, and a hand-written `Tweak.x`
+marks each one `AMS("Name")`, which `scripts/build.sh` encodes in a compiled copy (`Tweak.hidden.x`, git-ignored).
+They are decoded in memory when first used (`runtime/am_hide.h`). The source stays readable here; this only keeps
+the names out of a quick `strings` look at the binary.
+
 ### Private bases and ready-made tweaks
 
 When the base .ipa can't be at a public link, pass a local file instead of the link:

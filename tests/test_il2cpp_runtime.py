@@ -26,13 +26,22 @@ HOOKS = {
 class EmbedHooks(unittest.TestCase):
     def test_renders_table(self):
         out = embed_hooks.render(HOOKS)
-        self.assertIn('{"Assembly-CSharp", "Game", "Player", "TakeDamage", 2},', out)
-        self.assertIn('{"", "", "Weird\\"Name", "Go", -1},', out)
+        self.assertIn("{h0_0, h0_1, h0_2, h0_3, 2},", out)
+        self.assertIn("{h1_0, h1_1, h1_2, h1_3, -1},", out)
         self.assertIn("am_hook_spec_count = 2;", out)
+        self.assertIn("am_unhide(h0_2, (const unsigned char *)h0_2, 6);", out)
 
-    def test_non_ascii_is_escaped(self):
+    def test_names_are_not_plain(self):
+        out = embed_hooks.render(HOOKS)
+        for name in ("Assembly-CSharp", "Player", "TakeDamage"):
+            self.assertNotIn(name, out)
+        line = next(l for l in out.splitlines() if l.startswith("static char h0_3[]"))
+        enc = [int(x, 16) for x in line.split("{")[1].split("}")[0].split(", ")][:-1]
+        self.assertEqual(bytes(b ^ ((0xA7 + 31 * i) & 0xFF) for i, b in enumerate(enc)), b"TakeDamage")
+
+    def test_non_ascii_is_encoded_as_utf8(self):
         data = {"hooks": [{"namespace": "", "class": "Ü", "method": "Go"}]}
-        self.assertIn('"\\303\\234"', embed_hooks.render(data))
+        self.assertIn("am_unhide(h0_2, (const unsigned char *)h0_2, 2);", embed_hooks.render(data))
 
     def test_empty_hooks_still_valid_c(self):
         self.assertIn("am_hook_spec_count = 0;", embed_hooks.render({"hooks": []}))

@@ -21,6 +21,7 @@
 // Call these on the main thread (Unity's), like the hooks and the menu.
 
 #import <Foundation/Foundation.h>
+#include "am_hide.h"
 #include <stdbool.h>
 #include <stdint.h>
 
