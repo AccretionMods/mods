@@ -19,6 +19,7 @@
 // direct call from other game code (am_il2cpp.h). scripts/find_cheats.py marks which hooks need JIT.
 
 #import <Foundation/Foundation.h>
+#include "am_hide.h"
 
 #ifdef __cplusplus
 extern "C" {

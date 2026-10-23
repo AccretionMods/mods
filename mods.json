@@ -8,48 +8,9 @@
   "website": "https://github.com/AccretionMods/mods",
   "nsfw": false,
   "featuredApps": [
-    "io.github.accretionmods.swiftradio",
     "io.github.accretionmods.thewandererplus"
   ],
   "apps": [
-    {
-      "name": "Swift Radio+",
-      "bundleIdentifier": "io.github.accretionmods.swiftradio",
-      "developerName": "Accretion",
-      "subtitle": "Open-source radio player with an Accretion mod menu.",
-      "localizedDescription": "Swift Radio, the open-source radio app, with the Accretion mod menu built in.\n\nMod menu (tap the floating button):\n• Force dark mode\n• Keep screen awake\n\nBuilt from the official unsigned release. Installs next to the original app.",
-      "iconURL": "https://getaccretion.app/icons/af99183d63e586e7.jpg",
-      "category": "entertainment",
-      "screenshots": [],
-      "versions": [
-        {
-          "version": "4.0.0-mod1.0.0",
-          "date": "2026-10-15T07:55:32Z",
-          "size": 6685264,
-          "downloadURL": "https://bbcjpinhvlxocjxlyplt.supabase.co/functions/v1/download?app=io.github.accretionmods.swiftradio&version=4.0.0-mod1.0.0",
-          "minOSVersion": "17.0",
-          "localizedDescription": "Mod 1.0.0 for Swift Radio+ 4.0.0."
-        },
-        {
-          "version": "4.0.0",
-          "date": "2026-10-10T19:56:50Z",
-          "size": 6680385,
-          "downloadURL": "https://bbcjpinhvlxocjxlyplt.supabase.co/functions/v1/download?app=io.github.accretionmods.swiftradio&version=4.0.0",
-          "minOSVersion": "17.0",
-          "localizedDescription": "Mod 1.0.0 for Swift Radio+ 4.0.0."
-        }
-      ],
-      "version": "4.0.0-mod1.0.0",
-      "versionDate": "2026-10-15T07:55:32Z",
-      "versionDescription": "Mod 1.0.0 for Swift Radio+ 4.0.0.",
-      "downloadURL": "https://bbcjpinhvlxocjxlyplt.supabase.co/functions/v1/download?app=io.github.accretionmods.swiftradio&version=4.0.0-mod1.0.0",
-      "size": 6685264,
-      "accretionMod": {
-        "id": "swiftradio-plus",
-        "kind": "tweak",
-        "modVersion": "1.0.0"
-      }
-    },
     {
       "name": "The Wanderer+",
       "bundleIdentifier": "io.github.accretionmods.thewandererplus",

@@ -56,8 +56,8 @@ DIVIDE_FLOAT(WastelandCycle, sWasteland)
 
 // Incident damage per cycle. Each creature controller has two getters (damage to the dwellers, damage to
 // the room), each invader controller one (damage to the room); all answer 0 while "incidents do no damage"
-// is on. The two lists are the only place an enemy is named: they generate the hooks here and the
-// registrations in registerHooks (the hooks.json entries stay explicit).
+// is on. The two lists generate the hooks here; registerHooks names each one in full (hidden in the build), and
+// the hooks.json entries stay explicit.
 #define CREATURES(X) X(Deathclaw) X(Ghoul) X(Molerat) X(Radroach) X(Radscorpion) X(Securitron)
 #define INVADERS(X) X(Aliens) X(EnclavePowerArmor) X(EnclaveSecurity) X(Gen1Synth) X(Gen2Synth) X(Raiders)
 
@@ -145,18 +145,18 @@ static BOOL offsetsMatch(void) {
 
 // IL2CPP helpers: a class by assembly and name, and a call through il2cpp_runtime_invoke (NULL on an exception).
 static void *klass(const char *assembly, const char *ns, const char *name) {
-    void *(*domain_get)(void) = il2cpp("il2cpp_domain_get");
-    void *(*assembly_open)(void *, const char *) = il2cpp("il2cpp_domain_assembly_open");
-    void *(*assembly_get_image)(void *) = il2cpp("il2cpp_assembly_get_image");
-    void *(*class_from_name)(void *, const char *, const char *) = il2cpp("il2cpp_class_from_name");
+    void *(*domain_get)(void) = il2cpp(AMS("il2cpp_domain_get"));
+    void *(*assembly_open)(void *, const char *) = il2cpp(AMS("il2cpp_domain_assembly_open"));
+    void *(*assembly_get_image)(void *) = il2cpp(AMS("il2cpp_assembly_get_image"));
+    void *(*class_from_name)(void *, const char *, const char *) = il2cpp(AMS("il2cpp_class_from_name"));
     if (!domain_get || !assembly_open || !assembly_get_image || !class_from_name) return NULL;
     void *a = assembly_open(domain_get(), assembly);
     return a ? class_from_name(assembly_get_image(a), ns, name) : NULL;
 }
 
 static void *invoke(void *cls, const char *method, int argc, void *obj, void **args) {
-    void *(*method_from_name)(void *, const char *, int) = il2cpp("il2cpp_class_get_method_from_name");
-    void *(*runtime_invoke)(void *, void *, void **, void **) = il2cpp("il2cpp_runtime_invoke");
+    void *(*method_from_name)(void *, const char *, int) = il2cpp(AMS("il2cpp_class_get_method_from_name"));
+    void *(*runtime_invoke)(void *, void *, void **, void **) = il2cpp(AMS("il2cpp_runtime_invoke"));
     void *m = cls && method_from_name && runtime_invoke ? method_from_name(cls, method, argc) : NULL;
     void *exception = NULL;
     void *r = m ? runtime_invoke(m, obj, args, &exception) : NULL;
@@ -166,13 +166,13 @@ static void *invoke(void *cls, const char *method, int argc, void *obj, void **a
 // Every object of a MonoBehaviour class, inactive ones too: FindObjectsByType(Type, Include, None), an IL2CPP
 // array (length at 0x18, items from 0x20) or NULL.
 static void *allObjects(const char *assembly, const char *ns, const char *name) {
-    void *(*class_get_type)(void *) = il2cpp("il2cpp_class_get_type");
-    void *(*type_get_object)(void *) = il2cpp("il2cpp_type_get_object");
+    void *(*class_get_type)(void *) = il2cpp(AMS("il2cpp_class_get_type"));
+    void *(*type_get_object)(void *) = il2cpp(AMS("il2cpp_type_get_object"));
     void *cls = klass(assembly, ns, name);
     if (!cls || !class_get_type || !type_get_object) return NULL;
     int32_t include = 1, sortNone = 0;
     void *args[3] = {type_get_object(class_get_type(cls)), &include, &sortNone};
-    return invoke(klass("UnityEngine.CoreModule", "UnityEngine", "Object"), "FindObjectsByType", 3, NULL, args);
+    return invoke(klass(AMS("UnityEngine.CoreModule"), AMS("UnityEngine"), AMS("Object")), AMS("FindObjectsByType"), 3, NULL, args);
 }
 
 static void *allMenus(void) { return allObjects("Assembly-CSharp", "", "MainMenuScene"); }
@@ -193,9 +193,9 @@ static void repairMenus(void) {
         if (m && m == sDuplicateMenu) duplicateAlive = YES;
         if (!m || m == sOriginalMenu || *(void **)(m + 0x218)) continue;
         // the table: its six button arrays (0x1E8 main screen ... 0x210 credits) in field order, at 0x218
-        void *(*array_new)(void *, uintptr_t) = il2cpp("il2cpp_array_new");
-        void *(*element_class)(void *) = il2cpp("il2cpp_class_get_element_class");
-        void (*wbarrier)(void *, void **, void *) = il2cpp("il2cpp_gc_wbarrier_set_field");  // keeps the GC informed
+        void *(*array_new)(void *, uintptr_t) = il2cpp(AMS("il2cpp_array_new"));
+        void *(*element_class)(void *) = il2cpp(AMS("il2cpp_class_get_element_class"));
+        void (*wbarrier)(void *, void **, void *) = il2cpp(AMS("il2cpp_gc_wbarrier_set_field"));  // keeps the GC informed
         if (!array_new || !element_class || !wbarrier) return;
         void *rowClass = element_class(sTableClass);
         void *table = array_new(rowClass, 6);
@@ -209,16 +209,16 @@ static void repairMenus(void) {
         wbarrier(m, (void **)(m + 0x218), table);
         sDuplicateMenu = m;
         duplicateAlive = YES;
-        void *go = invoke(klass("UnityEngine.CoreModule", "UnityEngine", "Component"), "get_gameObject", 0, m, NULL);
+        void *go = invoke(klass(AMS("UnityEngine.CoreModule"), AMS("UnityEngine"), AMS("Component")), AMS("get_gameObject"), 0, m, NULL);
         uint8_t off = 0;
         void *hide[1] = {&off};
-        if (go) invoke(klass("UnityEngine.CoreModule", "UnityEngine", "GameObject"), "SetActive", 1, go, hide);
+        if (go) invoke(klass(AMS("UnityEngine.CoreModule"), AMS("UnityEngine"), AMS("GameObject")), AMS("SetActive"), 1, go, hide);
         logMenu(go ? "second copy given its button table and hidden" : "second copy given its button table");
     }
     if (sDuplicateMenu && duplicateAlive && !originalAlive) {
-        void *root = invoke(klass("UnityEngine.CoreModule", "UnityEngine", "Component"), "get_gameObject", 0, sDuplicateMenu, NULL);
+        void *root = invoke(klass(AMS("UnityEngine.CoreModule"), AMS("UnityEngine"), AMS("Component")), AMS("get_gameObject"), 0, sDuplicateMenu, NULL);
         void *args[1] = {root};
-        if (root) invoke(klass("UnityEngine.CoreModule", "UnityEngine", "Object"), "Destroy", 1, NULL, args);
+        if (root) invoke(klass(AMS("UnityEngine.CoreModule"), AMS("UnityEngine"), AMS("Object")), AMS("Destroy"), 1, NULL, args);
         logMenu("first copy removed by the game (vault loading), second copy destroyed");
         sDuplicateMenu = NULL;
     }
@@ -241,28 +241,28 @@ static void repairMenus(void) {
 static BOOL unboxBool(void *boxed) { return boxed && *(uint8_t *)((char *)boxed + 0x10); }
 
 static void applyNoJitSwitches(void) {
-    const char *assembly = "Assembly-CSharp";
+    const char *assembly = AMS("Assembly-CSharp");
     static int lastRush = -1;
     if (lastRush != sRushWins) {
         uint8_t on = sRushWins;
         void *args[1] = {&on};
-        invoke(klass(assembly, "", "ProductionRoom"), "set_CheatRushAlwaysSucceeds", 1, NULL, args);
+        invoke(klass(assembly, "", AMS("ProductionRoom")), AMS("set_CheatRushAlwaysSucceeds"), 1, NULL, args);
         lastRush = sRushWins;
     }
 
     static float lastScale;
-    void *time = klass("UnityEngine.CoreModule", "UnityEngine", "Time");
-    void *scaleBox = invoke(time, "get_timeScale", 0, NULL, NULL);
+    void *time = klass(AMS("UnityEngine.CoreModule"), AMS("UnityEngine"), AMS("Time"));
+    void *scaleBox = invoke(time, AMS("get_timeScale"), 0, NULL, NULL);
     float scale = scaleBox ? *(float *)((char *)scaleBox + 0x10) : 0, want = sSpeed;
     if (scale > 0 && (want > 1 || lastScale > 1) && fabsf(scale - want) > 0.01f) {
         void *args[1] = {&want};
-        invoke(time, "set_timeScale", 1, NULL, args);
+        invoke(time, AMS("set_timeScale"), 1, NULL, args);
         lastScale = want;
     }
 
     static char *roomParams;
     static float baseNoRush, baseRush;
-    void *params = allObjects(assembly, "", "GameParameters");
+    void *params = allObjects(assembly, "", AMS("GameParameters"));
     char *gp = params && *(int32_t *)((char *)params + 0x18) > 0 ? ((char **)((char *)params + 0x20))[0] : NULL;
     char *rp = gp ? *(char **)(gp + 0x40) : NULL;
     if (rp && rp != roomParams) {
@@ -294,14 +294,14 @@ static void applyNoJitSwitches(void) {
     }
 
     if (sNoStatDamage || sNoRadiation) {
-        void *dwellers = allObjects(assembly, "", "Dweller");
+        void *dwellers = allObjects(assembly, "", AMS("Dweller"));
         int32_t n = dwellers ? *(int32_t *)((char *)dwellers + 0x18) : 0;
-        void *healthClass = n ? klass(assembly, "", "DwellerHealth") : NULL;
+        void *healthClass = n ? klass(assembly, "", AMS("DwellerHealth")) : NULL;
         for (int32_t i = 0; i < n && healthClass; i++) {
             char *dweller = ((void **)((char *)dwellers + 0x20))[i];
             char *health = dweller ? *(char **)(dweller + 0x1A0) : NULL;
             if (!health) continue;
-            if (sNoRadiation && *(float *)(health + 0x2C) > 0) invoke(healthClass, "RemoveAllRadiation", 0, health, NULL);
+            if (sNoRadiation && *(float *)(health + 0x2C) > 0) invoke(healthClass, AMS("RemoveAllRadiation"), 0, health, NULL);
             char *hp = *(char **)(health + 0x20);
             if (sNoStatDamage && hp && *(float *)(hp + 0x10) > 0 && *(float *)(hp + 0x10) < *(float *)(hp + 0x14))
                 *(float *)(hp + 0x10) = *(float *)(hp + 0x14);
@@ -309,19 +309,19 @@ static void applyNoJitSwitches(void) {
     }
 
     if (sNoIncidents) {
-        void *rooms = allObjects(assembly, "", "ProductionRoom");
+        void *rooms = allObjects(assembly, "", AMS("ProductionRoom"));
         int32_t n = rooms ? *(int32_t *)((char *)rooms + 0x18) : 0;
         for (int32_t i = 0; i < n; i++) {
             char *room = ((void **)((char *)rooms + 0x20))[i];
             if (room) *(float *)(room + 0x268) = 0;
         }
-        void *vaults = allObjects(assembly, "", "Vault");
+        void *vaults = allObjects(assembly, "", AMS("Vault"));
         char *vault = vaults && *(int32_t *)((char *)vaults + 0x18) > 0 ? ((char **)((char *)vaults + 0x20))[0] : NULL;
         char *state = vault ? *(char **)(vault + 0x160) : NULL;
-        void *stateClass = state ? klass(assembly, "", "VaultEmergencyState") : NULL;
-        if (stateClass && unboxBool(invoke(stateClass, "get_InEmergency", 0, state, NULL)) &&
-            !unboxBool(invoke(stateClass, "get_IsInvaderEmergency", 0, state, NULL))) {
-            char *list = invoke(stateClass, "get_EmergencyRooms", 0, state, NULL);  // List<Room>: _items 0x10, _size 0x18
+        void *stateClass = state ? klass(assembly, "", AMS("VaultEmergencyState")) : NULL;
+        if (stateClass && unboxBool(invoke(stateClass, AMS("get_InEmergency"), 0, state, NULL)) &&
+            !unboxBool(invoke(stateClass, AMS("get_IsInvaderEmergency"), 0, state, NULL))) {
+            char *list = invoke(stateClass, AMS("get_EmergencyRooms"), 0, state, NULL);  // List<Room>: _items 0x10, _size 0x18
             char *items = list ? *(char **)(list + 0x10) : NULL;
             int32_t count = list ? *(int32_t *)(list + 0x18) : 0;
             void *stop[16];
@@ -329,7 +329,7 @@ static void applyNoJitSwitches(void) {
             for (int32_t i = 0; i < count && k < 16 && items; i++) stop[k++] = ((void **)(items + 0x20))[i];
             for (int32_t i = 0; i < k; i++) {
                 void *args[1] = {stop[i]};
-                invoke(stateClass, "ForceStopEmergencyInRoom", 1, state, args);
+                invoke(stateClass, AMS("ForceStopEmergencyInRoom"), 1, state, args);
             }
         }
     }
@@ -354,46 +354,46 @@ static void setFloat(void *cls, const char *setter, void *obj, float value) {
 }
 
 static char *theVault(void) {
-    void *vaults = allObjects("Assembly-CSharp", "", "Vault");
+    void *vaults = allObjects(AMS("Assembly-CSharp"), "", AMS("Vault"));
     return vaults && *(int32_t *)((char *)vaults + 0x18) > 0 ? ((char **)((char *)vaults + 0x20))[0] : NULL;
 }
 
 static void applyExtras(void) {
-    const char *assembly = "Assembly-CSharp";
+    const char *assembly = AMS("Assembly-CSharp");
     char *vault = theVault();
     char *storage = vault ? *(char **)(vault + 0x150) : NULL;
     char *res = storage ? *(char **)(storage + 0x18) : NULL, *max = storage ? *(char **)(storage + 0x10) : NULL;
-    void *gr = res ? klass(assembly, "", "GameResources") : NULL;
+    void *gr = res ? klass(assembly, "", AMS("GameResources")) : NULL;
     static char *lastRes;
     static float lastCaps;
     if (gr) {
-        float caps = getFloat(gr, "get_Nuka", res);
+        float caps = getFloat(gr, AMS("get_Nuka"), res);
         if (res == lastRes && sCaps > 1 && caps > lastCaps) {
             caps += (caps - lastCaps) * (sCaps - 1);
-            setFloat(gr, "set_Nuka", res, caps);
+            setFloat(gr, AMS("set_Nuka"), res, caps);
         }
         lastRes = res;
         lastCaps = caps;
         if (sFullResources && max) {
-            setFloat(gr, "set_Food", res, getFloat(gr, "get_Food", max));
-            setFloat(gr, "set_Power", res, getFloat(gr, "get_Power", max));
-            setFloat(gr, "set_Water", res, getFloat(gr, "get_Water", max));
+            setFloat(gr, AMS("set_Food"), res, getFloat(gr, AMS("get_Food"), max));
+            setFloat(gr, AMS("set_Power"), res, getFloat(gr, AMS("get_Power"), max));
+            setFloat(gr, AMS("set_Water"), res, getFloat(gr, AMS("get_Water"), max));
         }
     }
 
     if (sHappy || sMaxSpecial || sFastLevels) {
-        void *dwellers = allObjects(assembly, "", "Dweller");
+        void *dwellers = allObjects(assembly, "", AMS("Dweller"));
         int32_t n = dwellers ? *(int32_t *)((char *)dwellers + 0x18) : 0;
-        void *happyClass = klass(assembly, "", "DwellerHappiness"), *statClass = klass(assembly, "", "SpecialStat");
-        void *expClass = klass(assembly, "", "DwellerExperience");
+        void *happyClass = klass(assembly, "", AMS("DwellerHappiness")), *statClass = klass(assembly, "", AMS("SpecialStat"));
+        void *expClass = klass(assembly, "", AMS("DwellerExperience"));
         for (int32_t i = 0; i < n; i++) {
             char *d = ((char **)((char *)dwellers + 0x20))[i];
             if (!d) continue;
             char *happy = *(char **)(d + 0x198);
             if (sHappy && happy) {
-                void *maxBox = invoke(happyClass, "get_HappinessMax", 0, happy, NULL);
+                void *maxBox = invoke(happyClass, AMS("get_HappinessMax"), 0, happy, NULL);
                 float top = maxBox ? *(int32_t *)((char *)maxBox + 0x10) : 100, now = *(float *)(happy + 0x20);
-                if (now < top) setFloat(happyClass, "AddHappiness", happy, top - now);
+                if (now < top) setFloat(happyClass, AMS("AddHappiness"), happy, top - now);
             }
             char *stats = *(char **)(d + 0x1D8);
             char *list = sMaxSpecial && stats ? *(char **)(stats + 0x18) : NULL;  // List<SpecialStat>: _items 0x10, _size 0x18
@@ -403,23 +403,51 @@ static void applyExtras(void) {
                 if (stat && *(int32_t *)(stat + 0x10) > 0 && *(int32_t *)(stat + 0x10) < 10) {
                     int32_t ten = 10;
                     void *args[1] = {&ten};
-                    invoke(statClass, "SetValueAndMinExp", 1, stat, args);
+                    invoke(statClass, AMS("SetValueAndMinExp"), 1, stat, args);
                 }
             }
             char *exp = *(char **)(d + 0x1E0);
-            if (sFastLevels && exp) setFloat(expClass, "AddExp", exp, 500);
+            if (sFastLevels && exp) setFloat(expClass, AMS("AddExp"), exp, 500);
         }
     }
 
     if (sInstantReturn) {
-        void *teams = allObjects(assembly, "", "WastelandTeam");
+        void *teams = allObjects(assembly, "", AMS("WastelandTeam"));
         int32_t n = teams ? *(int32_t *)((char *)teams + 0x18) : 0;
-        void *teamClass = n ? klass(assembly, "", "WastelandTeam") : NULL;
+        void *teamClass = n ? klass(assembly, "", AMS("WastelandTeam")) : NULL;
         for (int32_t i = 0; i < n && teamClass; i++) {
             char *team = ((char **)((char *)teams + 0x20))[i];
-            if (team && *(int32_t *)(team + 0x9C) > 0) invoke(teamClass, "SkipReturningTime", 0, team, NULL);
+            if (team && *(int32_t *)(team + 0x9C) > 0) invoke(teamClass, AMS("SkipReturningTime"), 0, team, NULL);
         }
     }
+}
+
+// Each switch that is on says whether it reaches the game (the menu's dot: green, or red with what to do), once a
+// second with the switches above. Without a report the menu shows "Waiting for the game to load" for good, which
+// read as broken switches (2026-10-22). Hook switches need their hook in this game version; the rest act on the
+// loaded vault (its storage for full resources).
+static void report(const char *key, BOOL on, BOOL ok, const char *why) {
+    if (on) AMMenuStatus(key, ok, ok ? NULL : why);
+}
+
+static void reportStatus(void) {
+    char *vault = theVault();
+    char *storage = vault ? *(char **)(vault + 0x150) : NULL;
+    const char *load = "Open your vault to see it work";
+    const char *missing = "Not found in this game version";
+    report(AMS("noCombatDamage"), sNoCombatDamage, vault && (orig_GetHit || orig_GetHitQuest), vault ? missing : load);
+    report(AMS("noIncidentDamage"), sNoIncidentDamage, vault && (orig_RadroachDweller || orig_RaidersRoom), vault ? missing : load);
+    report(AMS("rushWins"), sRushWins, vault != NULL, load);
+    report(AMS("noDamage"), sNoStatDamage, vault != NULL, load);
+    report(AMS("noRadiation"), sNoRadiation, vault != NULL, load);
+    report(AMS("noIncidents"), sNoIncidents, vault != NULL, load);
+    report(AMS("fullResources"), sFullResources, storage && *(char **)(storage + 0x10), load);
+    report(AMS("happy"), sHappy, vault != NULL, load);
+    report(AMS("maxSpecial"), sMaxSpecial, vault != NULL, load);
+    report(AMS("fastLevels"), sFastLevels, vault != NULL, load);
+    report(AMS("instantReturn"), sInstantReturn, vault != NULL, load);
+    report(AMS("fastBabies"), sFastBabies, vault != NULL, load);
+    report(AMS("keepAwake"), [AMMenu boolForKey:@"keepAwake"], YES, NULL);
 }
 
 // Item picker: rare and legendary weapons and outfits from GameParameters.m_items (0x28) -> ItemParameters
@@ -442,7 +470,7 @@ static NSArray *itemEntries(BOOL weapons) {
     NSMutableArray *entries = [NSMutableArray array];
     sItemIds = [NSMutableArray array];
     sItemTypes = [NSMutableArray array];
-    void *params = allObjects("Assembly-CSharp", "", "GameParameters");
+    void *params = allObjects(AMS("Assembly-CSharp"), "", AMS("GameParameters"));
     char *gp = params && *(int32_t *)((char *)params + 0x18) > 0 ? ((char **)((char *)params + 0x20))[0] : NULL;
     char *items = gp ? *(char **)(gp + 0x28) : NULL;
     char *array = items ? *(char **)(items + (weapons ? 0xB0 : 0x10)) : NULL;
@@ -479,7 +507,7 @@ static NSArray *itemEntries(BOOL weapons) {
 
 static void addItem(NSInteger index) {
     if (index < 0 || index >= (NSInteger)sItemIds.count) return;
-    void *(*string_new)(const char *) = il2cpp("il2cpp_string_new");
+    void *(*string_new)(const char *) = il2cpp(AMS("il2cpp_string_new"));
     char *vault = theVault();
     char *inventory = vault ? *(char **)(vault + 0x158) : NULL;
     if (!string_new || !inventory) { AMMenuPickResult(false, "Open a vault first"); return; }
@@ -487,13 +515,13 @@ static void addItem(NSInteger index) {
     void *args[3] = {&type, string_new(sItemIds[index].UTF8String), &count};
     // AddAndRecordDwellerItem is declared on VaultInventory (Vault.m_inventory's class), not on Inventory: looked up
     // on Inventory it was never found and nothing was added (2026-10-22)
-    void *(*method_from_name)(void *, const char *, int) = il2cpp("il2cpp_class_get_method_from_name");
-    void *(*runtime_invoke)(void *, void *, void **, void **) = il2cpp("il2cpp_runtime_invoke");
-    void *m = method_from_name ? method_from_name(klass("Assembly-CSharp", "", "VaultInventory"), "AddAndRecordDwellerItem", 3) : NULL;
+    void *(*method_from_name)(void *, const char *, int) = il2cpp(AMS("il2cpp_class_get_method_from_name"));
+    void *(*runtime_invoke)(void *, void *, void **, void **) = il2cpp(AMS("il2cpp_runtime_invoke"));
+    void *m = method_from_name ? method_from_name(klass(AMS("Assembly-CSharp"), "", AMS("VaultInventory")), AMS("AddAndRecordDwellerItem"), 3) : NULL;
     void *exception = NULL;
     if (m && runtime_invoke) runtime_invoke(m, inventory, args, &exception);
     os_log(OS_LOG_DEFAULT, "[Fallout Shelter+] add item %{public}@: %{public}s", sItemIds[index],
-           !m ? "method not found" : exception ? "the game threw" : "added");
+           !m ? "method not found" : exception ? "the game threw" : AMS("added"));
     AMMenuPickResult(m && !exception, !m ? "Not found in this game version" : exception ? "The game refused it" : "Added to storage");
 }
 
@@ -503,7 +531,7 @@ static void hook_MainMenuAwake(void *self, const void *mi) {
     orig_MainMenuAwake(self, mi);
     if (!offsetsMatch()) return;
     void *table = *(void **)((char *)self + 0x218);
-    void *(*object_get_class)(void *) = il2cpp("il2cpp_object_get_class");
+    void *(*object_get_class)(void *) = il2cpp(AMS("il2cpp_object_get_class"));
     if (table) sOriginalMenu = self;  // every time a menu finishes OnAwake (also on later returns to the menu)
     if (table && object_get_class && !sTableClass) {
         sTableClass = object_get_class(table);
@@ -517,6 +545,7 @@ static void hook_MainMenuAwake(void *self, const void *mi) {
             if (++ticks % 4 == 0) {
                 applyNoJitSwitches();
                 applyExtras();
+                reportStatus();
             }
         });
         dispatch_resume(timer);
@@ -527,32 +556,45 @@ static void hook_MainMenuAwake(void *self, const void *mi) {
 #define REG(name, hook) AMIl2cppRegister(name, (void *)hook_##hook, (void **)&orig_##hook)
 
 static void registerHooks(void) {
-    REG("Dweller.DwellerFighting.GetHit", GetHit);
-    REG("Dweller.DwellerFightingQuest.GetHit", GetHitQuest);
-    REG("Dweller.DwellerFighting.GetWeaponDamage", WeaponDamage);
-    REG("Dweller.DwellerFightingQuest.GetWeaponDamage", WeaponDamageQuest);
-    REG("ProductionRoom.ProductionRoomWorking.GetTaskCycle", ProductionCycle);
-    REG("CraftingRoom.CraftingRoomWorking.GetTaskCycle", CraftingCycle);
-    REG("TrainingRoom.GetExperiencePerCycle", TrainingXP);
-    REG("WastelandCycle.GetCycleDurationInSeconds", WastelandCycle);
+    REG(AMS("Dweller.DwellerFighting.GetHit"), GetHit);
+    REG(AMS("Dweller.DwellerFightingQuest.GetHit"), GetHitQuest);
+    REG(AMS("Dweller.DwellerFighting.GetWeaponDamage"), WeaponDamage);
+    REG(AMS("Dweller.DwellerFightingQuest.GetWeaponDamage"), WeaponDamageQuest);
+    REG(AMS("ProductionRoom.ProductionRoomWorking.GetTaskCycle"), ProductionCycle);
+    REG(AMS("CraftingRoom.CraftingRoomWorking.GetTaskCycle"), CraftingCycle);
+    REG(AMS("TrainingRoom.GetExperiencePerCycle"), TrainingXP);
+    REG(AMS("WastelandCycle.GetCycleDurationInSeconds"), WastelandCycle);
 
-    // Room.Room<Enemy>EmergencyController getters, one registration per hook the CREATURES/INVADERS lists made
-#define REG_CREATURE(enemy)                                                                   \
-    REG("Room.Room" #enemy "EmergencyController.get_DwellerMaxDamagePerCycle", enemy##Dweller); \
-    REG("Room.Room" #enemy "EmergencyController.get_DamagePerCycle", enemy##Damage);
-#define REG_INVADER(enemy) REG("Room.Room" #enemy "EmergencyController.get_RoomDamagePerCycle", enemy##Room);
-    CREATURES(REG_CREATURE)
-    INVADERS(REG_INVADER)
+    // Room.Room<Enemy>EmergencyController getters: one registration per hook the CREATURES/INVADERS lists made,
+    // written out so each name is hidden in the build (AMS: a macro-joined name would be plain text)
+    REG(AMS("Room.RoomDeathclawEmergencyController.get_DwellerMaxDamagePerCycle"), DeathclawDweller);
+    REG(AMS("Room.RoomDeathclawEmergencyController.get_DamagePerCycle"), DeathclawDamage);
+    REG(AMS("Room.RoomGhoulEmergencyController.get_DwellerMaxDamagePerCycle"), GhoulDweller);
+    REG(AMS("Room.RoomGhoulEmergencyController.get_DamagePerCycle"), GhoulDamage);
+    REG(AMS("Room.RoomMoleratEmergencyController.get_DwellerMaxDamagePerCycle"), MoleratDweller);
+    REG(AMS("Room.RoomMoleratEmergencyController.get_DamagePerCycle"), MoleratDamage);
+    REG(AMS("Room.RoomRadroachEmergencyController.get_DwellerMaxDamagePerCycle"), RadroachDweller);
+    REG(AMS("Room.RoomRadroachEmergencyController.get_DamagePerCycle"), RadroachDamage);
+    REG(AMS("Room.RoomRadscorpionEmergencyController.get_DwellerMaxDamagePerCycle"), RadscorpionDweller);
+    REG(AMS("Room.RoomRadscorpionEmergencyController.get_DamagePerCycle"), RadscorpionDamage);
+    REG(AMS("Room.RoomSecuritronEmergencyController.get_DwellerMaxDamagePerCycle"), SecuritronDweller);
+    REG(AMS("Room.RoomSecuritronEmergencyController.get_DamagePerCycle"), SecuritronDamage);
+    REG(AMS("Room.RoomAliensEmergencyController.get_RoomDamagePerCycle"), AliensRoom);
+    REG(AMS("Room.RoomEnclavePowerArmorEmergencyController.get_RoomDamagePerCycle"), EnclavePowerArmorRoom);
+    REG(AMS("Room.RoomEnclaveSecurityEmergencyController.get_RoomDamagePerCycle"), EnclaveSecurityRoom);
+    REG(AMS("Room.RoomGen1SynthEmergencyController.get_RoomDamagePerCycle"), Gen1SynthRoom);
+    REG(AMS("Room.RoomGen2SynthEmergencyController.get_RoomDamagePerCycle"), Gen2SynthRoom);
+    REG(AMS("Room.RoomRaidersEmergencyController.get_RoomDamagePerCycle"), RaidersRoom);
 
-    REG("ProductionRoom.get_CheatRushAlwaysSucceeds", rush);
-    REG("ProductionRoom.GetResourceWithBonuses", resource);
-    REG("DwellerHealth.DoStatReductedDamage", stat_damage);
-    REG("DwellerHealth.set_RadiationValue", set_radiation);
-    REG("VaultEmergencyState.StartEmergency", start_emergency);
-    REG("VaultEmergencyState.StartRandomEmergencyTask", start_random);
-    REG("VaultEmergencyState.ForceStartEmergencyInRoom", force_emergency);
-    REG("UnityEngine.Time.set_timeScale", set_timescale);
-    REG("MainMenuScene.OnAwake", MainMenuAwake);
+    REG(AMS("ProductionRoom.get_CheatRushAlwaysSucceeds"), rush);
+    REG(AMS("ProductionRoom.GetResourceWithBonuses"), resource);
+    REG(AMS("DwellerHealth.DoStatReductedDamage"), stat_damage);
+    REG(AMS("DwellerHealth.set_RadiationValue"), set_radiation);
+    REG(AMS("VaultEmergencyState.StartEmergency"), start_emergency);
+    REG(AMS("VaultEmergencyState.StartRandomEmergencyTask"), start_random);
+    REG(AMS("VaultEmergencyState.ForceStartEmergencyInRoom"), force_emergency);
+    REG(AMS("UnityEngine.Time.set_timeScale"), set_timescale);
+    REG(AMS("MainMenuScene.OnAwake"), MainMenuAwake);
 }
 
 %ctor {
