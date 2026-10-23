@@ -731,7 +731,7 @@ const App = {
     if (j.lines && j.lines.length) { out.textContent += (out.textContent ? "\n" : "") + j.lines.join("\n"); out.scrollTop = out.scrollHeight; }
     if (j.command === "autobuild") this.autobuildProgress(j, det, out.textContent);
     if (j.command === "store") this.stepProgress(j, det, out.textContent);
-    if (["claude", "aider", "codex"].includes(j.command) && j.status !== "running" && !this.byId("jobcmds-" + j.id)) {
+    if (["claude", "aider", "codex", "gemini"].includes(j.command) && j.status !== "running" && !this.byId("jobcmds-" + j.id)) {
       const text = (this.byId("jobout-" + j.id) || {}).textContent || "";
       const cmds = [...new Set(text.split("\n").map(l => l.trim().replace(/^[`$>\s]+|`+$/g, "")).filter(l => /^am (pin|call|add|tweak|remove|gen|mark|build|update|new|dump|check|scan|find|fields) \S+/.test(l)))];
       if (cmds.length) {
@@ -741,8 +741,9 @@ const App = {
           btn.onclick = async () => { btn.disabled = true; try { const r = await this.api("/api/console", { line: c }); this.showJob(r); this.poll(r.id); btn.textContent = "Started"; } catch (e) { btn.disabled = false; this.toast(e.message, "bad"); } };
           list.append(this.el("div", { class: "row", style: "margin-bottom:6px" }, this.el("span", { class: "mono small grow", text: c }), btn));
         }
-        if (j.command === "aider" && cmds.some(c => /^am (find|fields) /.test(c))) {
-          const again = this.el("button", { class: "small primary", title: "Studio runs aider's am find / am fields searches on the dump and gives aider the results with its prompt" }, "Run the searches and ask aider again");
+        if ((j.command === "aider" || j.command === "gemini") && cmds.some(c => /^am (find|fields) /.test(c))) {
+          const who = this.engineShort(j.command);
+          const again = this.el("button", { class: "small primary", title: `Studio runs ${who}'s am find / am fields searches on the dump and gives ${who} the results with its prompt` }, `Run the searches and ask ${who} again`);
           again.onclick = async () => { again.disabled = true; try { const r = await this.api(`/api/jobs/${j.id}/followup`, { mod: this.mod || "" }); this.showJob(r); this.poll(r.id); again.textContent = "Asked again"; } catch (e) { again.disabled = false; this.toast(e.message, "bad"); } };
           list.append(this.el("div", { class: "row", style: "margin-top:4px" }, again));
         }
@@ -927,7 +928,7 @@ const App = {
           `Candidates (scored by names and types only; not yet in the mod):\n${t.text}\n\n` +
           `For the 10 to 15 most valuable: what it likely does in play (check the class in the dump with am find / am fields if unsure), a menu title, a section (Survival, Combat, Pet & companion, Items & crafting, Progress, Exploration, In-app purchases, Other), confidence (high/medium/low), and the approach (pin, hook, call or inspect). For valid pin candidates only, give the value and exact command on its own line starting with "am pin ${this.mod} ..." (with --object, --value, --when lower when it has a getter, --as <key>, --title "..."). Do not invent pin values for inventory methods or types. Explain technical requirements and side effects; skip a candidate only for a concrete technical reason, not its topic.\n` +
           `Read only: change no files. Include purchases/IAP, full-game unlocks, ads, accounts and online play when relevant; topic labels are informational.`;
-        const j = await this.api("/api/claude", { prompt, read_only: true, engine: this.engine() });
+        const j = await this.api("/api/claude", { prompt, read_only: true, engine: this.engine(), effort: this.effort() });
         this.showJob(j); this.poll(j.id); this.byId("jobsPanel").scrollIntoView({ behavior: "smooth", block: "nearest" });
         this.toast(`${this.engineName()} is ranking the candidates: its answer streams into Jobs, with an Add button on each command`, "ok");
       } catch (e) { this.toast(e.message, "bad"); }
@@ -937,7 +938,7 @@ const App = {
     const auto = this.el("button", { class: "small", title: "The selected model goes through every scan candidate and makes a switch of each useful one; Studio adds them, runs gen, builds the .ipa and, when all went well, installs it on the phone", onclick: async () => {
       const who = this.engineName();
       if (!confirm(`Auto-build ${this.detail ? this.detail.title : this.mod}: ${who} goes through every candidate in this scan and makes a switch of each useful one, no top 10 (nothing about purchases, store currency, ads, accounts or online play), Studio adds them with am pin, runs gen and builds the .ipa, and if all of that went well signs and installs it on the phone (USB, unlocked) and shows the new switches' status from the log. The mod's files are snapshotted first (Files tab restores). Start?`)) return;
-      try { const j = await this.api(`/api/mods/${this.mod}/autobuild`, { engine: this.engine(), limit: 0 }); this.showJob(j); this.poll(j.id); this.byId("jobsPanel").scrollIntoView({ behavior: "smooth", block: "nearest" }); this.toast(`${who} is picking switches; Studio adds and builds them: follow it in Jobs`, "ok"); }
+      try { const j = await this.api(`/api/mods/${this.mod}/autobuild`, { engine: this.engine(), effort: this.effort(), limit: 0 }); this.showJob(j); this.poll(j.id); this.byId("jobsPanel").scrollIntoView({ behavior: "smooth", block: "nearest" }); this.toast(`${who} is picking switches; Studio adds and builds them: follow it in Jobs`, "ok"); }
       catch (e) { this.toast(e.message, "bad"); }
     } }, "Auto-build menu");
     [area, mode, verified, flagged, hideHas].forEach(i => i.addEventListener("change", load));
@@ -1024,16 +1025,24 @@ const App = {
   // Which model answers Studio's prompts: Claude Code, or aider (the free model in ~/.aider.conf.yml, answers only).
   // One choice for the whole page, remembered in this browser.
   engine() {
-    try { const e = localStorage.getItem("studio.engine"); return e === "aider" || e === "codex" ? e : "claude"; } catch (e) { return "claude"; }
+    try { const e = localStorage.getItem("studio.engine"); return ["aider", "codex", "gemini"].includes(e) ? e : "claude"; } catch (e) { return "claude"; }
   },
-  engineName(e) { return { aider: "aider (free model)", codex: "Codex (GPT)" }[e || this.engine()] || "Claude Code"; },
-  engineShort(e) { return { aider: "aider", codex: "Codex" }[e || this.engine()] || "Claude"; },
+  // how hard the model thinks: "" keeps each engine's own default
+  effort() {
+    try { const e = localStorage.getItem("studio.effort"); return ["low", "medium", "high"].includes(e) ? e : ""; } catch (e) { return ""; }
+  },
+  engineName(e) { return { aider: "aider (free model)", codex: "Codex (GPT)", gemini: "Gemini (free)" }[e || this.engine()] || "Claude Code"; },
+  engineShort(e) { return { aider: "aider", codex: "Codex", gemini: "Gemini" }[e || this.engine()] || "Claude"; },
   enginePicker(onChange) {
-    const pick = this.el("select", { title: "Which model answers: Claude Code; Codex with GPT (your ChatGPT sign-in); or aider with the free model in ~/.aider.conf.yml (edits only the selected mod, runs no commands)" },
-      [["claude", "Claude Code"], ["codex", "Codex · GPT"], ["aider", "aider · free model"]].map(o => this.el("option", { value: o[0], text: o[1] })));
+    const pick = this.el("select", { title: "Which model answers: Claude Code; Codex with GPT (your ChatGPT sign-in); aider with the free model in ~/.aider.conf.yml; or Gemini through aider with the free Google key (aider and Gemini edit only the selected mod and run no commands)" },
+      [["claude", "Claude Code"], ["codex", "Codex · GPT"], ["gemini", "Gemini · free"], ["aider", "aider · free model"]].map(o => this.el("option", { value: o[0], text: o[1] })));
     pick.value = this.engine();
     pick.addEventListener("change", () => { try { localStorage.setItem("studio.engine", pick.value); } catch (e) { /* private window */ } if (onChange) onChange(); });
-    return pick;
+    const level = this.el("select", { title: "Effort: how hard the model thinks. Higher is slower and, for paid models, uses more of the plan; Default keeps the engine's own setting" },
+      [["", "Effort: default"], ["low", "Effort: low"], ["medium", "Effort: medium"], ["high", "Effort: high"]].map(o => this.el("option", { value: o[0], text: o[1] })));
+    level.value = this.effort();
+    level.addEventListener("change", () => { try { localStorage.setItem("studio.effort", level.value); } catch (e) { /* private window */ } if (onChange) onChange(); });
+    return this.el("span", { style: "display:inline-flex;gap:6px" }, pick, level);
   },
   // the prompt builder: a task + one line + this mod's facts -> a prompt for Claude Code (studio/prompts.json)
   promptBuilder(run) {
@@ -1049,12 +1058,12 @@ const App = {
     const runBtn = this.el("button", { class: "small", onclick: async () => {
       const t = conf && (conf.tasks.find(x => x.id === task.value) || conf.tasks[0]); if (!t) return;
       const readOnly = !!t.read_only, engine = this.engine();
-      if (engine === "aider" && !readOnly) {
-        if (!confirm(`aider (free model) will edit mods/${this.mod}: tweaks.json, hooks.json, mod.json and Tweak.x are sent with the prompt to the free OpenRouter model. Studio snapshots them first (Files tab restores). aider runs no commands: the am commands it proposes appear as buttons in Jobs. Run it?`)) return;
+      if ((engine === "aider" || engine === "gemini") && !readOnly) {
+        if (!confirm(`${this.engineName(engine)} will edit mods/${this.mod}: tweaks.json, hooks.json, mod.json and Tweak.x are sent with the prompt to ${engine === "gemini" ? "Google's free Gemini API" : "the free OpenRouter model"}. Studio snapshots them first (Files tab restores). aider runs no commands: the am commands it proposes appear as buttons in Jobs. Run it?`)) return;
       } else if (!readOnly && engine === "codex") {
         if (!confirm("Full access: Codex (GPT) runs this task start to finish with no sandbox: it edits the repo, runs any command on this PC with the network, and builds, signs and installs on the phone (am run). It is told not to push, publish, delete outside the mod or install other software, but nothing enforces that. Run it?")) return;
       } else if (!readOnly && !confirm("This task may change files: Claude Code can edit this repo and run any am command (build, sign, install on the phone). It cannot push, publish or run other shell commands. Run it?")) return;
-      try { const j = await this.api("/api/claude", { prompt: out.value, read_only: readOnly, engine, mod: this.mod }); this.showJob(j); this.poll(j.id); this.byId("jobsPanel").scrollIntoView({ behavior: "smooth", block: "nearest" }); this.toast(`${this.engineName(engine)} is working: its answer streams into Jobs`, "ok"); }
+      try { const j = await this.api("/api/claude", { prompt: out.value, read_only: readOnly, engine, effort: this.effort(), mod: this.mod }); this.showJob(j); this.poll(j.id); this.byId("jobsPanel").scrollIntoView({ behavior: "smooth", block: "nearest" }); this.toast(`${this.engineName(engine)} is working: its answer streams into Jobs`, "ok"); }
       catch (e) { this.toast(e.message, "bad"); }
     } }, "Run with Claude Code");
     const runNote = this.el("span", { class: "muted small" });
@@ -1079,13 +1088,14 @@ const App = {
           (workflow.criteria || []).map(text => `- ${text}`).join("\n");
       }
       tags.replaceChildren(t.read_only ? this.el("span", { class: "badge good", text: "read only" }) : this.el("span", { class: "badge warn", text: "changes files" }));
-      const viaAider = this.engine() === "aider";
+      const viaAider = this.engine() === "aider" || this.engine() === "gemini";
       const viaCodex = this.engine() === "codex";
-      runBtn.textContent = viaAider ? (t.read_only ? "Ask aider (read only)" : "Run with aider…") : viaCodex ? (t.read_only ? "Run with Codex (read only)" : "Run with Codex…") : t.read_only ? "Run with Claude Code (read only)" : "Run with Claude Code…";
+      const short = this.engineShort();
+      runBtn.textContent = viaAider ? (t.read_only ? `Ask ${short} (read only)` : `Run with ${short}…`) : viaCodex ? (t.read_only ? "Run with Codex (read only)" : "Run with Codex…") : t.read_only ? "Run with Claude Code (read only)" : "Run with Claude Code…";
       runNote.textContent = viaCodex
         ? (t.read_only ? "Codex (GPT) reads the repo and runs read-only am commands in a read-only sandbox." : "Asks first: full access, start to finish: Codex edits, builds, signs and installs on the phone (no sandbox).")
         : viaAider
-        ? (t.read_only ? "aider answers from the prompt alone with the free model: no files, no commands, nothing else leaves this PC." : "Asks first: aider edits this mod's files (snapshot first); its am commands become buttons in Jobs.")
+        ? (t.read_only ? `${short} answers from the prompt alone (free model): no files, no commands, nothing else leaves this PC.` : `Asks first: ${short} edits this mod's files (snapshot first); its am commands become buttons in Jobs.`)
         : t.read_only ? "Claude reads the repo and runs read-only am commands; it changes nothing." : "Asks first: Claude may edit files and run am commands (no push, no publish).";
       const missing = [];
       if ((t.needs || []).includes("ask") && !line) missing.push([`Type the one line: ${t.ask}`]);

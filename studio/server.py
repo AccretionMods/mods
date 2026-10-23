@@ -179,7 +179,7 @@ class Job:
             if (
                 self.argv
                 and "mod:" + self.argv[0] in self.resources
-                and self.command in {"build", "run", "dump", "update", "new", "aider", "autobuild"}
+                and self.command in {"build", "run", "dump", "update", "new", "aider", "gemini", "autobuild"}
             ):
                 folder = ROOT / "mods" / self.argv[0]
                 if folder.is_dir():
@@ -216,6 +216,8 @@ class Job:
         )
         env = dict(os.environ, PYTHONUTF8="1", PYTHONUNBUFFERED="1", AM_REPO=str(ROOT))
         env.setdefault("COLUMNS", "4000")  # aider wraps its answer (and its am lines) at the terminal width
+        if not env.get("GEMINI_API_KEY") and gemini_key():  # saved after this server started
+            env["GEMINI_API_KEY"] = gemini_key()
         # a server started outside a login shell may lack uv and pymobiledevice3 on PATH
         local_bin = str(Path.home() / ".local" / "bin")
         if local_bin not in env.get("PATH", ""):
@@ -375,7 +377,7 @@ def claude_exe():
     return found
 
 
-def claude_command(prompt, read_only):
+def claude_command(prompt, read_only, effort=""):
     """The claude -p command line for a builder prompt. Read-only: reading tools and the read-only dev.py
     commands only, no edits. Otherwise: edits accepted, any dev.py command, no other shell commands."""
     if read_only:
@@ -415,6 +417,7 @@ def claude_command(prompt, read_only):
         "--allowedTools",
         *allowed,
         *mode,
+        *(["--effort", effort] if effort else []),
     ]
 
 
@@ -469,7 +472,14 @@ def claude_lines(raw):
 # no commits, no repo map, no shell commands. Read only: ask mode, only the prompt leaves this PC. Changing files:
 # it edits the selected mod's own files (tweaks.json, hooks.json, mod.json, Tweak.x), which are sent with the
 # prompt; a snapshot is taken first (Files tab restores it). The am commands it proposes become buttons in Jobs.
-ENGINES = ("claude", "aider", "codex")
+ENGINES = ("claude", "aider", "codex", "gemini")
+# how hard the model thinks; "" keeps each engine's own default (Claude Code's, ~/.codex/config.toml's, the model's)
+EFFORTS = ("", "low", "medium", "high")
+# Gemini: aider with Google's free API tier, key GEMINI_API_KEY in the Windows user environment (gcloud key
+# accretion-local-gemini, project accreation). The free tier may use prompts to improve Google's products: game
+# scan rows only, no secrets. AM_GEMINI_MODEL picks another model. Checked 2026-10-22 on the free key:
+# 3.6-flash answers in ~2 s; 3.8-flash is free but was overloaded (503, one answer took 138 s); 4-argon is paid only.
+GEMINI_MODEL = os.environ.get("AM_GEMINI_MODEL", "gemini-3.6-flash")
 AIDER_FILES = ("tweaks.json", "hooks.json", "mod.json", "Tweak.x")
 AIDER_NOTE = (
     "\n\nYou cannot run commands or read other files. Where the task needs an am command (am pin, am add, am gen, "
@@ -487,7 +497,7 @@ AIDER_EDIT_NOTE = (
 # changes files, full access (the owner's choice, 2026-10-22: the whole loop start to finish, signing and
 # installing on the phone included), so it can run any command on this PC with the network. Studio asks before
 # every such run. The prompt goes as one argument to node, not through codex.cmd (cmd.exe cuts at 8191 chars).
-def codex_command(prompt, read_only):
+def codex_command(prompt, read_only, effort=""):
     node = shutil.which("node")
     script = Path(os.environ.get("APPDATA", "")) / "npm" / "node_modules" / "@openai" / "codex" / "bin" / "codex.js"
     if node and script.is_file():
@@ -502,7 +512,9 @@ def codex_command(prompt, read_only):
                           "the log's status lines to see which switches work. Stay in this repo and the mod workflow: "
                           "no git push, no publishing, no deleting outside the mod, no other installs.")
     mode = ["--sandbox", "read-only"] if read_only else ["--dangerously-bypass-approvals-and-sandbox"]
-    return [*head, "exec", *mode, "--skip-git-repo-check", "--ephemeral", "-C", str(ROOT), note + "\n\n" + prompt]
+    level = ["-c", f'model_reasoning_effort="{effort}"'] if effort else []
+    return [*head, "exec", *mode, *level, "--skip-git-repo-check", "--ephemeral", "-C", str(ROOT),
+            note + "\n\n" + prompt]
 
 
 def aider_exe():
@@ -514,7 +526,28 @@ def aider_exe():
     return found
 
 
-def aider_command(prompt, mod=None):
+def gemini_key():
+    """GEMINI_API_KEY from this process, else from the Windows user environment (saved after Studio started)."""
+    key = os.environ.get("GEMINI_API_KEY", "")
+    if not key and sys.platform == "win32":
+        import winreg
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as reg:
+                key = winreg.QueryValueEx(reg, "GEMINI_API_KEY")[0]
+        except OSError:
+            key = ""
+    return key
+
+
+def gemini_command(prompt, mod=None, effort=""):
+    """aider with Gemini instead of the model in ~/.aider.conf.yml; the key goes through the environment."""
+    if not gemini_key():
+        raise dev.DevError("no GEMINI_API_KEY on this PC (a free key from aistudio.google.com, saved as a user "
+                           "environment variable)")
+    return aider_command(prompt, mod, effort, model="gemini/" + GEMINI_MODEL)
+
+
+def aider_command(prompt, mod=None, effort="", model=None):
     files = []
     if mod:
         folder = dev.mod_dir(mod)
@@ -524,6 +557,8 @@ def aider_command(prompt, mod=None):
     note = AIDER_NOTE + (AIDER_EDIT_NOTE.format(mod=mod) if mod else "")
     return [
         aider_exe(),
+        *(["--model", model] if model else []),
+        *(["--reasoning-effort", effort] if effort else []),
         *(["--chat-mode", "ask"] if not mod else []),
         *files,
         "--message",
@@ -584,17 +619,20 @@ def run_searches(mod, lines, budget):
     return text if len(text) <= budget else text[:budget] + "\n... (cut to fit the prompt)"
 
 
-def start_autobuild(mod, engine, limit):
+def start_autobuild(mod, engine, limit, effort=""):
     """studio/autobuild.py as a job: the model picks switches from the scan, Studio adds them and builds."""
     if engine not in ENGINES:
         raise dev.DevError(f"unknown model engine {engine!r}")
+    if effort not in EFFORTS:
+        raise dev.DevError(f"unknown effort {effort!r}; use low, medium or high")
     if not (MOD_NAME.fullmatch(mod or "") and dev.mod_dir(mod).is_dir()):
         raise dev.DevError("pick a mod first")
     with SESSION_LOCK:
         if RESTARTING.is_set():
             raise dev.DevError("Studio is restarting; reconnect before starting jobs")
         job = Job("autobuild", [mod, engine], cmd=[sys.executable, str(HERE / "autobuild.py"), mod, "--engine", engine,
-                                                   "--limit", str(max(0, int(limit)))])  # 0: every usable switch
+                                                   "--limit", str(max(0, int(limit))),  # 0: every usable switch
+                                                   *(["--effort", effort] if effort else [])])
         JOBS[job.id] = job
     job.persist()
     threading.Thread(target=job.run, daemon=True).start()
@@ -620,10 +658,10 @@ def start_store_publish(mod, action, confirm):
 
 
 def start_followup(job, mod):
-    if getattr(job, "engine", None) != "aider" or not getattr(job, "prompt", None):
-        raise dev.DevError("only an aider job from this Studio session can be followed up")
+    if getattr(job, "engine", None) not in ("aider", "gemini") or not getattr(job, "prompt", None):
+        raise dev.DevError("only an aider or Gemini job from this Studio session can be followed up")
     if job.status in ("queued", "running", "stopping"):
-        raise dev.DevError("wait for aider to finish first")
+        raise dev.DevError("wait for it to finish first")
     mod = job.mod or mod
     if not (MOD_NAME.fullmatch(mod or "") and dev.mod_dir(mod).is_dir()):
         raise dev.DevError("pick a mod first")
@@ -635,14 +673,17 @@ def start_followup(job, mod):
     prompt = (job.prompt + "\n\nResults of the searches you asked for (run by Mod Studio on the game's dump):\n"
               + results + "\n\nUse them now: make the change, or give the exact am pin / am add lines. Ask for "
               "more searches only if these leave it open.")
-    return start_claude(prompt, job.read_only, "aider", mod if not job.read_only else "")
+    return start_claude(prompt, job.read_only, job.engine, mod if not job.read_only else "", job.effort)
 
 
-def start_claude(prompt, read_only, engine="claude", mod=""):
+def start_claude(prompt, read_only, engine="claude", mod="", effort=""):
     if engine not in ENGINES:
         raise dev.DevError(f"unknown model engine {engine!r}; use one of: {', '.join(ENGINES)}")
-    if engine == "aider" and not read_only and not (MOD_NAME.fullmatch(mod or "") and dev.mod_dir(mod).is_dir()):
-        raise dev.DevError("pick a mod first: aider edits that mod's files")
+    if effort not in EFFORTS:
+        raise dev.DevError(f"unknown effort {effort!r}; use low, medium or high")
+    if engine in ("aider", "gemini") and not read_only and not (
+            MOD_NAME.fullmatch(mod or "") and dev.mod_dir(mod).is_dir()):
+        raise dev.DevError(f"pick a mod first: {engine} edits that mod's files")
     prompt = (prompt or "").strip()
     if len(prompt) < 10:
         raise dev.DevError("the prompt is empty")
@@ -653,20 +694,23 @@ def start_claude(prompt, read_only, engine="claude", mod=""):
             raise dev.DevError("Studio is restarting; reconnect before starting jobs")
         if engine == "codex":
             job = Job("codex", ["(read only)" if read_only else "(may change files)"],
-                      cmd=codex_command(prompt, read_only))
-        elif engine == "aider" and read_only:
-            job = Job("aider", ["(read only)"], cmd=aider_command(prompt))
-        elif engine == "aider":
-            job = Job("aider", [mod, "(may change files)"], cmd=aider_command(prompt, mod))
+                      cmd=codex_command(prompt, read_only, effort))
+        elif engine in ("aider", "gemini"):
+            command = gemini_command if engine == "gemini" else aider_command
+            if read_only:
+                job = Job(engine, ["(read only)"], cmd=command(prompt, None, effort))
+            else:
+                job = Job(engine, [mod, "(may change files)"], cmd=command(prompt, mod, effort))
         else:
             job = Job(
                 "claude",
                 ["(read only)" if read_only else "(may change files)"],
-                cmd=claude_command(prompt, read_only),
+                cmd=claude_command(prompt, read_only, effort),
                 parse=claude_lines,
             )
         # kept in memory only (never in the saved history) for an aider follow-up
         job.prompt, job.engine, job.read_only, job.mod = prompt, engine, read_only, mod if not read_only else ""
+        job.effort = effort
         JOBS[job.id] = job
     job.persist()
     threading.Thread(target=job.run, daemon=True).start()
@@ -1384,6 +1428,7 @@ class Handler(BaseHTTPRequestHandler):
                     bool(body.get("read_only", True)),
                     str(body.get("engine", "claude")),
                     str(body.get("mod", "")),
+                    str(body.get("effort", "")),
                 ).view()
             )
         if parts == ["api", "console"]:
@@ -1447,7 +1492,7 @@ class Handler(BaseHTTPRequestHandler):
         if len(parts) == 4 and parts[:2] == ["api", "mods"] and parts[3] == "autobuild":
             self.local_only()
             return self.send_json(start_autobuild(self.mod_name(parts[2]), str(body.get("engine", "claude")),
-                                                  int(body.get("limit", 10))).view())
+                                                  int(body.get("limit", 10)), str(body.get("effort", ""))).view())
         if len(parts) == 4 and parts[:2] == ["api", "jobs"] and parts[3] == "followup":
             self.local_only()
             job = JOBS.get(parts[2])

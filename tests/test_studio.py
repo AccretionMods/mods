@@ -21,6 +21,24 @@ from test_dev_cli import DUMP
 
 
 class Api(unittest.TestCase):
+    def test_effort_reaches_every_engine_and_gemini_runs_through_aider(self):
+        from unittest import mock
+        with mock.patch.object(server, "claude_exe", return_value="claude"), \
+                mock.patch.object(server, "aider_exe", return_value="aider"), \
+                mock.patch.object(server, "gemini_key", return_value="test-key"):
+            self.assertEqual(server.claude_command("x", True, "high")[-2:], ["--effort", "high"])
+            self.assertNotIn("--effort", server.claude_command("x", True))
+            self.assertIn('model_reasoning_effort="low"', server.codex_command("x", True, "low"))
+            cmd = server.gemini_command("x", None, "medium")
+            self.assertEqual(cmd[1:5], ["--model", "gemini/" + server.GEMINI_MODEL, "--reasoning-effort", "medium"])
+            self.assertNotIn("test-key", " ".join(cmd))  # the key goes through the environment only
+            self.assertNotIn("--model", server.aider_command("x"))
+        with mock.patch.object(server, "gemini_key", return_value=""):
+            with self.assertRaises(dev.DevError):
+                server.gemini_command("x")
+        with self.assertRaises(dev.DevError):
+            server.start_claude("a prompt long enough", True, "claude", "", "max")
+
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()

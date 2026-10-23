@@ -1,6 +1,7 @@
-"""Auto-build a mod's menu with the model picked in Mod Studio (Claude Code, Codex or aider), as one Studio job.
+"""Auto-build a mod's menu with the model picked in Mod Studio (Claude Code, Codex, aider or Gemini), as one Studio job.
 
-  python studio/autobuild.py <mod> [--engine claude|codex|aider] [--limit N] [--no-install]
+  python studio/autobuild.py <mod> [--engine claude|codex|aider|gemini] [--effort low|medium|high] [--limit N]
+                                   [--no-install]
 
 1. the scan's best no-JIT candidates not yet in the mod, without the topic-labelled ones (what the game sells,
    ads, accounts, online play) and without inspect-only rows;
@@ -73,14 +74,16 @@ def prompt_for(mod, meta, rows):
     )
 
 
-def ask(engine, prompt):
+def ask(engine, prompt, effort=""):
     """The model's answer, line by line, echoed into the job as it comes."""
     if engine == "aider":
-        cmd, parse = server.aider_command(prompt), None
+        cmd, parse = server.aider_command(prompt, None, effort), None
+    elif engine == "gemini":
+        cmd, parse = server.gemini_command(prompt, None, effort), None
     elif engine == "codex":
-        cmd, parse = server.codex_command(prompt, True), None
+        cmd, parse = server.codex_command(prompt, True, effort), None
     else:
-        cmd, parse = server.claude_command(prompt, True), server.claude_lines
+        cmd, parse = server.claude_command(prompt, True, effort), server.claude_lines
     env = dict(os.environ, COLUMNS="4000", PYTHONUTF8="1")  # aider wraps its answer at the terminal width
     proc = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                             encoding="utf-8", errors="replace", env=env)
@@ -119,6 +122,7 @@ def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("mod")
     p.add_argument("--engine", choices=server.ENGINES, default="claude")
+    p.add_argument("--effort", choices=[e for e in server.EFFORTS if e], help="how hard the model thinks")
     p.add_argument("--limit", type=int, default=0, help="at most this many switches (0: every usable one)")
     p.add_argument("--no-install", action="store_true", help="stop after the build")
     args = p.parse_args(argv)
@@ -136,13 +140,16 @@ def main(argv=None):
         return 1
     say(f"    {len(rows)} candidates")
 
-    who = {"aider": "aider (free model)", "codex": "Codex (GPT)"}.get(args.engine, "Claude Code")
+    who = {"aider": "aider (free model)", "codex": "Codex (GPT)",
+           "gemini": f"Gemini ({server.GEMINI_MODEL})"}.get(args.engine, "Claude Code")
+    if args.effort:
+        who += f", {args.effort} effort"
     batches = [rows[i:i + BATCH] for i in range(0, len(rows), BATCH)]
     say(f"==> 2/5 {who} goes through all {len(rows)} in {len(batches)} batch(es) of up to {BATCH}")
     lines, targets, keys = [], set(), set()
     for n, batch in enumerate(batches, 1):
         say(f"--- batch {n}/{len(batches)}")
-        for line in ask(args.engine, prompt_for(mod, meta, batch)):
+        for line in ask(args.engine, prompt_for(mod, meta, batch), args.effort or ""):
             cmd = line.strip().strip("`").lstrip("$> ").strip()
             m = PIN.match(cmd)
             if not m or m.group(1) != mod or "<" in m.group(2).split(" --")[0] or "--object <" in cmd:

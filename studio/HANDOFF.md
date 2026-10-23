@@ -74,6 +74,13 @@ chose a local web app in this repo over a desktop app, a Claude panel or an iOS 
     green/red/off states, Mix), PNG or upload as a post link. Measured against a phone screenshot; fonts differ
     (Segoe UI here, SF Pro on the phone).
   - Not tried by hand: the phone-screenshot and Menu image upload buttons.
+  - Effort picker (default/low/medium/high) next to the model picker, for every engine: Claude `--effort`, Codex
+    `model_reasoning_effort`, aider/Gemini `--reasoning-effort`. Gemini engine: aider with `gemini/gemini-3.6-flash`
+    (AM_GEMINI_MODEL changes it), key GEMINI_API_KEY in the Windows user environment (gcloud key accretion-local-gemini,
+    project accreation; Studio reads it from the registry when it started before the key existed). Free tier: 20
+    requests a day per model per project (seen on 3.6-flash), so a 9-batch Auto-build fits once or twice a day; CI
+    uses 3.5-flash(-lite), a separate quota. Checked: a real Gemini answer through aider in 7 s, pickers in the page.
+    Not tried: a full Auto-build with Gemini.
 - Earlier (v1, 2026-10-22): built and checked in the built-in browser against the Wanderer example mod: mod list, Switches (18 items with and checked in the built-in browser against the Wanderer example mod: mod list, Switches (18 items with
   hook/pin chips, watch line), Find (regex search, class methods, fields, Hook/Pin/Call forms: a pin added through
   the page landed in tweaks.json and the generated code), Suggest (36 rows from 58 learned patterns), Build & Phone
