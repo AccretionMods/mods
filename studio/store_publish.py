@@ -77,7 +77,7 @@ def worktree(branch):
 
 def copy_mod(mod, wt):
     """The mod's tracked files as they are in this checkout (its version bump included)."""
-    files = run("git", "ls-files", f"mods/{mod}", cwd=ROOT).splitlines()
+    files = run("git", "ls-files", "--cached", "--others", "--exclude-standard", f"mods/{mod}", cwd=ROOT).splitlines()
     for rel in files:
         src, dst = ROOT / rel, wt / rel
         if src.is_file():

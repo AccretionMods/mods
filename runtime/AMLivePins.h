@@ -30,7 +30,7 @@ static void AMNoteValue(const char *key, double v) {
     AMMenuNote(key, text);
 }
 
-static BOOL AMLivePinsHas(const char *key) {
+__attribute__((unused)) static BOOL AMLivePinsHas(const char *key) {
     return key && [sLiveKeys containsObject:@(key)];
 }
 

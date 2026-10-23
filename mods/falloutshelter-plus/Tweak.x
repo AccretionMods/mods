@@ -13,6 +13,8 @@
 #import <os/log.h>
 #import "menu/AMMenu.h"
 #import "runtime/AMIl2cpp.h"
+#import "runtime/AMIl2cppData.h"
+#import "AMTweaks.gen.h"  // the switches Auto-build adds (tweaks.json), next to the hand-written ones
 
 // Current switch and slider values. The hooks run on Unity's player loop and the menu's callbacks on UIKit's,
 // both on the main thread (the exit backtrace in the device log shows the loop under CADisplayLink), so plain
@@ -656,9 +658,13 @@ static void registerHooks(void) {
     sSpeed = MAX([AMMenu floatForKey:@"speed"], 1);
 
     registerHooks();
+    AMIl2cppDataSetLogTag(AMTweaksLogTag.UTF8String);
+    AMTweaksRegister();  // tweaks.json's switches, after the hand-written ones
     AMIl2cppSetReportHandler(^(NSString *report) {
         os_log(OS_LOG_DEFAULT, "[Fallout Shelter+] %{public}@", report);
         applySpeed();
+        static dispatch_once_t once;
+        dispatch_once(&once, ^{ AMIl2cppEvery(0.5, ^{ AMTweaksTick(); }); });
     });
     AMIl2cppStart();
 
