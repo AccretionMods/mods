@@ -306,5 +306,11 @@ func download(store appstore.AppStore, req request) (map[string]any, error) {
 	case err != nil:
 		return nil, fmt.Errorf("download: %w", err)
 	}
-	return map[string]any{"path": out.DestinationPath, "version": target.Version, "bundle": target.BundleID}, nil
+	// the license (.sinf) comes beside the package and goes into it, as ipatool's own download command does:
+	// without it iOS refuses to install the copy
+	if err := store.ReplicateSinf(appstore.ReplicateSinfInput{Sinfs: out.Sinfs, PackagePath: out.DestinationPath}); err != nil {
+		return nil, fmt.Errorf("download: the license didn't go into the package: %w", err)
+	}
+	return map[string]any{"path": out.DestinationPath, "version": target.Version, "bundle": target.BundleID,
+		"sinfs": len(out.Sinfs)}, nil
 }
