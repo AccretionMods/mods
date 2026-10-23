@@ -136,24 +136,35 @@ static NSString *AMNoteFor(NSString *key) {
     return text;
 }
 
-// Whether a switch's cheat is working now, and the line shown under its title.
+// Whether a switch's cheat is working now, and the line shown under its title. While another switch is working
+// the save is clearly loaded, so a "load a save" line (the generated default, or no report yet) becomes what is
+// true then: the thing it acts on isn't in the game yet (2026-10-23: the child's switches said "load a save first"
+// in a loaded save).
 static BOOL AMStatusFor(NSString *key, NSString **line) {
-    BOOL ok = NO;
+    BOOL ok = NO, loaded = NO, waiting = YES;
     NSString *text = @"Waiting for the game to load";
+    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
     os_unfair_lock_lock(&sStatusLock);
     for (int i = 0; i < sStatusCount; i++) {
-        if (strcmp(sStatus[i].key, key.UTF8String)) continue;
-        if (CFAbsoluteTimeGetCurrent() - sStatus[i].at > AMStatusStale) {
+        BOOL fresh = now - sStatus[i].at <= AMStatusStale;
+        if (strcmp(sStatus[i].key, key.UTF8String)) {
+            if (fresh && sStatus[i].ok) loaded = YES;
+            continue;
+        }
+        if (!fresh) {
             text = @"Stopped: no report for 15 s";
+            waiting = NO;
         } else if (sStatus[i].ok) {
             ok = YES;
             text = @"Working";
+            waiting = NO;
         } else {
             text = @(sStatus[i].reason);
+            waiting = strcmp(sStatus[i].reason, "Waiting for the game: load a save first") == 0;
         }
-        break;
     }
     os_unfair_lock_unlock(&sStatusLock);
+    if (!ok && waiting && loaded) text = @"Not in your game yet: it shows up later in play, or this game version doesn't have it";
     if (line) *line = text;
     return ok;
 }
