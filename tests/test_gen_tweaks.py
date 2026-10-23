@@ -575,6 +575,23 @@ class Pins(unittest.TestCase):
         self.assertEqual(m.count('[menu addSection:@"Other"];'), 2)
         self.assertLess(m.index('[menu addSection:@"Other"];'), m.index('addSwitch:@"keepAwake"'))
 
+    def test_fixed_point_and_assembly_qualified_objects(self):
+        fp = {"object": "HotFix:HotFix.GameManager.m_t", "field": "MoveSpeed", "ctype": "int64_t",
+              "value": 1.5, "when": "lower", "threshold": 1, "scale": 65536}
+        self.assertEqual(self.pin(fp), [])
+        self.assertTrue(self.pin(dict(fp, ctype="int32_t")))  # a scale belongs on an int64_t FP
+        self.assertTrue(self.pin(dict(fp, scale=0)))
+        self.assertEqual(self.pin({"object": "HotFix:Dxx.Battle.Hero[]", "field": "x", "ctype": "bool", "value": True}), [])
+        tweaks = {"title": "Game+", "tweaks": [{"key": "speed", "title": "Speed", "kind": "switch", "hooks": [], "pins": [fp]},
+                             {"key": "pace", "title": "Pace", "kind": "slider", "min": 1, "max": 3, "default": 1,
+                              "hooks": [], "pins": [dict(fp, value="slider", when="always")]}]}
+        self.assertEqual(gen_tweaks.problems(tweaks, {"hooks": []}), [])
+        _, m = gen_tweaks.render(tweaks, {"hooks": []}, "game-plus")
+        self.assertIn("*p = 98304;", m)  # 1.5 * 65536: FP keeps value * 65536 in a long
+        self.assertIn("*p < 65536", m)  # the threshold is scaled too
+        self.assertIn("(int64_t)(am_pace * 65536)", m)  # and a slider
+        self.assertIn("/ 65536", m)  # the slider's "Game value" note shows the plain number
+
     def pin(self, pin, kind="switch"):
         return gen_tweaks.pin_problems(pin, kind)
 

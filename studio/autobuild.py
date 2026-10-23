@@ -77,7 +77,8 @@ def table(rows):
     for n, r in enumerate(rows, 1):
         lr = r.get("learned")
         seen = f"like \"{lr['title']}\": {lr['works']} works, {lr['fails']} fails" if lr else ""
-        lines.append(f"{n} | {r['area']} | {r['object']} | {r['member']} | {r['ctype']} | {r['kind']} | "
+        typ = "FP (fixed point: write the plain number)" if r.get("scale") else r.get("ctype", "")
+        lines.append(f"{n} | {r['area']} | {r['object']} | {r['member']} | {typ} | {r.get('kind', '')} | "
                      f"{r.get('value', '')} {r.get('when', '')} | {seen}")
     return "\n".join(lines)
 
@@ -166,7 +167,7 @@ def value_for(row, value):
         return "peak" if str(value).strip().lower() == "peak" else None
     if number != number or number in (float("inf"), float("-inf")):
         return None
-    if row["ctype"] not in ("float", "double") and number != int(number):
+    if row["ctype"] not in ("float", "double") and not row.get("scale") and number != int(number):
         number = round(number)  # an int field: 99.5 -> 100
     return str(int(number)) if number == int(number) else repr(number)
 
@@ -278,6 +279,17 @@ def main(argv=None):
         say("nothing new to add: every scan candidate is in the mod already, labelled, or inspect-only")
         return 1
     say(f"    {len(rows)} candidates")
+    # where they come from, so a scan of the wrong code shows before any model time is spent (Survivor: Ace's first
+    # run read Assembly-CSharp, which held only bought packages and their demos: 80 switches that did nothing)
+    where = {}
+    for r in rows:
+        asm = r["class"].split(":", 1)[0] if ":" in r["class"] else "Assembly-CSharp"
+        where[asm] = where.get(asm, 0) + 1
+    say("    from " + ", ".join(f"{a} {n}" for a, n in sorted(where.items(), key=lambda x: -x[1])))
+    other = sum(1 for r in rows if r["area"] == "Other")
+    if other > len(rows) * 0.7:
+        say(f"    note: {other} of {len(rows)} are in no gameplay area (names only): check the scan's assemblies "
+            "(mod.json scan_assemblies) if the picks look like effects or UI")
 
     who = {"aider": "aider (free model)", "codex": "Codex (GPT)",
            "gemini": f"Gemini ({server.GEMINI_MODEL})"}.get(args.engine, "Claude Code")

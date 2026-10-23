@@ -300,7 +300,10 @@ def problems(tweaks, hooks):
 
 
 PIN_WHEN = ("always", "lower", "higher")
-OBJECT_SPEC = re.compile(r"^[A-Za-z_][\w.]*(\[\])?$")
+# "HotFix:GameManager.m_t": a class outside Assembly-CSharp carries its assembly (AMIl2cppClass reads it)
+OBJECT_SPEC = re.compile(r"^(?:[A-Za-z_][\w.-]*:)?[A-Za-z_][\w.]*(\[\])?$")
+# a fixed-point number (Photon's FP: a long holding value * 65536): the pin's "scale"
+FP_SCALE = 65536
 NAME = re.compile(r"^[A-Za-z_<][\w<>]*$")
 
 
@@ -353,7 +356,7 @@ def pin_problems(pin, kind):
         )
     for key in ("via", "class"):
         if key in pin and not (
-            isinstance(pin[key], str) and NAME.match(pin[key].replace(".", ""))
+            isinstance(pin[key], str) and NAME.match(pin[key].rpartition(":")[2].replace(".", ""))
         ):
             out.append(f'"{key}" must be a name')
     targets = [k for k in ("field", "setter", "call") if pin.get(k)]
@@ -394,6 +397,8 @@ def pin_problems(pin, kind):
         out.append('"when" lower/higher needs a numeric field or setter')
     if "threshold" in pin and not isinstance(pin["threshold"], (int, float)):
         out.append('"threshold" must be a number')
+    if "scale" in pin and (not isinstance(pin["scale"], int) or pin["scale"] <= 0 or ctype_ != "int64_t"):
+        out.append('"scale" is a whole number above 0 on an int64_t (a fixed-point FP field: 65536)')
     op = pin.get("op", "set")
     if op not in ("set", "multiply"):
         out.append('"op" must be set or multiply')
@@ -447,8 +452,10 @@ def pin_objects(pin):
 def pin_value(pin, var, ctype_, cls, state):
     """(setup lines, C expression) for the value a pin writes."""
     value = pin["value"]
+    # a fixed-point field holds value * scale; a multiply factor is not scaled (base * factor stays raw)
+    scale = pin.get("scale") if pin.get("op") != "multiply" else None
     if value == "slider":
-        return [], f"({ctype_}){var}"
+        return [], f"({ctype_})({var} * {scale})" if scale else f"({ctype_}){var}"
     if value == "peak":
         return [], f"{state}_peak"
     if isinstance(value, dict) and "getter" in value:
@@ -461,6 +468,8 @@ def pin_value(pin, var, ctype_, cls, state):
             f"            {ctype_} *vp = AMIl2cppField(obj, {hidden(cls)}, {hidden(value['field'])});",
             f"            if (!vp) goto {state}_next;",
         ], "(*vp)"
+    if scale and not isinstance(value, bool):
+        return [], c_value(round(value * scale), ctype_)
     return [], c_value(value, ctype_)
 
 
@@ -548,7 +557,7 @@ def render_note(t):
     if pin.get("op") == "multiply":
         lines.append(f"    if ({on}) {{ if ({state}_set) AMNoteValue({c_string(key)}, (double){state}_base); return; }}")
     elif restorable(pin):
-        lines.append(f"    if ({on}) {{ if ({state}_has) AMNoteValue({c_string(key)}, (double){state}_orig); return; }}")
+        lines.append(f"    if ({on}) {{ if ({state}_has) AMNoteValue({c_string(key)}, (double){state}_orig{' / ' + str(pin['scale']) if pin.get('scale') else ''}); return; }}")
     else:
         lines.append(f"    if ({on}) return;")
     lines.append("    {")
@@ -557,7 +566,7 @@ def render_note(t):
         lines.append(f"            {ctype_} *v = AMIl2cppField(obj, {hidden(cls)}, {hidden(pin['field'])});")
     else:
         lines.append(f"            void *b = NULL; {ctype_} *v = AMIl2cppCall(obj, {hidden(cls)}, {hidden('get_' + pin['setter'][4:])}, 0, NULL, &b) ? AMIl2cppUnbox(b) : NULL;")
-    lines.append(f"            if (v) AMNoteValue({c_string(key)}, (double)*v);")
+    lines.append(f"            if (v) AMNoteValue({c_string(key)}, (double)*v{' / ' + str(pin['scale']) if pin.get('scale') else ''});")
     lines += closers
     lines.append("    }")
     lines.append("}")
@@ -613,7 +622,8 @@ def render_pin(pin, var, kind, key, index, waiting=None):
     if pin["value"] == "peak":
         lines.insert(1, f"    static {ctype_} {state}_peak;")
     lines += setup
-    limit = c_value(pin["threshold"], ctype_) if "threshold" in pin else value
+    limit = c_value(round(pin["threshold"] * pin.get("scale", 1)), ctype_) if "threshold" in pin and pin.get("scale") \
+        else c_value(pin["threshold"], ctype_) if "threshold" in pin else value
     if pin.get("field"):
         lines.append(
             f"            {ctype_} *p = AMIl2cppField(obj, {hidden(cls)}, {hidden(pin['field'])});"

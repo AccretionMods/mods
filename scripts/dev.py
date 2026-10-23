@@ -354,7 +354,9 @@ def type_kinds(mod):
 
 
 def fields_of(mod, cls):
-    """[(offset, static?, type, name)] of a class, from dump.cs. cls may carry its namespace (Core.PlayerLife)."""
+    """[(offset, static?, type, name)] of a class, from dump.cs. cls may carry its namespace (Core.PlayerLife)
+    and its assembly (HotFix:GameManager)."""
+    cls = cls.rpartition(":")[2]
     found, inside, depth, ns = [], False, 0, ""
     with open(dump_path(mod), encoding="utf-8", errors="ignore") as f:
         for line in f:
@@ -501,7 +503,8 @@ def key_for(method_name):
 
 
 def resolve_method(mod, name, argc=None):
-    """The dump's Method for "Class.method" (or Namespace.Class.method), one overload."""
+    """The dump's Method for "Class.method" (or Namespace.Class.method, or Assembly:Class.method), one overload."""
+    name = name.rpartition(":")[2]
     found = dump_methods(mod)
     rows = [
         m for m in found if m.full_name == name or f"{m.class_name}.{m.name}" == name
@@ -675,6 +678,9 @@ def cmd_pin(args):
         )
         pin["field"] = member
         what = f"{cls}.{member} ({cs_type} at 0x{offset:X} in 10.x; read by name at run time)"
+    if cs_type.rsplit(".", 1)[-1] == "FP":  # Photon's fixed point: a long holding value * 65536
+        ctype_ = "int64_t"
+        pin["scale"] = gen_tweaks.FP_SCALE
     if ctype_ not in gen_tweaks.NUMERIC and ctype_ != "bool":
         raise DevError(f"{args.target} is {cs_type}: a pin needs a number or bool")
     pin["ctype"] = ctype_
@@ -685,7 +691,14 @@ def cmd_pin(args):
             if f[1]
             and f[3] in ("instance", "Instance", "p", "I", "_instance", "singleton")
         ]
-        pin["object"] = f"{cls}.{statics[0][3]}" if statics else cls
+        singleton = None
+        if not statics:  # GameManager : Singleton<GameManager>: the instance lives on the generic base
+            try:
+                data = json.loads(dump_path(args.mod).with_name("scan.json").read_text(encoding="utf-8"))["data"]
+                singleton = (data.get(cls) or {}).get("singleton")
+            except (OSError, ValueError, KeyError):
+                singleton = None
+        pin["object"] = f"{cls}.{statics[0][3]}" if statics else f"{cls}.{singleton}" if singleton else cls
     raw = args.value
     if (args.slider and raw in (None, "slider")) or (raw == "slider" and args.to):
         value = "slider"  # with --to, the slider is the existing tweak's (checked below)
@@ -887,7 +900,7 @@ def pin_problems_in_dump(mod):
     folder = mod_dir(mod)
     meta = read_json(folder / "mod.json")
     tweaks = load_tweaks(folder, meta)
-    dump_scan.scan(dump_path(mod), tweaks)  # builds or refreshes scan.json, whose class data is read below
+    dump_scan.scan(dump_path(mod), tweaks, assemblies=meta.get("scan_assemblies"))  # refreshes scan.json (read below)
     data = json.loads((dump_path(mod).with_name("scan.json")).read_text(encoding="utf-8"))["data"]
     methods = {}
     for m in dump_methods(mod):
@@ -896,7 +909,7 @@ def pin_problems_in_dump(mod):
     out = []
 
     def has_method(cls, name, argc=None):
-        found = methods.get((cls.split(".")[-1], name), [])  # the method list keys classes by short name
+        found = methods.get((cls.rpartition(":")[2].split(".")[-1], name), [])  # keyed by short name
         return [m for m in found if argc is None or len(m.params) == argc]
 
     def getter(key, cls, name, why):
@@ -912,12 +925,13 @@ def pin_problems_in_dump(mod):
             obj = p["object"]
             cls = obj[:-2] if obj.endswith("[]") else (obj.rpartition(".")[0] if obj.rpartition(".")[0] in data else obj.split(".")[0])
             info = data.get(cls)
-            if info is None and not methods.get((cls, ".ctor")) and not any(k[0] == cls for k in methods):
+            short = cls.rpartition(":")[2].split(".")[-1]
+            if info is None and not methods.get((short, ".ctor")) and not any(k[0] == short for k in methods):
                 out.append(("error", key, f"no class {cls} in the dump"))
                 continue
             if "." in obj and not obj.endswith("[]") and info is not None and not p.get("class"):
                 static = obj.rpartition(".")[2]
-                if static not in info.get("statics", []):
+                if static not in info.get("statics", []) and static != info.get("singleton"):
                     out.append(("warn", key, f"{obj}: not a static field of {cls}'s own type in the dump"))
             target = p.get("class") or cls
             if p.get("via"):
@@ -2251,7 +2265,8 @@ def scan_rows(mod, area=None, find=None, flagged=False):
     store = dev_learn.load(patterns_path())
     game = meta.get("target_bundle_id")
     result = dump_scan.scan(dump_path(mod), load_tweaks(folder, meta),
-                            learned=lambda name, ctype, cls: dev_learn.member_boost(store, name, ctype, game, cls))
+                            learned=lambda name, ctype, cls: dev_learn.member_boost(store, name, ctype, game, cls),
+                            assemblies=meta.get("scan_assemblies"))
     rows = (result["flagged"] if flagged else result["rows"]) + result.get("inventory", [])
     if area:
         rows = [r for r in rows if r["area"].lower().startswith(area.lower())]
@@ -2279,7 +2294,8 @@ def report_for(target):
     scan = None
     if mod:
         try:
-            scan = dump_scan.scan(dump_path(mod), load_tweaks(mod_dir(mod), read_json(mod_dir(mod) / "mod.json")))
+            meta = read_json(mod_dir(mod) / "mod.json")
+            scan = dump_scan.scan(dump_path(mod), load_tweaks(mod_dir(mod), meta), assemblies=meta.get("scan_assemblies"))
         except DevError:
             scan = None
     return facts, scan
@@ -2402,7 +2418,8 @@ def cmd_start(args):
     print(f"==> making mods/{name} and its dump (a minute or two)")
     cmd_new(argparse.Namespace(name=name, ipa=str(ipa), title=args.title or f"{facts['name']}+",
                                category="games", no_dump=False))
-    scan = dump_scan.scan(dump_path(name), load_tweaks(mod_dir(name), read_json(mod_dir(name) / "mod.json")))
+    meta_ = read_json(mod_dir(name) / "mod.json")
+    scan = dump_scan.scan(dump_path(name), load_tweaks(mod_dir(name), meta_), assemblies=meta_.get("scan_assemblies"))
     level, lines = moddability.verdict(facts, scan)
     print(f"==> verdict with the dump: {level.upper()}")
     for line in lines:

@@ -112,6 +112,8 @@ static NSString *lookupKey(const char *cls, const char *name, int argc) {
     return [NSString stringWithFormat:@"%s.%s/%d", cls, name, argc];
 }
 
+typedef void *class_get_parent_t(void *klass);
+
 static void *field(const char *cls, const char *name) {
     static NSMutableDictionary<NSString *, NSValue *> *cache;
     NSString *key = lookupKey(cls, name, -1);
@@ -121,6 +123,10 @@ static void *field(const char *cls, const char *name) {
     class_get_field_from_name_t *from_name = IL2CPP(class_get_field_from_name);
     if (!klass || !from_name) return NULL;
     void *f = from_name(klass, name);
+    // a base class's field: Singleton<GameManager>.m_t holds GameManager's instance on the generic base,
+    // which only the class's own parent chain reaches (its inflated Singleton<GameManager>)
+    class_get_parent_t *parent = IL2CPP(class_get_parent);
+    for (void *k = klass; !f && parent && (k = parent(k));) f = from_name(k, name);
     if (!f) { logOnce([NSString stringWithFormat:@"field %s.%s not found", cls, name]); return NULL; }
     if (!cache) cache = [NSMutableDictionary new];
     cache[key] = [NSValue valueWithPointer:f];
@@ -148,11 +154,25 @@ static bool fieldIsStatic(void *f) {
     return flags ? (flags(f) & FIELD_ATTRIBUTE_STATIC) != 0 : true;  // without the export, trust the caller
 }
 
+typedef void *field_get_parent_t(void *field);
+typedef void runtime_class_init_t(void *klass);
+
+// The class a static field's storage belongs to (a generic base for Singleton<T>), set up before the read: an
+// inflated generic class the game hasn't touched yet has no static storage.
+static void *staticOwner(void *f) {
+    field_get_parent_t *owner = IL2CPP(field_get_parent);
+    runtime_class_init_t *init = IL2CPP(runtime_class_init);
+    void *klass = owner ? owner(f) : NULL;
+    if (klass && init) init(klass);
+    return klass;
+}
+
 void *AMIl2cppStaticObject(const char *cls, const char *name) {
     void *f = field(cls, name);
     field_static_get_value_t *get = IL2CPP(field_static_get_value);
     if (!f || !get) return NULL;
     if (!fieldIsStatic(f)) { logOnce([NSString stringWithFormat:@"%s.%s is not a static field", cls, name]); return NULL; }
+    staticOwner(f);
     // the value is copied with the field's own size: room for a struct, not just a pointer
     char value[64] = {0};
     get(f, value);
@@ -173,7 +193,7 @@ void *AMIl2cppField(void *obj, const char *cls, const char *name) {
     // returned, and a write to it changes nothing in the game
     typedef void *class_get_static_field_data_t(void *klass);
     class_get_static_field_data_t *static_data = IL2CPP(class_get_static_field_data);
-    void *klass = AMIl2cppClass(cls);
+    void *klass = staticOwner(f) ?: AMIl2cppClass(cls);
     if (static_data && klass) {
         void *base = static_data(klass);
         if (base) return (char *)base + at;

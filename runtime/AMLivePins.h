@@ -161,7 +161,8 @@ static void AMLiveNote(NSDictionary *tweak) {
     NSString *key = tweak[@"key"], *sk = [key stringByAppendingString:@"/0"];
     if (sLiveState[[key stringByAppendingString:@"/on"]]) {
         NSNumber *v = [pin[@"op"] isEqual:@"multiply"] ? sLiveState[[sk stringByAppendingString:@"/base"]] : sLiveState[[sk stringByAppendingString:@"/orig"]];
-        if (v) AMNoteValue(key.UTF8String, v.doubleValue);
+        double scale = [pin[@"scale"] doubleValue];
+        if (v) AMNoteValue(key.UTF8String, scale > 0 ? v.doubleValue / scale : v.doubleValue);
         return;
     }
     NSString *tcls = nil, *t = pin[@"ctype"] ?: @"int32_t";
@@ -175,7 +176,8 @@ static void AMLiveNote(NSDictionary *tweak) {
     } else if (![pin[@"setter"] hasPrefix:@"set_"] || !AMLiveGet(obj, tcls, [@"get_" stringByAppendingString:[pin[@"setter"] substringFromIndex:4]], t, &v)) {
         return;
     }
-    AMNoteValue(key.UTF8String, v);
+    double scale = [pin[@"scale"] doubleValue];
+    AMNoteValue(key.UTF8String, scale > 0 ? v / scale : v);
 }
 
 static void AMLiveRunTweak(NSDictionary *tweak) {
@@ -256,6 +258,11 @@ static void AMLiveRunTweak(NSDictionary *tweak) {
             }
             if ([pin[@"value"] isEqual:@"peak"] && (!sLiveState[stateKey] || cur > sLiveState[stateKey].doubleValue)) sLiveState[stateKey] = @(cur);
             if (!AMLiveValue(pin, stateKey, obj, tcls, t, sliderValue, &value)) continue;
+            // a fixed-point field (FP: raw = value * 65536) holds raw numbers; a typed value or slider is scaled,
+            // a multiply factor and a refill read from the game ({getter}/{field}, already raw) are not
+            double scale = [pin[@"scale"] doubleValue];
+            BOOL typed = [pin[@"value"] isKindOfClass:NSNumber.class] || [pin[@"value"] isEqual:@"slider"];
+            if (scale > 0 && typed && ![pin[@"op"] isEqual:@"multiply"]) value *= scale;
             if ([pin[@"op"] isEqual:@"multiply"] && p) {  // field = base * slider; the game recalculating it gives a new base
                 NSString *setKey = [stateKey stringByAppendingString:@"/set"], *baseKey = [stateKey stringByAppendingString:@"/base"];
                 if (!sLiveState[setKey] || cur != sLiveState[setKey].doubleValue) sLiveState[baseKey] = @(cur);
@@ -266,7 +273,7 @@ static void AMLiveRunTweak(NSDictionary *tweak) {
                 sLiveState[wroteKey] = @(want);
                 continue;
             }
-            double limit = pin[@"threshold"] ? [pin[@"threshold"] doubleValue] : value;
+            double limit = pin[@"threshold"] ? [pin[@"threshold"] doubleValue] * (scale > 0 ? scale : 1) : value;
             BOOL go = [when isEqual:@"lower"] ? cur < limit : [when isEqual:@"higher"] ? cur > limit : YES;
             if (!go) continue;
             if (p) {

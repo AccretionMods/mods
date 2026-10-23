@@ -19,14 +19,22 @@ from pathlib import Path
 
 from il2cpp_dump import ADDRESS, FLOATS, INTEGERS, SIGNATURE, TYPE, TYPE_INDEX, Method, split_params
 
-VERSION = 12  # preserve static reference/getter paths and scalar backing fields for no-JIT analysis
+VERSION = 13  # hot-update assemblies, Singleton<T> instances, fixed-point FP fields, demo classes left out
 
 IMAGE = re.compile(r"^// Image \d+: (.+?)(?:\.dll)? - (\d+)\s*$")
 NAMESPACE = re.compile(r"^\s*// Namespace: ?(\S*)")
 CLASS = re.compile(
     r"^(?:(?:public|private|protected|internal|static|sealed|abstract)\s+)*class\s+([A-Za-z_]\w*)(?=[\s:])"  # whole names: not "Enemy" from "Enemy.<>c"
-    r"(?:\s*:\s*([\w.]+))?[^/]*// TypeDefIndex: (\d+)"
+    r"(?:\s*:\s*([\w.]+(?:<[\w.]+>)?))?[^/]*// TypeDefIndex: (\d+)"
 )
+# a generic singleton base (Singleton<T>, MonoSingleton<T>): its static field of type T holds each subclass's instance
+GENERIC = re.compile(r"^(?:(?:public|private|protected|internal|static|sealed|abstract)\s+)*class\s+([A-Za-z_]\w*)<(\w+)>")
+# games built with HybridCLR/ILRuntime keep their code in hot-update assemblies, and Assembly-CSharp then holds
+# mostly bought packages and their demos (Survivor: Ace: HotFix, HotFixBattle); mod.json "scan_assemblies" overrides
+HOT_UPDATE = re.compile(r"^(hot_?fix|hot_?update)", re.IGNORECASE)
+# store-bought packages ship demo and sample scripts: never game logic (a scroll list's demo item count)
+DEMO = re.compile(r"demo|sample|example|tutorial|showcase|editor|\btest", re.IGNORECASE)
+FIXED = {"FP": 65536}  # Photon Quantum's fixed point: a long holding value * 65536
 FIELD = re.compile(r"^\s+((?:(?:public|private|protected|internal|static|readonly)\s+)*)([\w.<>\[\], ]+?)\s+([\w<>]+); // (0x[0-9A-Fa-f]+)")
 METHOD = re.compile(r"^\s+(?:(?:public|private|protected|internal|virtual|override|static)\s+)*(\w+)\s+(get|set)_(\w+)\((\w*)[^)]*\)")
 
@@ -100,11 +108,33 @@ def flag_of(cls, member):
     return None
 
 
-def parse(path):
-    """Classes of the game's own assembly: {name: {"base", "statics": [field], "fields": {...}, "props": {...}}}."""
-    images, classes = [], {}
-    current = None
+def game_assemblies(images, wanted=None):
+    """The assemblies holding the game's own code: mod.json "scan_assemblies", else the hot-update ones when the
+    game has them, else Assembly-CSharp."""
+    names = [name for _, name in images]
+    if wanted:
+        return set(wanted)
+    hot = {n for n in names if HOT_UPDATE.match(n)}
+    return hot or {n for n in names if n.startswith("Assembly-CSharp")}
+
+
+def scalar(ftype):
+    """(C type, fixed-point scale or None) for a pin-able field or property type, or None."""
+    if ftype in NUMERIC:
+        return NUMERIC[ftype], None
+    base = ftype.rsplit(".", 1)[-1]
+    if base in FIXED:
+        return "int64_t", FIXED[base]
+    return None
+
+
+def parse(path, assemblies=None):
+    """Classes of the game's own assemblies: {name: {"base", "statics": [field], "fields": {...}, "props": {...}}}.
+    A class outside Assembly-CSharp is named with its assembly (HotFix:GameManager), as the runtime finds it."""
+    images, classes, generics = [], {}, {}
+    current = generic = None
     namespace = ""
+    chosen = None
     with open(path, encoding="utf-8", errors="replace") as f:
         for line in f:
             if line.startswith("// Image "):
@@ -117,8 +147,14 @@ def parse(path):
                 namespace = m.group(1)
                 continue
             if "// TypeDefIndex:" in line:
+                if chosen is None:
+                    chosen = game_assemblies(images, assemblies)
+                current = generic = None
+                g = GENERIC.match(line)
+                if g:  # Singleton<T>: which of its static fields holds the T
+                    generic = generics.setdefault(g.group(1), {"t": g.group(2), "statics": []})
+                    continue
                 m = CLASS.match(line)
-                current = None
                 if m:  # namespaced game classes too (9 Kings keeps its code in Core, Spells, Policies...)
                     index = int(m.group(3))
                     image = ""
@@ -126,12 +162,22 @@ def parse(path):
                         if start <= index:
                             image = name
                     full = f"{namespace}.{m.group(1)}" if namespace else m.group(1)
-                    if image.startswith("Assembly-CSharp") and full not in classes:
+                    if not image.startswith("Assembly-CSharp"):
+                        full = f"{image}:{full}"
+                    if image in chosen and full not in classes:
                         current = classes[full] = {
                             "base": m.group(2) or "", "statics": [], "fields": {}, "props": {}, "getters": set(),
                             "holds": set(), "references": {}, "object_getters": {},
                         }
                         current_name = m.group(1)
+                continue
+            if generic is not None:
+                if line.startswith("}"):
+                    generic = None
+                else:
+                    m = FIELD.match(line)
+                    if m and "static" in m.group(1) and m.group(2).strip() == generic["t"]:
+                        generic["statics"].append(m.group(3))
                 continue
             if current is None:
                 continue
@@ -141,26 +187,36 @@ def parse(path):
             m = FIELD.match(line)
             if m:
                 mods, ftype, fname, offset = m.group(1), m.group(2).strip(), m.group(3), m.group(4)
+                kind = scalar(ftype)
                 if "static" in mods:
                     if ftype == current_name:
                         current["statics"].append(fname)
                     if ftype not in NUMERIC and "<" not in ftype and "[" not in ftype:
                         current["references"][fname] = ftype
-                elif ftype in NUMERIC:
-                    current["fields"][fname] = {"ctype": NUMERIC[ftype], "offset": offset,
+                elif kind:
+                    current["fields"][fname] = {"ctype": kind[0], "offset": offset,
                                                 "private": "public" not in mods, "readonly": "readonly" in mods}
+                    if kind[1]:
+                        current["fields"][fname]["scale"] = kind[1]
                 else:
                     current["holds"].add(re.sub(r"[<\[].*", "", ftype).rsplit(".", 1)[-1])
                 continue
             m = METHOD.match(line)
             if m:
                 rtype, kind, prop, arg = m.groups()
-                if kind == "get" and rtype in NUMERIC:
+                if kind == "get" and scalar(rtype):
                     current["getters"].add(prop)
                 elif kind == "get" and not arg:
                     current["object_getters"]["get_" + prop] = rtype
-                elif kind == "set" and arg in NUMERIC:
+                elif kind == "set" and scalar(arg) and not scalar(arg)[1]:  # an FP setter takes a struct: fields only
                     current["props"][prop] = NUMERIC[arg]
+    for name, info in classes.items():  # GameManager : Singleton<GameManager>
+        b = re.match(r"([\w.]+)<([\w.]+)>$", info["base"])
+        short = name.rpartition(":")[2].rsplit(".", 1)[-1]
+        if b and b.group(2).rsplit(".", 1)[-1] == short:
+            statics = generics.get(b.group(1).rsplit(".", 1)[-1], {}).get("statics")
+            if statics:
+                info["singleton"] = statics[0]
     return classes
 
 
@@ -194,8 +250,12 @@ def build(classes, existing=frozenset(), learned=None):
     rows, flagged = [], []
     saved = saved_classes(classes)
     for cls, info in classes.items():
+        if DEMO.search(cls):
+            continue  # a package's demo or sample script, not the game
         if info["statics"]:
             obj, reach = f"{cls}.{info['statics'][0]}", 3
+        elif info.get("singleton"):
+            obj, reach = f"{cls}.{info['singleton']}", 3
         elif info["base"] == "MonoBehaviour":
             obj, reach = f"{cls}[]", 1
         else:
@@ -208,11 +268,14 @@ def build(classes, existing=frozenset(), learned=None):
                 continue  # compiler backing fields: the setter covers them
             members.append((fname, fname, f["ctype"], "field", f["offset"], False, f["private"]))
         for target, name, ctype, kind, offset, getter, private in members:
-            area, by_member = area_of(cls, name)
+            area, by_member = area_of(cls.rpartition(":")[2], name)
             row = {
                 "class": cls, "object": obj, "member": target, "name": name, "kind": kind, "ctype": ctype,
                 "offset": offset, "area": area, "has": f"{cls}.{target}" in existing,
             }
+            scale = info["fields"].get(name, {}).get("scale") if kind == "field" else None
+            if scale:
+                row["scale"] = scale  # fixed point: the value is written as value * scale
             reason = flag_of(cls, name)
             if reason:
                 row["flag"] = reason
@@ -227,8 +290,8 @@ def build(classes, existing=frozenset(), learned=None):
                 score -= 1
             if obj.endswith("[]") and area == "Other":
                 score -= 2
-            row.update(_suggest(name, ctype, getter))
-            if cls.rsplit(".", 1)[-1] in saved:
+            row.update(_suggest(name, "float" if scale else ctype, getter))
+            if cls.rpartition(":")[2].rsplit(".", 1)[-1] in saved:
                 row["saved"] = True  # changes stay in the save: keep restore on for its switch
             if learned:
                 bonus, p = learned(name, ctype, cls)
@@ -263,12 +326,13 @@ def existing_targets(tweaks):
     return out
 
 
-def scan(dump, tweaks=None, learned=None):
-    """Rows for a dump.cs, cached in scan.json beside it (rebuilt when the dump or VERSION changes)."""
+def scan(dump, tweaks=None, learned=None, assemblies=None):
+    """Rows for a dump.cs, cached in scan.json beside it (rebuilt when the dump, VERSION or the chosen assemblies
+    change). assemblies: mod.json "scan_assemblies" (default: hot-update assemblies, else Assembly-CSharp)."""
     dump = Path(dump)
     cache = dump.with_name("scan.json")
     st = dump.stat()
-    stamp = {"version": VERSION, "size": st.st_size, "mtime": st.st_mtime_ns}
+    stamp = {"version": VERSION, "size": st.st_size, "mtime": st.st_mtime_ns, "assemblies": sorted(assemblies or [])}
     data = None
     if cache.is_file():
         try:
@@ -276,7 +340,7 @@ def scan(dump, tweaks=None, learned=None):
         except ValueError:
             data = None
     if not data or data.get("stamp") != stamp:
-        classes = parse(dump)
+        classes = parse(dump, assemblies)
         data = {"stamp": stamp, "classes": len(classes), "inventory": purchase_inventory(dump),
                 "data": {k: dict(v, getters=sorted(v["getters"]), holds=sorted(v["holds"])) for k, v in classes.items()}}
         tmp = cache.with_name(cache.name + ".tmp")

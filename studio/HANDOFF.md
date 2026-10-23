@@ -85,6 +85,16 @@ chose a local web app in this repo over a desktop app, a Claude panel or an iOS 
     rate-limited batch once, and reads JSON answers (`{"row", "value", "when", "title"}`): Studio builds each pin from
     the scan row, checks the value against its type and runs dev.py pin in-process (gen once in step 4). Older
     `am pin` lines still count. Stop kills the model processes too (taskkill /T). Unit-tested; not yet run end to end.
+  - Scan and pins reach hot-update games (2026-10-23, after Survivor: Ace+'s 80 Auto-build switches all landed on
+    bought packages' demo/effect scripts): the scan reads hot-update assemblies (HotFix*, HotUpdate*) instead of
+    Assembly-CSharp when a game has them (mod.json `scan_assemblies` overrides), names those classes with their
+    assembly (`HotFix:HotFix.GameManager`), reaches `Singleton<T>` managers through the base's static
+    (`GameManager.m_t`: the runtime looks up the parent chain and initialises the generic class), treats Photon `FP`
+    fields as int64 with `"scale": 65536`, and skips demo/sample/example/editor/test classes. Auto-build prints where
+    its candidates come from. Survivor: Ace: 647 candidates in HotFix (98 managers). Not reached yet: the fight's
+    own objects (HotFixBattle entities have no singleton or MonoBehaviour: needs a path through a manager).
+    Survivor: Ace+ restored to Keep screen awake, 1.0.3 built with the new runtime. Not phone-tested: a Singleton or
+    FP pin.
 - Earlier (v1, 2026-10-22): built and checked in the built-in browser against the Wanderer example mod: mod list, Switches (18 items with and checked in the built-in browser against the Wanderer example mod: mod list, Switches (18 items with
   hook/pin chips, watch line), Find (regex search, class methods, fields, Hook/Pin/Call forms: a pin added through
   the page landed in tweaks.json and the generated code), Suggest (36 rows from 58 learned patterns), Build & Phone
