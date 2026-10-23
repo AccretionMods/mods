@@ -8,6 +8,10 @@
 //	{"cmd": "url", "account", "app_id", "cookies"}            -> {"url", "version", "bundle"}, {"needs_license": true}
 //	                                                             or {"expired": true}
 //	{"cmd": "license", "account", "app_id", "cookies"}        -> {"ok": true} (free apps only)
+//	{"cmd": "versions", "account", "app_id", "cookies"}       -> {"ids": [...], "latest"} (the store's version ids)
+//	{"cmd": "version_info", "account", "app_id", "version_id"} -> {"version", "released"} (one id's version)
+//	{"cmd": "download", "account", "app_id", "version_id", "output"} -> {"path", "version", "bundle"}: the whole
+//	                                                             .ipa as the App Store serves it (still encrypted)
 //
 // The password is used for the one sign-in and never written anywhere; the account that comes back has
 // no password in it. "url" starts ipatool's download and stops it at the first request for the .ipa itself,
@@ -39,8 +43,10 @@ type request struct {
 	Password string           `json:"password"`
 	Code     string           `json:"code"`
 	Account  appstore.Account `json:"account"`
-	AppID    int64            `json:"app_id"`
-	Cookies  string           `json:"cookies"`
+	AppID     int64            `json:"app_id"`
+	VersionID string           `json:"version_id"`
+	Output    string           `json:"output"`
+	Cookies   string           `json:"cookies"`
 }
 
 // memKeychain keeps what ipatool would save (the account, its kbsync cache) for this run only.
@@ -141,6 +147,12 @@ func run() (map[string]any, error) {
 		return downloadURL(store, req, catcher)
 	case "license":
 		return license(store, req)
+	case "versions":
+		return versions(store, req)
+	case "version_info":
+		return versionInfo(store, req)
+	case "download":
+		return download(store, req)
 	}
 	return nil, fmt.Errorf("unknown cmd %q", req.Cmd)
 }
@@ -220,4 +232,79 @@ func license(store appstore.AppStore, req request) (map[string]any, error) {
 		return map[string]any{"expired": true}, nil
 	}
 	return nil, fmt.Errorf("license: %w", err)
+}
+
+func signedRequest(req request) error {
+	if req.AppID == 0 || req.Account.PasswordToken == "" {
+		return errors.New("an app id and a signed-in account, please")
+	}
+	return nil
+}
+
+// versions: every version id the store keeps for the app (oldest first, as Apple lists them) and the newest.
+func versions(store appstore.AppStore, req request) (map[string]any, error) {
+	if err := signedRequest(req); err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	out, err := store.ListVersions(appstore.ListVersionsInput{Context: ctx, Account: req.Account, App: app(store, req),
+		Platform: appstore.PlatformIPhone})
+	switch {
+	case errors.Is(err, appstore.ErrLicenseRequired):
+		return map[string]any{"needs_license": true}, nil
+	case errors.Is(err, appstore.ErrPasswordTokenExpired):
+		return map[string]any{"expired": true}, nil
+	case err != nil:
+		return nil, fmt.Errorf("versions: %w", err)
+	}
+	return map[string]any{"ids": out.ExternalVersionIdentifiers, "latest": out.LatestExternalVersionID}, nil
+}
+
+// versionInfo: the version number and release date behind one version id (Apple names ids only by number).
+func versionInfo(store appstore.AppStore, req request) (map[string]any, error) {
+	if err := signedRequest(req); err != nil {
+		return nil, err
+	}
+	if req.VersionID == "" {
+		return nil, errors.New("a version id, please")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	out, err := store.GetVersionMetadata(appstore.GetVersionMetadataInput{Context: ctx, Account: req.Account,
+		App: app(store, req), VersionID: req.VersionID, Platform: appstore.PlatformIPhone})
+	if errors.Is(err, appstore.ErrPasswordTokenExpired) {
+		return map[string]any{"expired": true}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("version info: %w", err)
+	}
+	return map[string]any{"version": out.DisplayVersion, "released": out.ReleaseDate}, nil
+}
+
+// download: the whole .ipa (newest, or version_id) into the output folder, as ipatool saves it.
+func download(store appstore.AppStore, req request) (map[string]any, error) {
+	if err := signedRequest(req); err != nil {
+		return nil, err
+	}
+	if req.Output == "" {
+		return nil, errors.New("an output folder, please")
+	}
+	if err := os.MkdirAll(req.Output, 0o755); err != nil {
+		return nil, err
+	}
+	target := app(store, req)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+	defer cancel()
+	out, err := store.Download(appstore.DownloadInput{Context: ctx, Account: req.Account, App: target,
+		OutputPath: req.Output, ExternalVersionID: req.VersionID, Platform: appstore.PlatformIPhone})
+	switch {
+	case errors.Is(err, appstore.ErrLicenseRequired):
+		return map[string]any{"needs_license": true}, nil
+	case errors.Is(err, appstore.ErrPasswordTokenExpired):
+		return map[string]any{"expired": true}, nil
+	case err != nil:
+		return nil, fmt.Errorf("download: %w", err)
+	}
+	return map[string]any{"path": out.DestinationPath, "version": target.Version, "bundle": target.BundleID}, nil
 }
