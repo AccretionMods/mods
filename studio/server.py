@@ -55,6 +55,7 @@ import games
 import gen_tweaks
 import ipa_fetch
 import jobs_state
+import menu_image
 import scan_view
 import shots
 import store_view
@@ -1205,6 +1206,8 @@ class Handler(BaseHTTPRequestHandler):
             )
         if not parts:
             return self.send_file(HERE / "index.html", "text/html; charset=utf-8")
+        if parts == ["menu-image"]:
+            return self.send_file(HERE / "menu_image.html", "text/html; charset=utf-8")
         if parts[0] != "api":
             return self.send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
         if parts[1:] == ["mods"]:
@@ -1264,6 +1267,8 @@ class Handler(BaseHTTPRequestHandler):
             with LOCK:
                 if not rest:
                     return self.send_json(mod_detail(name))
+                if rest == ["menu"]:
+                    return self.send_json(menu_image.read(ROOT / "mods" / name))
                 if rest == ["find"]:
                     return self.send_json(
                         find(
@@ -1388,6 +1393,27 @@ class Handler(BaseHTTPRequestHandler):
             self.local_only()
             return self.send_json(start_store_publish(str(body.get("mod", "")), str(body.get("action", "")),
                                                       str(body.get("confirm", ""))).view())
+        if parts == ["api", "store", "shots", "image"]:
+            # the Menu image page's PNG, as a link for the mod's post
+            self.local_only()
+            import base64
+            import tempfile
+            mod = self.mod_name(str(body.get("mod", "")))
+            data = base64.b64decode(str(body.get("png", "")), validate=True)
+            if not data.startswith(b"\x89PNG"):
+                raise dev.DevError("not a PNG")
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / f"{mod}-menu.png"
+                path.write_bytes(data)
+                try:
+                    shot = shots.upload_file(ROOT, path, str(body.get("ttl", "1y")), label=f"{mod} menu image")
+                except shots.ShotsError as e:
+                    raise dev.DevError(str(e)) from e
+            state = dev.load_state(mod)
+            state.setdefault("shots", []).insert(0, {"id": shot["id"], "url": shot["url"], "expires_at": shot["expires_at"],
+                                                    "taken": int(time.time())})
+            dev.save_state(mod, state)
+            return self.send_json(shot)
         if len(parts) == 4 and parts[:3] == ["api", "store", "shots"] and parts[3] in ("phone", "renew", "delete"):
             self.local_only()
             try:

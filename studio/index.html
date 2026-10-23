@@ -379,6 +379,7 @@ const App = {
             more("Watch the phone (5 min)", "reads the phone's log: each switch shows its state here", async () => { await this.job("log", ["--seconds", "300"]); setTimeout(() => this.refreshLive(), 3000); }),
             more("Private download link (6 months)", "uploads the newest build to private storage and makes a dl.getaccretion.app/s/ link; renew or revoke it with am share", () => this.job("share", ["--months", "6"])),
             more("My download links", "every share link, its expiry and downloads", () => this.job("share", ["--list"])),
+            more("Menu image for the post", "our menu drawn with this mod's switches: fill it in, then save a PNG or upload it as the post's link", () => window.open(`/menu-image?mod=${this.mod}`, "_blank")),
             more("Phone screenshot for the post", "takes the phone's screen now, uploads it as a 1-year link (renew it on the Store tab) and puts it in this mod's post", () => this.phoneShot()),
             more("Release post", "from your template, once every switch is marked works; written locally, never posted", () => this.job("post", [])),
             more("Draft post", "the post now, marked DRAFT with what is not validated yet", () => this.job("post", ["--draft"])),

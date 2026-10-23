@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Menu image · Mod Studio</title>
+<style>
+/* Mod Studio's tokens (studio/index.html); the drawn menu uses the mod menu's own (menu/AMMenu.m) */
+:root { --bg: #07070D; --surface: #0F0E1A; --line: #262145; --fg: #ECEAFF; --muted: #8B87B3; --accent: #8B5CF6;
+  --accent-2: #22D3EE; --good: #34D399; --bad: #F87171; --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 -apple-system, "Segoe UI", system-ui, sans-serif; }
+header { display: flex; gap: 12px; align-items: center; padding: 12px 20px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+header b { font-family: var(--mono); font-size: 12px; letter-spacing: .2em; }
+.wrap { display: grid; grid-template-columns: minmax(320px, 520px) minmax(0, 1fr); gap: 20px; padding: 18px 20px; max-width: 1400px; margin: 0 auto; }
+@media (max-width: 900px) { .wrap { grid-template-columns: 1fr; } }
+.card { background: color-mix(in srgb, var(--surface) 60%, transparent); border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+label.l { display: block; font: 500 11px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 10px 0 4px; }
+input, select { background: var(--surface); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font: inherit; min-width: 0; }
+input[type=checkbox] { width: 16px; height: 16px; }
+button { background: transparent; color: var(--fg); border: 1px solid #6458AF; border-radius: 9px; padding: 6px 12px; font: inherit; cursor: pointer; }
+button.primary { background: linear-gradient(90deg, #7C4DEE, #8B5CF6); border: 0; }
+button.small { padding: 3px 8px; font-size: 12px; }
+button.ghost { border-color: var(--line); color: var(--muted); }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.grow { flex: 1; }
+.sec { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 12px; }
+.item { display: grid; grid-template-columns: 74px minmax(0, 1fr) 54px 26px; gap: 6px; align-items: center; margin: 4px 0; }
+.item input[type=text] { width: 100%; }
+.hint { color: var(--muted); font-size: 12.5px; margin: 6px 0; }
+.toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 8px 14px; }
+.toast.ok { border-color: var(--good); } .toast.bad { border-color: var(--bad); }
+.preview { display: flex; justify-content: center; align-items: flex-start; }
+.preview canvas { width: 390px; max-width: 100%; border-radius: 28px; box-shadow: 0 0 0 1px var(--line); }
+</style>
+</head>
+<body>
+<header>
+  <b>ACCRETION</b><span style="color:var(--muted);font-family:var(--mono);font-size:12px">/ menu image</span>
+  <select id="mod"></select>
+  <button id="reload" class="ghost">Load from the mod</button>
+  <span class="grow"></span>
+  <button id="png">Save PNG</button>
+  <button id="upload" class="primary" title="uploads the image as a 1-year link (renew it on the Store tab) and puts it in this mod's post">Upload for the post</button>
+</header>
+<div class="wrap">
+  <div class="card" id="form"></div>
+  <div class="preview"><canvas id="c"></canvas></div>
+</div>
+<script>
+// The menu drawn the way menu/AMMenu.m draws it (dark): see-through category boxes (surface at 60%) with the
+// violet-into-cyan edge light, line toggles (cyan on), the green dot by a switch that is on, sliders, list rows.
+const T = { bg: "#07070D", surface: "#0F0E1A", line: "#262145", lineStrong: "#6458AF", fg: "#ECEAFF", muted: "#8B87B3",
+  accent: "#8B5CF6", accentText: "#A07AF7", good: "#34D399", accent2: "#22D3EE" };
+const SANS = '-apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif';
+const MONO = 'ui-monospace, "SF Mono", Menlo, Consolas, monospace';
+const W = 390, S = 3, PAD = 16, ROW = { switch: 44, slider: 70, list: 44 };
+let menu = { title: "", sections: [] };
+const $ = (id) => document.getElementById(id);
+const h = (tag, attrs = {}, ...kids) => { const e = document.createElement(tag); for (const [k, v] of Object.entries(attrs)) { if (k.startsWith("on")) e.addEventListener(k.slice(2), v); else if (k === "checked") e.checked = v; else e.setAttribute(k, v); } kids.flat().forEach(c => c != null && e.append(c)); return e; };
+function toast(text, kind) { document.querySelectorAll(".toast").forEach(t => t.remove()); const t = h("div", { class: "toast " + (kind || "") }, text); document.body.append(t); setTimeout(() => t.remove(), 4500); }
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const d = await r.json().catch(() => ({ error: "no answer" }));
+  if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
+  return d;
+}
+
+// ---------------------------------------------------------------- the form
+function renderForm() {
+  const f = $("form"); f.replaceChildren();
+  f.append(h("label", { class: "l" }, "Title (the game's name, as under its icon)"),
+    h("input", { type: "text", value: menu.title, style: "width:100%", oninput: e => { menu.title = e.target.value; draw(); } }),
+    h("p", { class: "hint" }, "Switch on what the image should show working: its toggle turns cyan and a green dot appears. Rows: switch, slider (value), list (opens a picker)."));
+  menu.sections.forEach((s, si) => {
+    const box = h("div", { class: "sec" },
+      h("div", { class: "row" },
+        h("input", { type: "text", value: s.name, class: "grow", oninput: e => { s.name = e.target.value; draw(); } }),
+        h("button", { class: "small ghost", title: "move up", onclick: () => { if (si) { menu.sections.splice(si - 1, 0, menu.sections.splice(si, 1)[0]); renderForm(); draw(); } } }, "↑"),
+        h("button", { class: "small ghost", onclick: () => { menu.sections.splice(si, 1); renderForm(); draw(); } }, "Remove category")));
+    s.rows.forEach((r, ri) => {
+      const kind = h("select", { onchange: e => { r.kind = e.target.value; if (r.kind === "slider" && r.value == null) Object.assign(r, { min: 1, max: 10, value: 1, default: 1 }); renderForm(); draw(); } },
+        ["switch", "slider", "list"].map(k => { const o = h("option", { value: k }, k); if (k === r.kind) o.selected = true; return o; }));
+      const third = r.kind === "switch" ? h("input", { type: "checkbox", checked: !!r.on, title: "on", onchange: e => { r.on = e.target.checked; draw(); } })
+        : r.kind === "slider" ? h("input", { type: "number", value: r.value, step: "0.1", title: `value (${r.min}–${r.max}, default ${r.default})`, oninput: e => { r.value = parseFloat(e.target.value) || 0; draw(); } })
+        : h("span");
+      box.append(h("div", { class: "item" }, kind,
+        h("input", { type: "text", value: r.title, oninput: e => { r.title = e.target.value; draw(); } }), third,
+        h("button", { class: "small ghost", title: "remove", onclick: () => { s.rows.splice(ri, 1); renderForm(); draw(); } }, "×")));
+    });
+    box.append(h("button", { class: "small", onclick: () => { s.rows.push({ kind: "switch", title: "New switch", on: true }); renderForm(); draw(); } }, "+ Row"));
+    f.append(box);
+  });
+  f.append(h("div", { class: "sec" }, h("button", { onclick: () => { menu.sections.push({ name: "New category", rows: [{ kind: "switch", title: "New switch", on: true }] }); renderForm(); draw(); } }, "+ Category")));
+}
+
+// ---------------------------------------------------------------- the drawing
+function rrect(x, y, w, hh, r) { const c = ctx; c.beginPath(); c.moveTo(x + r, y); c.arcTo(x + w, y, x + w, y + hh, r); c.arcTo(x + w, y + hh, x, y + hh, r); c.arcTo(x, y + hh, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath(); }
+function text(t, x, y, font, color, align = "left") { ctx.font = font; ctx.fillStyle = color; ctx.textAlign = align; ctx.textBaseline = "alphabetic"; ctx.fillText(t, x, y); }
+function fit(t, font, max) { ctx.font = font; if (ctx.measureText(t).width <= max) return t; while (t.length > 1 && ctx.measureText(t + "…").width > max) t = t.slice(0, -1); return t + "…"; }
+const isOn = (r) => r.kind === "switch" ? !!r.on : r.kind === "slider" ? r.value !== r.default : false;
+const label = (t) => t.toUpperCase().split("").join(String.fromCharCode(8202));  // the menu's spaced capitals
+
+function height() {
+  let y = 112;
+  for (const s of menu.sections) y += 30 + s.rows.reduce((a, r) => a + ROW[r.kind], 0) + 18;
+  return y + 70;
+}
+let ctx;
+function draw() {
+  const c = $("c"), H = height();
+  c.width = W * S; c.height = H * S; ctx = c.getContext("2d"); ctx.setTransform(S, 0, 0, S, 0, 0);
+  // background with the two slow drifting lights
+  ctx.fillStyle = T.bg; ctx.fillRect(0, 0, W, H);
+  for (const [x, y, r, col] of [[W * 0.15, 140, 260, "rgba(139,92,246,0.22)"], [W * 0.9, H * 0.6, 280, "rgba(34,211,238,0.14)"]]) {
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r); g.addColorStop(0, col); g.addColorStop(1, "rgba(0,0,0,0)"); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  }
+  // status bar area and the navigation bar
+  text("9:41", 32, 34, `600 15px ${SANS}`, T.fg);
+  const any = menu.sections.some(s => s.rows.some(isOn));
+  if (any) text("All off", PAD, 84, `400 16px ${SANS}`, T.accentText);
+  text("Done", W - PAD, 84, `600 16px ${SANS}`, T.accentText, "right");
+  text(fit(menu.title || "Game", `600 17px ${SANS}`, W - 170), W / 2, 84, `600 17px ${SANS}`, T.fg, "center");
+  ctx.fillStyle = T.line; ctx.fillRect(0, 100, W, 0.5);
+  let y = 112;
+  for (const s of menu.sections) {
+    const on = s.rows.filter(isOn).length;
+    text(label(s.name), PAD + 4, y + 18, `500 11px ${MONO}`, T.muted);
+    const right = `${s.rows.length}  ▾`;
+    ctx.font = `500 11px ${MONO}`; const rw = ctx.measureText(right).width;
+    text(right, W - PAD - 4, y + 18, `500 11px ${MONO}`, T.muted, "right");
+    if (on) text(`${on} on · `, W - PAD - 4 - rw, y + 18, `500 11px ${MONO}`, T.good, "right");
+    y += 30;
+    const hh = s.rows.reduce((a, r) => a + ROW[r.kind], 0), x = PAD, w = W - 2 * PAD;
+    rrect(x, y, w, hh, 12); ctx.fillStyle = "rgba(15,14,26,0.6)"; ctx.fill();
+    ctx.lineWidth = 1; ctx.strokeStyle = T.line; ctx.stroke();
+    // the moving edge, caught at one moment: violet into cyan with a bright glint along the top right
+    const cg = ctx.createConicGradient ? ctx.createConicGradient(-Math.PI / 2.4, x + w / 2, y + hh / 2) : null;
+    if (cg) { cg.addColorStop(0, "rgba(38,33,69,0)"); cg.addColorStop(0.11, T.accent); cg.addColorStop(0.22, T.accent2); cg.addColorStop(0.26, "#c9f6fd"); cg.addColorStop(0.31, T.accent2); cg.addColorStop(0.44, "rgba(38,33,69,0)"); cg.addColorStop(1, "rgba(38,33,69,0)");
+      rrect(x, y, w, hh, 12); ctx.strokeStyle = cg; ctx.lineWidth = 1.2; ctx.stroke(); }
+    let ry = y;
+    s.rows.forEach((r, i) => {
+      const rh = ROW[r.kind];
+      if (i) { ctx.fillStyle = "rgba(236,234,255,0.07)"; ctx.fillRect(x + 16, ry, w - 16, 0.5); }
+      const tx = x + 16 + 16;  // after the dot's column
+      if (r.kind === "switch") {
+        if (r.on) { ctx.beginPath(); ctx.arc(x + 16 + 4, ry + rh / 2, 4, 0, Math.PI * 2); ctx.fillStyle = T.good; ctx.fill(); }
+        text(fit(r.title, `400 13px ${SANS}`, w - 32 - 60), tx, ry + rh / 2 + 4.5, `400 13px ${SANS}`, T.fg);
+        // the line toggle, 34 x 20
+        const bx = x + w - 16 - 34, by = ry + rh / 2 - 10;
+        rrect(bx, by, 34, 20, 10);
+        if (r.on) { ctx.fillStyle = "rgba(34,211,238,0.12)"; ctx.fill(); ctx.strokeStyle = T.accent2; } else ctx.strokeStyle = T.lineStrong;
+        ctx.lineWidth = 1; ctx.stroke();
+        ctx.save(); if (r.on) { ctx.shadowColor = T.accent2; ctx.shadowBlur = 6; }
+        ctx.beginPath(); ctx.arc(bx + (r.on ? 24 : 10), by + 10, 6, 0, Math.PI * 2); ctx.fillStyle = r.on ? T.accent2 : T.muted; ctx.fill(); ctx.restore();
+      } else if (r.kind === "slider") {
+        const v = Number(r.value), on = isOn(r);
+        const val = Math.abs(v) >= 100 || v === Math.round(v) ? String(Math.round(v)) : v.toFixed(1);
+        // the value and the line toggle on the title line, the slider below (dimmed while off)
+        const bx = x + w - 16 - 34, by = ry + 12;
+        text(fit(r.title, `400 13px ${SANS}`, w - 32 - 110), tx, ry + 26, `400 13px ${SANS}`, on ? T.fg : T.fg);
+        text(val, bx - 10, ry + 26, `600 12.5px ${MONO}`, on ? T.accentText : T.muted, "right");
+        rrect(bx, by, 34, 20, 10); if (on) { ctx.fillStyle = "rgba(34,211,238,0.12)"; ctx.fill(); }
+        ctx.strokeStyle = on ? T.accent2 : T.lineStrong; ctx.lineWidth = 1; ctx.stroke();
+        ctx.beginPath(); ctx.arc(bx + (on ? 24 : 10), by + 10, 6, 0, Math.PI * 2); ctx.fillStyle = on ? T.accent2 : T.muted; ctx.fill();
+        const sx = tx, sw = x + w - 16 - tx, sy = ry + 50, frac = Math.max(0, Math.min(1, (v - r.min) / ((r.max - r.min) || 1)));
+        ctx.globalAlpha = on ? 1 : 0.45;
+        rrect(sx, sy - 2, sw, 4, 2); ctx.fillStyle = T.line; ctx.fill();
+        rrect(sx, sy - 2, Math.max(4, sw * frac), 4, 2); ctx.fillStyle = T.accent; ctx.fill();
+        ctx.beginPath(); ctx.arc(sx + sw * frac, sy, 11, 0, Math.PI * 2); ctx.fillStyle = "#fff"; ctx.shadowColor = "rgba(0,0,0,.35)"; ctx.shadowBlur = 4; ctx.fill(); ctx.shadowBlur = 0;
+        ctx.globalAlpha = 1;
+      } else {
+        // a list row: its symbol (drawn as a small cyan ring), the title, the chevron
+        ctx.beginPath(); ctx.arc(x + 16 + 5, ry + rh / 2, 5, 0, Math.PI * 2); ctx.strokeStyle = T.accentText; ctx.lineWidth = 1.5; ctx.stroke();
+        text(fit(r.title, `400 13px ${SANS}`, w - 32 - 30), tx, ry + rh / 2 + 4.5, `400 13px ${SANS}`, T.fg);
+        text("›", x + w - 16, ry + rh / 2 + 6, `400 20px ${SANS}`, T.muted, "right");
+      }
+      ry += rh;
+    });
+    y += hh + 18;
+  }
+  text("Made by Accretion. Settings stay on this device.", PAD + 4, y + 8, `400 11px ${MONO}`, T.muted);
+  text("More at ", PAD + 4, y + 26, `400 11px ${MONO}`, T.muted);
+  ctx.font = `400 11px ${MONO}`; text("getaccretion.app", PAD + 4 + ctx.measureText("More at ").width, y + 26, `500 11px ${MONO}`, T.accentText);
+}
+
+// ---------------------------------------------------------------- loading, saving, uploading
+async function load(mod) {
+  try { menu = await api(`/api/mods/${mod}/menu`); renderForm(); draw(); }
+  catch (e) { toast(e.message, "bad"); }
+}
+$("reload").onclick = () => load($("mod").value);
+$("mod").onchange = () => { try { localStorage.setItem("studio.menuImage.mod", $("mod").value); } catch (e) {} load($("mod").value); };
+$("png").onclick = () => $("c").toBlob(b => { const a = h("a", { href: URL.createObjectURL(b), download: `${$("mod").value || "menu"}-menu.png` }); a.click(); });
+$("upload").onclick = () => $("c").toBlob(async b => {
+  const data = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result.split(",")[1]); fr.readAsDataURL(b); });
+  try {
+    const r = await api("/api/store/shots/image", { mod: $("mod").value, png: data, ttl: "1y" });
+    try { await navigator.clipboard.writeText(r.url); } catch (e) {}
+    toast(`Uploaded: link copied, and it's in this mod's post until ${new Date(r.expires_at).toLocaleDateString()}`, "ok");
+  } catch (e) { toast(e.message, "bad"); }
+}, "image/png");
+
+(async () => {
+  const { mods } = await api("/api/mods");
+  const pick = $("mod");
+  mods.forEach(m => pick.append(h("option", { value: m.name }, m.title || m.name)));
+  const want = new URLSearchParams(location.search).get("mod") || (() => { try { return localStorage.getItem("studio.menuImage.mod"); } catch (e) { return null; } })();
+  if (want && mods.some(m => m.name === want)) pick.value = want;
+  load(pick.value);
+})();
+</script>
+</body>
+</html>
