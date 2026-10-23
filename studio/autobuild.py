@@ -107,9 +107,9 @@ def ask(engine, prompt, effort=""):
     elif engine == "gemini":
         cmd, parse = server.gemini_command(prompt, None, effort), None
     elif engine == "codex":
-        cmd, parse = server.codex_command(prompt, True, effort), None
+        cmd, parse = server.codex_command(prompt, True, effort, answer_only=True), None
     else:
-        cmd, parse = server.claude_command(prompt, True, effort), server.claude_lines
+        cmd, parse = server.claude_command(prompt, True, effort, answer_only=True), server.claude_lines
     env = dict(os.environ, COLUMNS="4000", PYTHONUTF8="1")  # aider wraps its answer at the terminal width
     proc = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                             encoding="utf-8", errors="replace", env=env)
@@ -147,6 +147,8 @@ def picks(mod, rows, answer):
             if not 1 <= n <= len(rows):
                 skipped.append(f"row {n} is not in this batch")
                 continue
+            if any(k == "row" and r is rows[n - 1] for k, (r, *_) in found if k == "row"):
+                continue  # Codex prints its final answer twice
             found.append(("row", (rows[n - 1], item)))
     return found, skipped
 

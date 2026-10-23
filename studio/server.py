@@ -36,6 +36,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import webbrowser
@@ -379,9 +380,14 @@ def claude_exe():
     return found
 
 
-def claude_command(prompt, read_only, effort=""):
+def claude_command(prompt, read_only, effort="", answer_only=False):
     """The claude -p command line for a builder prompt. Read-only: reading tools and the read-only dev.py
-    commands only, no edits. Otherwise: edits accepted, any dev.py command, no other shell commands."""
+    commands only, no edits. Otherwise: edits accepted, any dev.py command, no other shell commands.
+    answer_only (Auto-build): no tools at all, the prompt is the whole job."""
+    if answer_only:
+        return [claude_exe(), "-p", ANSWER_ONLY + prompt, "--output-format", "stream-json", "--verbose",
+                "--disallowedTools", "Bash", "Read", "Grep", "Glob", "Edit", "Write", "NotebookEdit", "WebFetch",
+                "WebSearch", "Task", *(["--effort", effort] if effort else [])]
     if read_only:
         allowed = ["Read", "Grep", "Glob"] + [
             f"Bash({DEV} {c}:*)" for c in READ_ONLY_DEV
@@ -499,7 +505,11 @@ AIDER_EDIT_NOTE = (
 # changes files, full access (the owner's choice, 2026-10-22: the whole loop start to finish, signing and
 # installing on the phone included), so it can run any command on this PC with the network. Studio asks before
 # every such run. The prompt goes as one argument to node, not through codex.cmd (cmd.exe cuts at 8191 chars).
-def codex_command(prompt, read_only, effort=""):
+ANSWER_ONLY = ("Answer from this prompt alone: run no commands, open no files, search nothing. Everything you "
+               "need is below; reply only in the format it asks for.\n\n")
+
+
+def codex_command(prompt, read_only, effort="", answer_only=False):
     node = shutil.which("node")
     script = Path(os.environ.get("APPDATA", "")) / "npm" / "node_modules" / "@openai" / "codex" / "bin" / "codex.js"
     if node and script.is_file():
@@ -515,6 +525,9 @@ def codex_command(prompt, read_only, effort=""):
                           "no git push, no publishing, no deleting outside the mod, no other installs.")
     mode = ["--sandbox", "read-only"] if read_only else ["--dangerously-bypass-approvals-and-sandbox"]
     level = ["-c", f'model_reasoning_effort="{effort}"'] if effort else []
+    if answer_only:  # Auto-build: the table is the whole job; in the repo Codex read the handbook and answered nothing
+        return [*head, "exec", "--sandbox", "read-only", *level, "--skip-git-repo-check", "--ephemeral",
+                "-C", str(Path(tempfile.gettempdir())), ANSWER_ONLY + prompt]
     return [*head, "exec", *mode, *level, "--skip-git-repo-check", "--ephemeral", "-C", str(ROOT),
             note + "\n\n" + prompt]
 
