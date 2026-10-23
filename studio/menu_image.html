@@ -31,7 +31,7 @@ button.ghost { border-color: var(--line); color: var(--muted); }
 .toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 8px 14px; }
 .toast.ok { border-color: var(--good); } .toast.bad { border-color: var(--bad); }
 .preview { display: flex; justify-content: center; align-items: flex-start; }
-.preview canvas { width: 390px; max-width: 100%; border-radius: 28px; box-shadow: 0 0 0 1px var(--line); }
+.preview canvas { width: 375px; max-width: 100%; border-radius: 28px; box-shadow: 0 0 0 1px var(--line); }
 </style>
 </head>
 <body>
@@ -55,11 +55,10 @@ const T = { bg: "#07070D", surface: "#0F0E1A", line: "#262145", lineStrong: "#64
   accent: "#8B5CF6", accentText: "#A07AF7", good: "#34D399", bad: "#F87171", accent2: "#22D3EE" };
 const SANS = '-apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif';
 const MONO = 'ui-monospace, "SF Mono", Menlo, Consolas, monospace';
-const W = 390, S = 3, PAD = 16, ROW = { switch: 44, slider: 70, list: 44 };
+const W = 375, S = 3, PAD = 16, ROW = { switch: 44, slider: 70, list: 44 };
 // a switch is off, on and working (green dot, cyan toggle) or on and not working (red dot and toggle, and what
 // to do in small red text under the title, as the game shows it)
 const stateOf = (r) => r.state || (r.on ? "on" : "off");
-const rowHeight = (r) => r.kind === "switch" && stateOf(r) === "bad" ? 58 : ROW[r.kind];
 const REASONS = ["Start a fight to see it work", "Load a save to see it work", "Not in your game yet: it shows up later in play"];
 let menu = { title: "", sections: [] };
 const $ = (id) => document.getElementById(id);
@@ -77,6 +76,10 @@ function renderForm() {
   const f = $("form"); f.replaceChildren();
   f.append(h("label", { class: "l" }, "Title (the game's name, as under its icon)"),
     h("input", { type: "text", value: menu.title, style: "width:100%", oninput: e => { menu.title = e.target.value; draw(); } }),
+    h("div", { class: "row", style: "margin-top:8px" },
+      h("label", { class: "row", style: "gap:6px" }, h("input", { type: "checkbox", checked: menu.search !== false, onchange: e => { menu.search = e.target.checked; draw(); } }), "Search field"),
+      h("span", { class: "hint", style: "margin:0 0 0 10px" }, "Cloud saves account"),
+      h("input", { type: "text", value: menu.cloud || "", placeholder: "b•••@me.com (empty: hidden)", style: "flex:1", oninput: e => { menu.cloud = e.target.value; draw(); } })),
     h("p", { class: "hint" }, "Switch on what the image should show working: its toggle turns cyan and a green dot appears. Rows: switch, slider (value), list (opens a picker)."));
   menu.sections.forEach((s, si) => {
     const box = h("div", { class: "sec" },
@@ -106,96 +109,168 @@ function renderForm() {
 
 // ---------------------------------------------------------------- the drawing
 function rrect(x, y, w, hh, r) { const c = ctx; c.beginPath(); c.moveTo(x + r, y); c.arcTo(x + w, y, x + w, y + hh, r); c.arcTo(x + w, y + hh, x, y + hh, r); c.arcTo(x, y + hh, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath(); }
-function text(t, x, y, font, color, align = "left") { ctx.font = font; ctx.fillStyle = color; ctx.textAlign = align; ctx.textBaseline = "alphabetic"; ctx.fillText(t, x, y); }
+function text(t, x, y, font, color, align = "left", spacing = "0px") { ctx.font = font; ctx.fillStyle = color; ctx.textAlign = align; ctx.textBaseline = "alphabetic"; ctx.letterSpacing = spacing; ctx.fillText(t, x, y); ctx.letterSpacing = "0px"; }
+function widthOf(t, font, spacing = "0px") { ctx.font = font; ctx.letterSpacing = spacing; const w = ctx.measureText(t).width; ctx.letterSpacing = "0px"; return w; }
 function fit(t, font, max) { ctx.font = font; if (ctx.measureText(t).width <= max) return t; while (t.length > 1 && ctx.measureText(t + "…").width > max) t = t.slice(0, -1); return t + "…"; }
 const isOn = (r) => r.kind === "switch" ? stateOf(r) !== "off" : r.kind === "slider" ? r.value !== r.default : false;
-const label = (t) => t.toUpperCase().split("").join(String.fromCharCode(8202));  // the menu's spaced capitals
+const label = (t) => t.toUpperCase();  // drawn with the menu's letter spacing (LS)
+const LS = "1.6px", LFONT = `500 11px ${MONO}`;
 
+// Measured on the phone (iPhone, 375 x 812 pt at 3x, 2026-10-22): the menu is a sheet over the game from y 53 with
+// 38 pt top corners; the nav bar is 69 pt (white All off / Done, the mark and the title), then the violet-into-cyan
+// line, the cloud line, the search field (16..359 x 37 pt, 12 pt corners), and categories: a 28 pt label row, then
+// the card (17..358, 12 pt corners) with 30 pt rows (56 pt with a red reason), dot at x 31, titles at x 44,
+// toggles 34 x 20 ending 11 pt inside the card.
+const SHEET = 53, NAV = 69, CARD_X = 17, CARD_W = 341, TITLE_X = 44, DOT_X = 31;
+function rowH(r) {
+  if (r.kind === "slider") return 56;
+  if (r.kind === "switch" && stateOf(r) === "bad") return reasonLines(r) > 1 ? 56 : 44;
+  return 30;
+}
+function reasonLines(r) {
+  ctx.font = `400 11px ${SANS}`;
+  return ctx.measureText(r.why || "Not reaching the game").width > CARD_W - (TITLE_X - CARD_X) - 56 ? 2 : 1;
+}
+function wrap(t, font, max) {
+  ctx.font = font;
+  const words = t.split(" "), lines = [""];
+  for (const w of words) {
+    const next = lines[lines.length - 1] ? lines[lines.length - 1] + " " + w : w;
+    if (ctx.measureText(next).width > max && lines[lines.length - 1]) lines.push(w); else lines[lines.length - 1] = next;
+  }
+  return lines.slice(0, 2);
+}
 function height() {
-  let y = 112;
-  for (const s of menu.sections) y += 30 + s.rows.reduce((a, r) => a + rowHeight(r), 0) + 18;
-  return y + 70;
+  let y = SHEET + NAV + (menu.cloud ? 54 : 18) + (menu.search !== false ? 57 : 0);
+  for (const s of menu.sections) y += 28 + s.rows.reduce((a, r) => a + rowH(r), 0) + 22;
+  return y + 64;
+}
+// the Accretion mark beside the title: a tilted violet-into-pink ring with a light core
+function mark(cx, cy) {
+  ctx.save(); ctx.translate(cx, cy); ctx.rotate(-0.35);
+  const g = ctx.createLinearGradient(-11, 0, 11, 0); g.addColorStop(0, "#8B5CF6"); g.addColorStop(1, "#EC5C9E");
+  ctx.beginPath(); ctx.ellipse(0, 0, 11, 6, 0, 0, Math.PI * 2); ctx.strokeStyle = g; ctx.lineWidth = 2.4; ctx.stroke();
+  ctx.beginPath(); ctx.arc(0, 0, 3.4, 0, Math.PI * 2); ctx.fillStyle = "#FFF6E6"; ctx.shadowColor = "#FFD9B3"; ctx.shadowBlur = 6; ctx.fill();
+  ctx.restore();
 }
 let ctx;
 function draw() {
-  const c = $("c"), H = height();
+  const c = $("c");
+  ctx = c.getContext("2d");  // measuring needs a context before the size is known
+  const H = height();
   c.width = W * S; c.height = H * S; ctx = c.getContext("2d"); ctx.setTransform(S, 0, 0, S, 0, 0);
-  // background with the two slow drifting lights
-  ctx.fillStyle = T.bg; ctx.fillRect(0, 0, W, H);
-  for (const [x, y, r, col] of [[W * 0.15, 140, 260, "rgba(139,92,246,0.22)"], [W * 0.9, H * 0.6, 280, "rgba(34,211,238,0.14)"]]) {
+  // the game above the sheet
+  const top = ctx.createLinearGradient(0, 0, 0, SHEET + 40); top.addColorStop(0, "#3a3326"); top.addColorStop(1, "#1d1a22");
+  ctx.fillStyle = top; ctx.fillRect(0, 0, W, H);
+  // the sheet, with the two slow drifting lights
+  ctx.save();
+  ctx.beginPath(); ctx.moveTo(0, SHEET + 38); ctx.arcTo(0, SHEET, 38, SHEET, 38); ctx.lineTo(W - 38, SHEET); ctx.arcTo(W, SHEET, W, SHEET + 38, 38); ctx.lineTo(W, H); ctx.lineTo(0, H); ctx.closePath(); ctx.clip();
+  const bg = ctx.createLinearGradient(0, SHEET, 0, H); bg.addColorStop(0, "#09080F"); bg.addColorStop(0.3, "#120F22"); bg.addColorStop(1, "#0B0A16");
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+  for (const [x, y, r, col] of [[W * 0.1, SHEET + 260, 240, "rgba(139,92,246,0.16)"], [W * 0.95, H * 0.55, 260, "rgba(34,211,238,0.08)"]]) {
     const g = ctx.createRadialGradient(x, y, 0, x, y, r); g.addColorStop(0, col); g.addColorStop(1, "rgba(0,0,0,0)"); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
   }
-  // status bar area and the navigation bar
-  text("9:41", 32, 34, `600 15px ${SANS}`, T.fg);
+  // the nav bar: solid, white All off and Done, the mark and the title, the line under it
+  ctx.fillStyle = "#07070D"; ctx.fillRect(0, SHEET, W, NAV);
+  const ny = SHEET + 38 + 6;
   const any = menu.sections.some(s => s.rows.some(isOn));
-  if (any) text("All off", PAD, 84, `400 16px ${SANS}`, T.accentText);
-  text("Done", W - PAD, 84, `600 16px ${SANS}`, T.accentText, "right");
-  text(fit(menu.title || "Game", `600 17px ${SANS}`, W - 170), W / 2, 84, `600 17px ${SANS}`, T.fg, "center");
-  ctx.fillStyle = T.line; ctx.fillRect(0, 100, W, 0.5);
-  let y = 112;
+  if (any) text("All off", 32, ny, `400 17px ${SANS}`, "#FFFFFF");
+  text("Done", W - 32, ny, `400 17px ${SANS}`, "#FFFFFF", "right");
+  const title = fit(menu.title || "Game", `600 17px ${SANS}`, W - 200);
+  ctx.font = `600 17px ${SANS}`; const tw = ctx.measureText(title).width;
+  const tx0 = W / 2 - (tw + 30) / 2;
+  mark(tx0 + 11, ny - 6);
+  text(title, tx0 + 30, ny, `600 17px ${SANS}`, T.fg);
+  const line = ctx.createLinearGradient(0, 0, W, 0); line.addColorStop(0, T.accent); line.addColorStop(0.5, T.accent2); line.addColorStop(1, T.accent);
+  ctx.fillStyle = line; ctx.globalAlpha = 0.85; ctx.fillRect(0, SHEET + NAV - 1, W, 1); ctx.globalAlpha = 1;
+  let y = SHEET + NAV;
+  if (menu.cloud) {
+    text(`☁ Cloud saves · ${menu.cloud}`, W / 2, y + 31, `400 11px ${MONO}`, T.muted, "center");
+    y += 54;
+  } else y += 18;
+  if (menu.search !== false) {
+    const count = menu.sections.reduce((a, s) => a + s.rows.length, 0);
+    rrect(16, y, 343, 37, 12);
+    ctx.fillStyle = "rgba(15,14,26,0.6)"; ctx.fill();
+    const sg = ctx.createLinearGradient(16, 0, 359, 0); sg.addColorStop(0, T.accent2); sg.addColorStop(0.55, "#5B7CF0"); sg.addColorStop(1, T.accent);
+    ctx.strokeStyle = sg; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.beginPath(); ctx.arc(27, y + 17.5, 6, 0, Math.PI * 2); ctx.strokeStyle = T.muted; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(31.5, y + 22); ctx.lineTo(35.5, y + 26); ctx.stroke();
+    text(`Search ${count} switches`, 38, y + 24, `400 15px ${SANS}`, T.muted);
+    y += 57;
+  }
   for (const s of menu.sections) {
     const on = s.rows.filter(isOn).length;
-    text(label(s.name), PAD + 4, y + 18, `500 11px ${MONO}`, T.muted);
-    const right = `${s.rows.length}  ▾`;
-    ctx.font = `500 11px ${MONO}`; const rw = ctx.measureText(right).width;
-    text(right, W - PAD - 4, y + 18, `500 11px ${MONO}`, T.muted, "right");
-    if (on) text(`${on} on · `, W - PAD - 4 - rw, y + 18, `500 11px ${MONO}`, T.good, "right");
-    y += 30;
-    const hh = s.rows.reduce((a, r) => a + rowHeight(r), 0), x = PAD, w = W - 2 * PAD;
+    // label row, as on the phone: SURVIVAL ........ 20 ON · 22  ▾      OFF
+    const ly = y + 14;
+    text(label(s.name), 20, ly, LFONT, T.muted, "left", LS);
+    let rx = 355;
+    if (on) { text("OFF", rx, ly, LFONT, T.accentText, "right", LS); rx -= widthOf("OFF", LFONT, LS) + 24; }
+    ctx.beginPath(); ctx.moveTo(rx - 7, ly - 7); ctx.lineTo(rx, ly - 7); ctx.lineTo(rx - 3.5, ly - 2.5); ctx.closePath(); ctx.fillStyle = T.muted; ctx.fill();  // ▾
+    rx -= 7 + 14;
+    text(String(s.rows.length), rx, ly, LFONT, T.muted, "right", LS); rx -= widthOf(String(s.rows.length), LFONT, LS);
+    if (on) {
+      text(" · ", rx, ly, LFONT, T.muted, "right", LS); rx -= widthOf(" · ", LFONT, LS);
+      text(`${on} ON`, rx, ly, LFONT, T.good, "right", LS);
+    }
+    y += 28;
+    const hh = s.rows.reduce((a, r) => a + rowH(r), 0), x = CARD_X, w = CARD_W;
     rrect(x, y, w, hh, 12); ctx.fillStyle = "rgba(15,14,26,0.6)"; ctx.fill();
     ctx.lineWidth = 1; ctx.strokeStyle = T.line; ctx.stroke();
-    // the moving edge, caught at one moment: violet into cyan with a bright glint along the top right
-    const cg = ctx.createConicGradient ? ctx.createConicGradient(-Math.PI / 2.4, x + w / 2, y + hh / 2) : null;
-    if (cg) { cg.addColorStop(0, "rgba(38,33,69,0)"); cg.addColorStop(0.11, T.accent); cg.addColorStop(0.22, T.accent2); cg.addColorStop(0.26, "#c9f6fd"); cg.addColorStop(0.31, T.accent2); cg.addColorStop(0.44, "rgba(38,33,69,0)"); cg.addColorStop(1, "rgba(38,33,69,0)");
-      rrect(x, y, w, hh, 12); ctx.strokeStyle = cg; ctx.lineWidth = 1.2; ctx.stroke(); }
+    // the moving edge, caught at one moment (on the phone it was on the left side)
+    if (ctx.createConicGradient) {
+      const cg = ctx.createConicGradient(Math.PI * 0.55, x + w / 2, y + hh / 2);
+      cg.addColorStop(0, "rgba(38,33,69,0)"); cg.addColorStop(0.08, T.accent); cg.addColorStop(0.16, T.accent2);
+      cg.addColorStop(0.2, "#c9f6fd"); cg.addColorStop(0.24, T.accent2); cg.addColorStop(0.34, "rgba(38,33,69,0)"); cg.addColorStop(1, "rgba(38,33,69,0)");
+      rrect(x, y, w, hh, 12); ctx.strokeStyle = cg; ctx.lineWidth = 1.3; ctx.stroke();
+    }
     let ry = y;
     s.rows.forEach((r, i) => {
-      const rh = rowHeight(r);
-      if (i) { ctx.fillStyle = "rgba(236,234,255,0.07)"; ctx.fillRect(x + 16, ry, w - 16, 0.5); }
-      const tx = x + 16 + 16;  // after the dot's column
-      if (r.kind === "switch") {
-        const st = stateOf(r), on = st !== "off", bad = st === "bad", tint = bad ? T.bad : T.accent2;
-        const ty = bad ? ry + 24 : ry + rh / 2 + 4.5;
-        if (on) { ctx.beginPath(); ctx.arc(x + 16 + 4, ty - 4.5, 4, 0, Math.PI * 2); ctx.fillStyle = bad ? T.bad : T.good; ctx.fill();
-          if (bad) { ctx.beginPath(); ctx.arc(x + 16 + 4, ty - 4.5, 7, 0, Math.PI * 2); ctx.strokeStyle = "rgba(248,113,113,0.35)"; ctx.lineWidth = 1.5; ctx.stroke(); } }
-        text(fit(r.title, `400 13px ${SANS}`, w - 32 - 60), tx, ty, `400 13px ${SANS}`, T.fg);
-        if (bad) text(fit(r.why || "Not reaching the game", `400 11px ${SANS}`, w - 32 - 60), tx, ty + 17, `400 11px ${SANS}`, T.bad);
-        // the line toggle, 34 x 20: cyan when working, red when on and not reaching the game
-        const bx = x + w - 16 - 34, by = ry + rh / 2 - 10;
-        rrect(bx, by, 34, 20, 10);
+      const rh = rowH(r);
+      if (i) { ctx.fillStyle = "rgba(236,234,255,0.07)"; ctx.fillRect(x, ry, w, 0.5); }
+      const bx = x + w - 11 - 34;
+      const toggle = (on, bad, cy) => {
+        const tint = bad ? T.bad : T.accent2;
+        rrect(bx, cy - 10, 34, 20, 10);
         if (on) { ctx.fillStyle = bad ? "rgba(248,113,113,0.12)" : "rgba(34,211,238,0.12)"; ctx.fill(); ctx.strokeStyle = tint; } else ctx.strokeStyle = T.lineStrong;
         ctx.lineWidth = 1; ctx.stroke();
         ctx.save(); if (on && !bad) { ctx.shadowColor = T.accent2; ctx.shadowBlur = 6; }
-        ctx.beginPath(); ctx.arc(bx + (on ? 24 : 10), by + 10, 6, 0, Math.PI * 2); ctx.fillStyle = on ? tint : T.muted; ctx.fill(); ctx.restore();
+        ctx.beginPath(); ctx.arc(bx + (on ? 24 : 10), cy, 6, 0, Math.PI * 2); ctx.fillStyle = on ? tint : T.muted; ctx.fill(); ctx.restore();
+      };
+      if (r.kind === "switch") {
+        const st = stateOf(r), on = st !== "off", bad = st === "bad";
+        const ty = bad ? ry + 20 : ry + rh / 2 + 4.5;
+        if (on) { ctx.beginPath(); ctx.arc(DOT_X, ty - 4.5, 4, 0, Math.PI * 2); ctx.fillStyle = bad ? "#7A3B48" : T.good; ctx.fill(); }
+        text(fit(r.title, `400 13px ${SANS}`, bx - 12 - TITLE_X), TITLE_X, ty, `400 13px ${SANS}`, T.fg);
+        if (bad) wrap(r.why || "Not reaching the game", `400 11px ${SANS}`, bx - 12 - TITLE_X)
+          .forEach((l, k) => text(l, TITLE_X, ty + 15 + k * 13, `400 11px ${SANS}`, T.bad));
+        toggle(on, bad, ry + rh / 2);
       } else if (r.kind === "slider") {
         const v = Number(r.value), on = isOn(r);
         const val = Math.abs(v) >= 100 || v === Math.round(v) ? String(Math.round(v)) : v.toFixed(1);
-        // the value and the line toggle on the title line, the slider below (dimmed while off)
-        const bx = x + w - 16 - 34, by = ry + 12;
-        text(fit(r.title, `400 13px ${SANS}`, w - 32 - 110), tx, ry + 26, `400 13px ${SANS}`, on ? T.fg : T.fg);
-        text(val, bx - 10, ry + 26, `600 12.5px ${MONO}`, on ? T.accentText : T.muted, "right");
-        rrect(bx, by, 34, 20, 10); if (on) { ctx.fillStyle = "rgba(34,211,238,0.12)"; ctx.fill(); }
-        ctx.strokeStyle = on ? T.accent2 : T.lineStrong; ctx.lineWidth = 1; ctx.stroke();
-        ctx.beginPath(); ctx.arc(bx + (on ? 24 : 10), by + 10, 6, 0, Math.PI * 2); ctx.fillStyle = on ? T.accent2 : T.muted; ctx.fill();
-        const sx = tx, sw = x + w - 16 - tx, sy = ry + 50, frac = Math.max(0, Math.min(1, (v - r.min) / ((r.max - r.min) || 1)));
+        text(fit(r.title, `400 13px ${SANS}`, bx - 50 - TITLE_X), TITLE_X, ry + 20, `400 13px ${SANS}`, T.fg);
+        text(val, bx - 10, ry + 20, `600 12.5px ${MONO}`, on ? T.accentText : T.muted, "right");
+        toggle(on, false, ry + 15);
+        const sx = TITLE_X, sw = x + w - 11 - sx, sy = ry + 41, frac = Math.max(0, Math.min(1, (v - r.min) / ((r.max - r.min) || 1)));
         ctx.globalAlpha = on ? 1 : 0.45;
         rrect(sx, sy - 2, sw, 4, 2); ctx.fillStyle = T.line; ctx.fill();
         rrect(sx, sy - 2, Math.max(4, sw * frac), 4, 2); ctx.fillStyle = T.accent; ctx.fill();
-        ctx.beginPath(); ctx.arc(sx + sw * frac, sy, 11, 0, Math.PI * 2); ctx.fillStyle = "#fff"; ctx.shadowColor = "rgba(0,0,0,.35)"; ctx.shadowBlur = 4; ctx.fill(); ctx.shadowBlur = 0;
+        ctx.beginPath(); ctx.arc(sx + sw * frac, sy, 9, 0, Math.PI * 2); ctx.fillStyle = "#fff"; ctx.shadowColor = "rgba(0,0,0,.35)"; ctx.shadowBlur = 4; ctx.fill(); ctx.shadowBlur = 0;
         ctx.globalAlpha = 1;
       } else {
-        // a list row: its symbol (drawn as a small cyan ring), the title, the chevron
-        ctx.beginPath(); ctx.arc(x + 16 + 5, ry + rh / 2, 5, 0, Math.PI * 2); ctx.strokeStyle = T.accentText; ctx.lineWidth = 1.5; ctx.stroke();
-        text(fit(r.title, `400 13px ${SANS}`, w - 32 - 30), tx, ry + rh / 2 + 4.5, `400 13px ${SANS}`, T.fg);
-        text("›", x + w - 16, ry + rh / 2 + 6, `400 20px ${SANS}`, T.muted, "right");
+        ctx.beginPath(); ctx.arc(DOT_X, ry + rh / 2, 5, 0, Math.PI * 2); ctx.strokeStyle = T.accentText; ctx.lineWidth = 1.5; ctx.stroke();
+        text(fit(r.title, `400 13px ${SANS}`, bx - TITLE_X), TITLE_X, ry + rh / 2 + 4.5, `400 13px ${SANS}`, T.fg);
+        text("›", x + w - 14, ry + rh / 2 + 6, `400 20px ${SANS}`, T.muted, "right");
       }
       ry += rh;
     });
-    y += hh + 18;
+    y += hh + 22;
   }
-  text("Made by Accretion. Settings stay on this device.", PAD + 4, y + 8, `400 11px ${MONO}`, T.muted);
-  text("More at ", PAD + 4, y + 26, `400 11px ${MONO}`, T.muted);
-  ctx.font = `400 11px ${MONO}`; text("getaccretion.app", PAD + 4 + ctx.measureText("More at ").width, y + 26, `500 11px ${MONO}`, T.accentText);
+  text("Made by Accretion. Settings stay on this device.", 20, y + 6, `400 11px ${MONO}`, T.muted);
+  ctx.font = `400 11px ${MONO}`;
+  text("More at ", 20, y + 24, `400 11px ${MONO}`, T.muted);
+  text("getaccretion.app", 20 + ctx.measureText("More at ").width, y + 24, `500 11px ${MONO}`, T.accentText);
+  ctx.restore();
 }
 
 // ---------------------------------------------------------------- loading, saving, uploading
