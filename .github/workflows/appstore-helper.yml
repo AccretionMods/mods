@@ -40,7 +40,8 @@ jobs:
       - name: Vet and build for Windows
         run: |
           set -euo pipefail
-          go vet ./...
+          # vet for Windows too: without CGO, ipatool's 1Password keyring backend refuses Linux and macOS builds
+          GOOS=windows GOARCH=amd64 go vet ./...
           GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o out/appstore-helper.exe .
           cp go.sum out/go.sum
           (cd out && sha256sum appstore-helper.exe > appstore-helper.exe.sha256)
