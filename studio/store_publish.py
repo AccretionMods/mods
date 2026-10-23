@@ -160,8 +160,29 @@ def update(mod):
             run("gh", "release", "delete", old_tag, "-R", REPO, "--yes", "--cleanup-tag", check=False)
         say(f"==> done: {meta.get('name', mod)} {version} is in the tweak library")
     else:
+        before = run("gh", "run", "list", "-R", REPO, "--workflow", "build.yml", "--limit", "1", "--json", "databaseId",
+                     "-q", ".[0].databaseId", check=False)
         run("gh", "workflow", "run", "build.yml", "-R", REPO, "-f", f"mod={mod}", "-f", "publish=true")
-        say(f"==> done: the cloud build is running (Store tab, Publishing); the store lists {version} after it")
+        # wait for it: the build commits to main at its end, so the next publish (queued behind this job) must
+        # not merge into main while it runs ("Main changed before validation", 2026-10-23)
+        run_id = None
+        for _ in range(30):
+            time.sleep(5)
+            latest = run("gh", "run", "list", "-R", REPO, "--workflow", "build.yml", "--limit", "1", "--json", "databaseId",
+                         "-q", ".[0].databaseId", check=False)
+            if latest and latest != before:
+                run_id = latest
+                break
+        if not run_id:
+            say("==> done: the cloud build was started; it didn't show up to watch (Store tab, Publishing)")
+            return 0
+        say(f"    watching the cloud build (about 10 minutes): https://github.com/{REPO}/actions/runs/{run_id}")
+        subprocess.run(["gh", "run", "watch", run_id, "-R", REPO, "--interval", "30"], capture_output=True)
+        result = run("gh", "run", "view", run_id, "-R", REPO, "--json", "conclusion", "-q", ".conclusion", check=False)
+        if result != "success":
+            say(f"the cloud build ended {result or 'without a result'}: https://github.com/{REPO}/actions/runs/{run_id}")
+            return 1
+        say(f"==> done: {meta.get('name', mod)} {version} is published; the store lists it after its next build")
     return 0
 
 
