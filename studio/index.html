@@ -379,6 +379,7 @@ const App = {
             more("Watch the phone (5 min)", "reads the phone's log: each switch shows its state here", async () => { await this.job("log", ["--seconds", "300"]); setTimeout(() => this.refreshLive(), 3000); }),
             more("Private download link (6 months)", "uploads the newest build to private storage and makes a dl.getaccretion.app/s/ link; renew or revoke it with am share", () => this.job("share", ["--months", "6"])),
             more("My download links", "every share link, its expiry and downloads", () => this.job("share", ["--list"])),
+            more("Phone screenshot for the post", "takes the phone's screen now, uploads it as a 1-year link (renew it on the Store tab) and puts it in this mod's post", () => this.phoneShot()),
             more("Release post", "from your template, once every switch is marked works; written locally, never posted", () => this.job("post", [])),
             more("Draft post", "the post now, marked DRAFT with what is not validated yet", () => this.job("post", ["--draft"])),
             more("Add a plain switch / slider", "a value for hand-written code in Tweak.x", () => this.plainSwitchDialog()),
@@ -1112,7 +1113,7 @@ const App = {
   // endpoint we depend on, keys and sign-ins (secret names and ages, never values) and the publishing workflows.
   loadStore(parts) {
     this.store = this.store || {};
-    for (const p of parts || ["link", "public", "admin", "moderation", "endpoints", "keys", "runs"]) {
+    for (const p of parts || ["link", "public", "admin", "moderation", "shots", "endpoints", "keys", "runs"]) {
       this.store[p] = { loading: true, ...(this.store[p] && this.store[p].data ? { data: this.store[p].data } : {}) };
       this.api("/api/store/" + p).then(data => { this.store[p] = { data, at: Date.now() }; })
         .catch(e => { this.store[p] = { error: e.message }; })
@@ -1148,6 +1149,16 @@ const App = {
       const j = await this.api("/api/store/publish", { mod, action, confirm });
       this.showJob(j); this.poll(j.id);
       this.byId("jobsPanel").scrollIntoView({ behavior: "smooth", block: "nearest" });
+    } catch (e) { this.toast(e.message, "bad"); }
+  },
+  // the phone's screen as a link for this mod's post (studio/shots.py through Accretion Link)
+  async phoneShot() {
+    this.toast("Taking the phone's screenshot…");
+    try {
+      const r = await this.api("/api/store/shots/phone", { mod: this.mod, ttl: "1y" });
+      try { await navigator.clipboard.writeText(r.url); } catch (e) {}
+      this.toast(`Screenshot link copied; it's in this mod's post until ${new Date(r.expires_at).toLocaleDateString()}`, "ok");
+      if (this.store) this.loadStore(["shots"]);
     } catch (e) { this.toast(e.message, "bad"); }
   },
   async storeAct(body, done) {
@@ -1298,6 +1309,22 @@ const App = {
       if (Object.keys(builds).length) box.append(panel("Hosted builds", el("span", { class: "fig", text: `${Object.keys(builds).length} apps` }),
         table(["App", "Latest", "Size", "Builds kept", "Added"], Object.entries(builds).sort((a, b) => String(b[1].created_at).localeCompare(String(a[1].created_at))).slice(0, 15).map(([id, b]) => [names[id] || id, b.version, mb(b.size), n(b.builds), ago(b.created_at)]), [2, 3])));
     }
+
+    // screenshot links (phone shots for posts, ShareX on this PC): copy, renew, delete
+    const shotRows = ((S.shots || {}).data || {}).shots || [];
+    const life = el("select", {}, [["1y", "1 year"], ["6m", "6 months"], ["3m", "3 months"]].map(o => el("option", { value: o[0], text: o[1] })));
+    const left = iso => { const d = Math.round((new Date(iso) - Date.now()) / 86400000); return d < 0 ? badge(`expired ${-d} d ago`, "bad") : d < 14 ? badge(`${d} d left`, "warn") : badge(`${d} d left`); };
+    box.append(panel("Screenshot links", el("span", { class: "row" }, el("span", { class: "small muted", text: "renew for" }), life,
+        el("button", { class: "small ghost", onclick: () => this.loadStore(["shots"]) }, "Refresh")), state("shots"),
+      shotRows.length ? table(["Link", "What", "Taken", "Life", ""], shotRows.map(r => [
+        el("a", { href: r.url, target: "_blank", rel: "noopener", class: "mono small", text: r.id }),
+        el("span", { class: "small", text: `${r.label || "PC"} · ${r.content_type.split("/")[1]} · ${mb(r.size)}` }),
+        ago(r.created_at), left(r.expires_at),
+        el("span", { class: "row", style: "flex-wrap:nowrap" },
+          el("button", { class: "small", onclick: async () => { try { await navigator.clipboard.writeText(r.url); this.toast("Link copied", "ok"); } catch (e) { this.toast(r.url); } } }, "Copy"),
+          el("button", { class: "small", onclick: async () => { try { await this.api("/api/store/shots/renew", { id: r.id, ttl: life.value }); this.toast("Renewed", "ok"); this.loadStore(["shots"]); } catch (e) { this.toast(e.message, "bad"); } } }, "Renew"),
+          el("button", { class: "small ghost", onclick: async () => { if (!confirm("Delete this screenshot? Its link stops working everywhere it was pasted.")) return; try { await this.api("/api/store/shots/delete", { id: r.id }); this.toast("Deleted", "ok"); this.loadStore(["shots"]); } catch (e) { this.toast(e.message, "bad"); } } }, "Delete"))])) : (S.shots && S.shots.data ? el("p", { class: "hint", text: "No screenshot links yet. A mod's More menu has Phone screenshot for the post; ShareX on this PC uploads here too." }) : null),
+      el("p", { class: "hint", text: "Anyone with a link can open it until it expires. An expired link can be renewed for 30 days, then its file is deleted." })));
 
     // endpoints
     const ep = (S.endpoints || {}).data || {}, eps = ep.endpoints || [];

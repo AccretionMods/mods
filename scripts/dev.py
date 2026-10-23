@@ -2334,6 +2334,15 @@ def cmd_post(args):
         "credits": "\n".join(f"- {c}" for c in meta.get("post_credits", POST_CREDITS)),
     }.items():
         text = text.replace("{" + k + "}", v)
+    # the mod's screenshot links (Mod Studio: Phone screenshot), the live ones, newest first: {screenshots}, or in
+    # place of the template's "LINK ONLY" line
+    now = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime())
+    links = "\n".join(s["url"] for s in state.get("shots", []) if s.get("expires_at", "") > now)
+    if links:
+        text = text.replace("{screenshots}", links) if "{screenshots}" in text else re.sub(
+            r"(?m)^LINK ONLY\s*$", lambda _m: links, text)
+    else:
+        text = text.replace("{screenshots}", "LINK ONLY")
     head = []
     if args.draft and left:
         head.append(f"DRAFT, not validated yet: {', '.join(t['key'] for t in left)}")

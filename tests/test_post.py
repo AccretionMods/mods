@@ -86,6 +86,19 @@ class Post(unittest.TestCase):
         self.assertIn("- Gamma (NEW)", update)
         self.assertIn("- Alpha\n", update)
 
+    def test_screenshot_links_fill_the_link_only_line(self):
+        (self.am / "templates" / "release_post.md").write_text(TEMPLATE + "Screenshots\nLINK ONLY\n", encoding="utf-8")
+        state = {"shots": [{"id": "a", "url": "https://shots/new", "expires_at": "2099-01-01T00:00:00"},
+                           {"id": "b", "url": "https://shots/old", "expires_at": "2000-01-01T00:00:00"}]}
+        dev.save_state("game-plus", state)
+        code, text = self.post("--draft")
+        self.assertEqual(code, 0)
+        self.assertIn("Screenshots\nhttps://shots/new\n", text)
+        self.assertNotIn("https://shots/old", text, "an expired link stays out")
+        dev.save_state("game-plus", {})
+        code, text = self.post("--draft")
+        self.assertIn("Screenshots\nLINK ONLY\n", text, "no links: the template's line stays")
+
     def test_a_switch_validated_on_an_older_game_version_does_not_count(self):
         self.write([tweak("a", "Alpha", version="0.9")])
         code, text = self.post()

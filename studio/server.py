@@ -56,6 +56,7 @@ import gen_tweaks
 import ipa_fetch
 import jobs_state
 import scan_view
+import shots
 import store_view
 import workspace
 
@@ -998,6 +999,11 @@ def store_get(rest):
         return store_view.keys(root, ROOT, sign, lambda: fetch_client().account())
     if rest == ["runs"]:
         return store_view.runs()
+    if rest == ["shots"]:
+        try:
+            return {"shots": shots.listing(ROOT)}
+        except shots.ShotsError as e:
+            raise dev.DevError(str(e)) from e
     if rest == ["moderation"]:
         try:
             return store_view.moderation(root)
@@ -1382,6 +1388,23 @@ class Handler(BaseHTTPRequestHandler):
             self.local_only()
             return self.send_json(start_store_publish(str(body.get("mod", "")), str(body.get("action", "")),
                                                       str(body.get("confirm", ""))).view())
+        if len(parts) == 4 and parts[:3] == ["api", "store", "shots"] and parts[3] in ("phone", "renew", "delete"):
+            self.local_only()
+            try:
+                if parts[3] == "phone":
+                    return self.send_json(shots.phone_shot_for(ROOT, self.mod_name(str(body.get("mod", ""))),
+                                                               str(body.get("ttl", "1y")), dev.load_state, dev.save_state))
+                if parts[3] == "renew":
+                    return self.send_json(shots.renew(ROOT, str(body.get("id", "")), str(body.get("ttl", "1y"))))
+                result = shots.delete(ROOT, str(body.get("id", "")))
+                for meta in (ROOT / "mods").glob("*/mod.json"):  # out of any mod's post links too
+                    state = dev.load_state(meta.parent.name)
+                    if any(s.get("id") == body.get("id") for s in state.get("shots", [])):
+                        state["shots"] = [s for s in state["shots"] if s.get("id") != body.get("id")]
+                        dev.save_state(meta.parent.name, state)
+                return self.send_json(result)
+            except shots.ShotsError as e:
+                raise dev.DevError(str(e)) from e
         if parts == ["api", "store", "act"]:
             self.local_only()
             try:
