@@ -10,6 +10,20 @@ static NSString *AMKey(NSString *key) {
     return [@"AM_" stringByAppendingString:key];
 }
 
+NSNotificationName const AMMenuDidChangeNotification = @"AMMenuDidChange";
+
+// After a switch or slider changes: one notification 0.1 s later, however many changes came in between (a slider
+// drag, All off), so the mod's tickers apply the new values now instead of on their next tick.
+static void AMMenuChanged(void) {
+    static bool pending;
+    if (pending) return;
+    pending = true;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC / 10), dispatch_get_main_queue(), ^{
+        pending = false;
+        [NSNotificationCenter.defaultCenter postNotificationName:AMMenuDidChangeNotification object:nil];
+    });
+}
+
 #pragma mark - Accretion tokens
 
 // From design/tokens.json in the store repo (dark, light). Dark first: the menu follows the phone's setting.
@@ -338,6 +352,7 @@ static void AMSliderSet(AMItem *item, float value) {
     if (value != item.defaultValue) [d setFloat:value forKey:AMLastKey(item)];
     [d setFloat:value forKey:AMKey(item.key)];
     if (item.onSlider) item.onSlider(value);
+    AMMenuChanged();
 }
 
 // what the slider shows: its value while on, the kept value (or the default) while off
@@ -2185,6 +2200,7 @@ static NSString *AMGameName(NSString *fallback) {
         } else {
             [d setBool:NO forKey:AMKey(item.key)];
             if (item.onSwitch) item.onSwitch(NO);
+            AMMenuChanged();
             os_log(OS_LOG_DEFAULT, "[AccretionMods] status %{public}@ off", item.key);
         }
     }
@@ -2418,6 +2434,7 @@ static NSString *AMGameName(NSString *fallback) {
     BOOL on = ![NSUserDefaults.standardUserDefaults boolForKey:AMKey(item.key)];
     [NSUserDefaults.standardUserDefaults setBool:on forKey:AMKey(item.key)];
     if (item.onSwitch) item.onSwitch(on);
+    AMMenuChanged();
     if (!on) os_log(OS_LOG_DEFAULT, "[AccretionMods] status %{public}@ off", item.key);
     NSIndexPath *path = [self pathOfFlat:flat];
     AMSwitchCell *row = path ? (AMSwitchCell *)[self.tableView cellForRowAtIndexPath:path] : nil;
@@ -2455,6 +2472,7 @@ static NSString *AMGameName(NSString *fallback) {
     [d setFloat:v forKey:AMKey(item.key)];
     if (!snap) [d setFloat:v forKey:AMLastKey(item)];  // a snap keeps the value it was dragged from
     if (item.onSlider) item.onSlider(v);
+    AMMenuChanged();
     NSIndexPath *path = [self pathOfFlat:s.tag];
     AMSliderCell *row = path ? (AMSliderCell *)[self.tableView cellForRowAtIndexPath:path] : nil;
     if ([row isKindOfClass:AMSliderCell.class]) [self showValueOf:item inRow:row];
@@ -2963,6 +2981,7 @@ static NSString *const AMButtonSpot = @"AM__buttonSpot";  // where the button wa
     if (!item || item.isSlider || item.isList) return NO;
     [NSUserDefaults.standardUserDefaults setBool:on forKey:AMKey(key)];
     if (item.onSwitch) item.onSwitch(on);
+    AMMenuChanged();
     os_log(OS_LOG_DEFAULT, "[AccretionMods] set %{public}@ %{public}s", key, on ? "on" : "off");
     if (!on) os_log(OS_LOG_DEFAULT, "[AccretionMods] status %{public}@ off", key);
     return YES;
