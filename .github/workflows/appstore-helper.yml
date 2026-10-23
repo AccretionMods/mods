@@ -1,0 +1,59 @@
+name: "Mods: App Store helper"
+
+# Builds tools/appstore-helper (Mod Studio's App Store sign-in and download address, through ipatool's
+# library) for Windows on every change to it. The .exe is kept as a run artifact: Studio's setup takes it
+# from the newest successful run of this workflow (scripts/appstore.py, helper_path). No Apple ID, token or
+# app is in it.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["tools/appstore-helper/**", ".github/workflows/appstore-helper.yml"]
+  pull_request:
+    paths: ["tools/appstore-helper/**", ".github/workflows/appstore-helper.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  helper:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: tools/appstore-helper
+    env:
+      GOTOOLCHAIN: auto
+      CGO_ENABLED: "0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Resolve modules
+        run: |
+          set -euo pipefail
+          go version
+          # go.sum comes from the module proxy, checked against sum.golang.org; kept with the build
+          go mod tidy
+          go mod verify
+
+      - name: Vet and build for Windows
+        run: |
+          set -euo pipefail
+          go vet ./...
+          GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o out/appstore-helper.exe .
+          cp go.sum out/go.sum
+          (cd out && sha256sum appstore-helper.exe > appstore-helper.exe.sha256)
+          ls -l out
+          {
+            echo "### App Store helper built"
+            echo "ipatool $(go list -m -f '{{.Version}}' github.com/majd/ipatool/v2), $(stat -c %s out/appstore-helper.exe) bytes"
+            echo "sha256 $(cut -d' ' -f1 out/appstore-helper.exe.sha256)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the .exe
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: appstore-helper-windows-amd64
+          path: tools/appstore-helper/out/
+          retention-days: 90
