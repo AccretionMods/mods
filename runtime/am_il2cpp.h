@@ -16,6 +16,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include "am_hide.h"
 
 // One hooks.json entry, written into am_hooks_data.c by scripts/embed_hooks.py.
 typedef struct {
