@@ -5,7 +5,7 @@
 # Needs gh, logged in with write access to AccretionMods/mods.
 #
 #   scripts/stage.sh <mod> <path/to.ipa> [min-ios]
-#   scripts/stage.sh swiftradio-plus out/swiftradio-plus_4.0.0-mod1.0.0_accretion.ipa
+#   scripts/stage.sh thewanderer-plus out/thewanderer-plus_10.1-mod1.0.9_accretion.ipa
 # The published version is the .ipa's own (scripts/local_ipa.sh sets it, like 4.0.0-mod1.0.0).
 set -euo pipefail
 REPO=AccretionMods/mods
