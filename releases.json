@@ -1,6 +1,15 @@
 {
   "thewanderer-plus": [
     {
+      "version": "10.1-mod1.0.9",
+      "appVersion": "10.1",
+      "modVersion": "1.0.9",
+      "date": "2026-10-23T00:17:43Z",
+      "size": 81676342,
+      "downloadURL": "https://bbcjpinhvlxocjxlyplt.supabase.co/functions/v1/download?app=io.github.accretionmods.thewandererplus&version=10.1-mod1.0.9",
+      "minOSVersion": "15.0"
+    },
+    {
       "version": "10.1-mod1.0.8",
       "appVersion": "10.1",
       "modVersion": "1.0.8",

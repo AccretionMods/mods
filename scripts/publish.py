@@ -9,7 +9,7 @@ to "<app version>-mod<mod version>" (like 4.0.0-mod1.1.0), so installed copies m
 Needs the upload key: the git-ignored file .upload-key in this repo, or ACCRETION_UPLOAD_KEY.
 
 Usage:
-  python3 scripts/publish.py --mod swiftradio-plus --ipa out/swiftradio-plus_4.0.0-mod1.0.0_accretion.ipa \
+  python3 scripts/publish.py --mod thewanderer-plus --ipa out/thewanderer-plus_10.1-mod1.0.9_accretion.ipa \
       [--min-os 17.0] [--allow-personal]
 
 Mods marked "personal": true are refused unless --allow-personal is given (a manual upload the owner chose);
@@ -103,7 +103,7 @@ def main():
         "version": version,
         "size": os.path.getsize(a.ipa),
         "sha256": digest.hexdigest(),
-        # the What's new post: "Swift Radio+ 4.0.0-mod1.1.0" with what the mod does
+        # the What's new post: "The Wanderer+ 10.1-mod1.0.9" with what the mod does
         "name": meta.get("display_name") or meta["name"],
         "notes": f"Mod {meta['version']} for {meta['name']} {app_version_of(version)}.\n\n"
         f"{meta.get('description', '')}"[:4000],
