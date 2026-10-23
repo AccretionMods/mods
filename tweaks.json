@@ -22,9 +22,9 @@
       "targets": [
         "com.bethsoft.falloutshelter"
       ],
-      "version": "2.1.6",
+      "version": "2.1.8",
       "date": "2026-10-23",
-      "debURL": "https://github.com/AccretionMods/mods/releases/download/falloutshelter-plus-v2.1.6/FalloutShelterPlus-2.1.6.dylib",
+      "debURL": "https://github.com/AccretionMods/mods/releases/download/falloutshelter-plus-v2.1.8/FalloutShelterPlus-2.1.8.dylib",
       "requires": [],
       "license": "MIT",
       "projectURL": "https://github.com/AccretionMods/mods/tree/main/mods/falloutshelter-plus",
