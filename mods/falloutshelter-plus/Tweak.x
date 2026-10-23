@@ -552,6 +552,14 @@ static void hook_MainMenuAwake(void *self, const void *mi) {
         });
         dispatch_resume(timer);
         sRepairTimer = timer;
+        // a switch or slider just changed in the menu: apply it now instead of up to a second later
+        [NSNotificationCenter.defaultCenter addObserverForName:AMMenuDidChangeNotification object:nil
+                                                         queue:NSOperationQueue.mainQueue
+                                                    usingBlock:^(NSNotification *note) {
+            applyNoJitSwitches();
+            applyExtras();
+            reportStatus();
+        }];
     }
 }
 

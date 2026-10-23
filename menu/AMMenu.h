@@ -91,4 +91,8 @@ extern "C"
 #endif
 void AMMenuPickResult(bool ok, const char *_Nullable text);
 
+// Posted on the main queue 0.1 s after a switch or slider changes (several changes close together post once).
+// AMIl2cppEvery tickers run on it, so a switch reaches the game right away; a mod's own timer can listen too.
+extern NSNotificationName const AMMenuDidChangeNotification;
+
 NS_ASSUME_NONNULL_END
