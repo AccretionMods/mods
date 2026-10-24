@@ -76,12 +76,17 @@ header .sel b { color: var(--fg); font-family: var(--display); font-weight: 600;
   header .sel { order: 3; flex-basis: 100%; }
   header button { min-height: 32px; padding: 4px 10px; font-size: 13px; }
 }
-.card { background: color-mix(in srgb, var(--surface) 94%, transparent); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; min-width: 0; }
+.card { background: color-mix(in srgb, var(--surface) 60%, transparent); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; min-width: 0; }
 main.card { position: relative; }
-/* corner brackets, as on the store's live index */
-main.card::before, main.card::after { content: ""; position: absolute; width: 12px; height: 12px; pointer-events: none; }
-main.card::before { left: -6px; top: -6px; border-left: 1.5px solid var(--accent); border-top: 1.5px solid var(--accent); }
-main.card::after { right: -6px; bottom: -6px; border-right: 1.5px solid var(--accent-2); border-bottom: 1.5px solid var(--accent-2); }
+/* the mod menu template's card edge (no corner brackets any more): the outline in `line` with a violet-into-cyan
+   light and a bright glint running round it every 6 s; boxes 60% see-through so the drifting lights show */
+@property --edge { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+main.card::after { content: ""; position: absolute; inset: -1px; border-radius: inherit; padding: 1px; pointer-events: none;
+  background: conic-gradient(from var(--edge), var(--line) 0deg, var(--accent) 40deg, var(--accent-2) 80deg,
+    color-mix(in srgb, var(--accent-2) 30%, #fff) 95deg, var(--accent-2) 110deg, var(--line) 160deg, var(--line) 360deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; }
+@media (prefers-reduced-motion: no-preference) { main.card::after { animation: card-edge 6s linear infinite; } }
+@keyframes card-edge { to { --edge: 360deg; } }
 .mods { display: flex; flex-direction: column; gap: 8px; }
 .mod { padding: 11px 13px; border: 1px solid var(--line); border-radius: 12px; cursor: pointer; background: var(--surface); transition: border-color .15s, transform .15s; }
 .mod:hover { border-color: color-mix(in srgb, var(--line) 40%, var(--accent)); transform: translateY(-1px); }
@@ -103,11 +108,16 @@ main.card::after { right: -6px; bottom: -6px; border-right: 1.5px solid var(--ac
 .row > * { min-width: 0; }
 .grow { flex: 1; }
 /* a panel: bordered, its label inside at the top, a figure at the right (the dashboard's panels) */
-.panel { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); margin-bottom: 14px; }
+.panel { position: relative; border: 1px solid var(--line); border-radius: 12px; background: color-mix(in srgb, var(--surface) 60%, transparent); margin-bottom: 14px; }
 .panel-h { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 12px 14px 10px; }
 .panel-h .fig { font-family: var(--mono); letter-spacing: 0; text-transform: none; font-size: 12px; color: var(--fg); }
 .panel-h .fig.good { color: var(--good); }
 .panel-b { padding: 0 14px 14px; }
+.feature .panel-b { padding-bottom: 10px; }
+.feature-meta { font-size: 12px; color: var(--fg); opacity: .85; }
+.feature .hint { margin: 4px 0 6px; }
+.feature-more > summary { font-size: 12px; color: var(--muted); cursor: pointer; }
+.feature-more[open] > summary { margin-bottom: 4px; }
 .item { padding: 12px 14px; border-top: 1px solid var(--line); }
 .panel > .item:first-of-type { border-top: 1px solid var(--line); }
 .item .head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
@@ -147,6 +157,33 @@ dialog h3 { margin: 0 0 6px; font-family: var(--display); font-weight: 600; }
 @keyframes rise { from { opacity: 0; transform: translate(-50%, 8px); } }
 .toast.ok { border-color: var(--good); }
 .toast.bad { border-color: var(--bad); }
+/* auto-build progress */
+.jobprog { margin: 8px 0; }
+.jobprog-t { font: 12px var(--mono); color: var(--muted); margin-bottom: 5px; }
+.jobprog-bar { height: 5px; border-radius: 3px; background: color-mix(in srgb, var(--muted) 18%, transparent); overflow: hidden; }
+.jobprog-bar i { display: block; height: 100%; width: 0; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .6s ease; }
+.jobprog.going .jobprog-bar i { background-image: linear-gradient(90deg, var(--accent), var(--accent-2), var(--accent)); background-size: 200% 100%; animation: flow 2.4s linear infinite; }
+.jobprog.bad .jobprog-bar i { background: var(--bad); }
+/* Store tab */
+.mod-item { border-top: 1px solid var(--line); padding: 10px 0; }
+.mod-item:first-child { border-top: 0; padding-top: 0; }
+.mod-reason { margin: 6px 0; font-size: 13.5px; }
+.mod-post { margin: 0 0 8px; padding: 8px 12px; border-left: 2px solid var(--accent-2); background: color-mix(in srgb, var(--surface) 70%, transparent); border-radius: 6px; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.store-t td .mod-body { white-space: normal; overflow-wrap: anywhere; display: block; min-width: 220px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+.tile { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; min-width: 0; }
+.tile .l { font: 500 10.5px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.tile .nn { font: 600 20px var(--mono); margin-top: 2px; }
+.tile .d { font: 11px var(--mono); color: var(--muted); }
+.tile .d.good { color: var(--good); } .tile .d.warn { color: var(--warn); }
+.spark { height: 38px; display: flex; align-items: flex-end; gap: 3px; margin-top: 12px; }
+.spark i { flex: 1; background: linear-gradient(var(--accent-2), var(--accent)); border-radius: 2px; opacity: .85; }
+.store-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 0 14px; }
+.store-scroll { overflow-x: auto; }
+.store-t td:last-child { width: auto; }
+.store-t td, .store-t th { white-space: nowrap; }
+.store-t td:first-child { white-space: normal; min-width: 140px; }
+.store-t th.n, .store-t td.n { text-align: right; font-family: var(--mono); }
 .hint { font-size: 13px; color: var(--muted); margin: 6px 0 10px; }
 .sec { margin-bottom: 18px; }
 .sec h3 { margin: 0 0 10px; font-family: var(--mono); font-size: 11px; font-weight: 500; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
@@ -205,6 +242,7 @@ h2, h3 { font-family: var(--display); }
       <button data-tab="phone">Build &amp; Phone</button>
       <button data-tab="files">Files</button>
       <button data-tab="games">Games</button>
+      <button data-tab="store">Store</button>
       <button data-tab="console">Console</button>
     </div>
     <section id="tab-switches"></section>
@@ -214,6 +252,7 @@ h2, h3 { font-family: var(--display); }
     <section id="tab-phone" class="hidden"></section>
     <section id="tab-files" class="hidden"></section>
     <section id="tab-games" class="hidden"></section>
+    <section id="tab-store" class="hidden"></section>
     <section id="tab-console" class="hidden"></section>
     <section class="sec" id="jobsPanel" style="margin-top:18px;border-top:1px solid var(--line);padding-top:12px">
       <div class="row"><span class="label grow">Jobs</span><button class="small ghost" id="clearJobs">Clear</button></div>
@@ -256,9 +295,13 @@ const App = {
 
   async loadMods() {
     const data = await this.api("/api/mods");
-    this.mods = data.mods;
+    // latest build first (the date under each), then the ones never built, by name
+    this.mods = data.mods.slice().sort((a, b) => (b.built || 0) - (a.built || 0) || a.title.localeCompare(b.title));
     this.byId("amRoot").textContent = "Workspace: " + data.am_root;
     const box = this.byId("mods"); box.replaceChildren();
+    const when = t => { const d = new Date(t * 1000), today = new Date().toDateString() === d.toDateString();
+      return "built " + (today ? "today " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                               : d.toLocaleDateString([], { month: "short", day: "numeric", year: d.getFullYear() === new Date().getFullYear() ? undefined : "numeric" })); };
     for (const m of this.mods) {
       const badges = [
         m.personal ? this.el("span", { class: "badge", text: "personal" }) : null,
@@ -269,6 +312,7 @@ const App = {
       box.append(this.el("div", { class: "mod" + (m.name === this.mod ? " active" : ""), onclick: () => this.select(m.name) },
         this.el("div", { class: "t", text: `${m.title} ${m.version}` }),
         this.el("div", { class: "s", text: `${m.target} ${m.app_version}` }),
+        this.el("div", { class: "s", text: m.built ? when(m.built) : "never built" }),
         this.el("div", { class: "badges" }, badges)));
     }
     if (!this.mod && this.mods.length) this.select(localStorage.getItem("studio.mod") || this.mods[0].name);
@@ -289,12 +333,13 @@ const App = {
   setTab(tab) {
     this.tab = tab;
     document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
-    for (const s of ["switches", "find", "suggest", "scan", "phone", "files", "games", "console"]) this.byId("tab-" + s).classList.toggle("hidden", s !== tab);
+    for (const s of ["switches", "find", "suggest", "scan", "phone", "files", "games", "store", "console"]) this.byId("tab-" + s).classList.toggle("hidden", s !== tab);
     this.render();
   },
   render() {
+    if (this.tab === "store") return this.renderStore();  // needs no mod
     if (!this.detail) return;
-    ({ switches: this.renderSwitches, find: this.renderFind, suggest: this.renderSuggest, scan: this.renderScan, phone: this.renderPhone, files: this.renderFiles, games: this.renderGames, console: this.renderConsole })[this.tab].call(this);
+    ({ switches: this.renderSwitches, find: this.renderFind, suggest: this.renderSuggest, scan: this.renderScan, phone: this.renderPhone, files: this.renderFiles, games: this.renderGames, store: this.renderStore, console: this.renderConsole })[this.tab].call(this);
   },
 
   // ---------------------------------------------------------------- switches
@@ -302,6 +347,17 @@ const App = {
   renderSwitches() {
     const d = this.detail, box = this.byId("tab-switches"); box.replaceChildren();
     const tj = d.tweaks_json;
+    for (const f of d.features || []) {
+      const v = f.verified || {}, state = f.verification_state;
+      const evidence = this.el("details", { class: "feature-more" }, this.el("summary", { text: "Test evidence and reuse criteria" }));
+      for (const text of [...(f.evidence || []), ...(f.criteria || [])]) evidence.append(this.el("p", { class: "hint", text }));
+      box.append(this.el("div", { class: "panel feature" },
+        this.el("div", { class: "panel-h" }, this.el("span", { text: f.title }),
+          this.el("span", { class: "badge " + (state === "works" ? "good" : "warn"), text: state === "works" ? "Verified on this build" : state === "stale" ? "Needs retest" : state })),
+        this.el("div", { class: "panel-b" },
+          this.el("div", { class: "feature-meta mono", text: `${f.mode || "Custom feature"} · ${f.nojit ? "No JIT" : "Runtime dependent"} · game ${v.app_version || "?"} · mod ${v.mod_version || "?"} · ${v.date || ""}` }),
+          f.summary ? this.el("p", { class: "hint", text: f.summary }) : null, evidence)));
+    }
     if (!tj) {
       box.append(this.el("p", { class: "hint", text: "This mod has a hand-written Tweak.x and no tweaks.json. Adding a switch here creates one; the Makefile must then list AMTweaks.gen.m and Tweak.x must call AMTweaksRegister() (see README \"Dev loop\")." }));
     }
@@ -323,6 +379,8 @@ const App = {
             more("Watch the phone (5 min)", "reads the phone's log: each switch shows its state here", async () => { await this.job("log", ["--seconds", "300"]); setTimeout(() => this.refreshLive(), 3000); }),
             more("Private download link (6 months)", "uploads the newest build to private storage and makes a dl.getaccretion.app/s/ link; renew or revoke it with am share", () => this.job("share", ["--months", "6"])),
             more("My download links", "every share link, its expiry and downloads", () => this.job("share", ["--list"])),
+            more("Menu image for the post", "our menu drawn with this mod's switches: fill it in, then save a PNG or upload it as the post's link", () => window.open(`/menu-image?mod=${this.mod}`, "_blank")),
+            more("Phone screenshot for the post", "takes the phone's screen now, uploads it as a 1-year link (renew it on the Store tab) and puts it in this mod's post", () => this.phoneShot()),
             more("Release post", "from your template, once every switch is marked works; written locally, never posted", () => this.job("post", [])),
             more("Draft post", "the post now, marked DRAFT with what is not validated yet", () => this.job("post", ["--draft"])),
             more("Add a plain switch / slider", "a value for hand-written code in Tweak.x", () => this.plainSwitchDialog()),
@@ -671,19 +729,78 @@ const App = {
     const st = this.byId("jobst-" + j.id); st.textContent = j.status; st.className = "badge " + (j.status === "done" ? "good" : ["queued", "running"].includes(j.status) ? "accent" : "bad");
     const out = this.byId("jobout-" + j.id);
     if (j.lines && j.lines.length) { out.textContent += (out.textContent ? "\n" : "") + j.lines.join("\n"); out.scrollTop = out.scrollHeight; }
-    if (j.command === "claude" && j.status !== "running" && !this.byId("jobcmds-" + j.id)) {
+    if (j.command === "autobuild") this.autobuildProgress(j, det, out.textContent);
+    if (j.command === "store") this.stepProgress(j, det, out.textContent);
+    if (["claude", "aider", "codex", "gemini"].includes(j.command) && j.status !== "running" && !this.byId("jobcmds-" + j.id)) {
       const text = (this.byId("jobout-" + j.id) || {}).textContent || "";
-      const cmds = [...new Set(text.split("\n").map(l => l.trim().replace(/^[`$>\s]+|`+$/g, "")).filter(l => /^am (pin|call|add|tweak) \S+ /.test(l)))];
+      const cmds = [...new Set(text.split("\n").map(l => l.trim().replace(/^[`$>\s]+|`+$/g, "")).filter(l => /^am (pin|call|add|tweak|remove|gen|mark|build|update|new|dump|check|scan|find|fields) \S+/.test(l)))];
       if (cmds.length) {
-        const list = this.el("div", { id: "jobcmds-" + j.id, class: "sec", style: "margin-top:8px" }, this.el("h3", { text: `${cmds.length} commands from Claude` }));
+        const list = this.el("div", { id: "jobcmds-" + j.id, class: "sec", style: "margin-top:8px" }, this.el("h3", { text: `${cmds.length} commands from ${this.engineShort(j.command)}` }));
         for (const c of cmds) {
-          const btn = this.el("button", { class: "small primary" }, "Add");
-          btn.onclick = async () => { btn.disabled = true; try { const r = await this.api("/api/console", { line: c }); this.showJob(r); this.poll(r.id); btn.textContent = "Added"; } catch (e) { btn.disabled = false; this.toast(e.message, "bad"); } };
+          const btn = this.el("button", { class: "small primary" }, /^am (pin|call|add|tweak) /.test(c) ? "Add" : "Run");
+          btn.onclick = async () => { btn.disabled = true; try { const r = await this.api("/api/console", { line: c }); this.showJob(r); this.poll(r.id); btn.textContent = "Started"; } catch (e) { btn.disabled = false; this.toast(e.message, "bad"); } };
           list.append(this.el("div", { class: "row", style: "margin-bottom:6px" }, this.el("span", { class: "mono small grow", text: c }), btn));
+        }
+        if ((j.command === "aider" || j.command === "gemini") && cmds.some(c => /^am (find|fields) /.test(c))) {
+          const who = this.engineShort(j.command);
+          const again = this.el("button", { class: "small primary", title: `Studio runs ${who}'s am find / am fields searches on the dump and gives ${who} the results with its prompt` }, `Run the searches and ask ${who} again`);
+          again.onclick = async () => { again.disabled = true; try { const r = await this.api(`/api/jobs/${j.id}/followup`, { mod: this.mod || "" }); this.showJob(r); this.poll(r.id); again.textContent = "Asked again"; } catch (e) { again.disabled = false; this.toast(e.message, "bad"); } };
+          list.append(this.el("div", { class: "row", style: "margin-top:4px" }, again));
         }
         this.byId("job-" + j.id).append(list);
       }
     }
+  },
+  // a job's step from its "==> n/N what" lines (publishing from the Store tab)
+  stepProgress(j, det, text) {
+    let label = "Starting", pct = 0;
+    for (const line of text.split("\n")) {
+      const m = line.match(/^==> (\d+)\/(\d+) (.*)/);
+      if (m) { pct = 100 * (m[1] - 1) / m[2]; label = `Step ${m[1]} of ${m[2]} · ${m[3]}`; }
+      else if (/^==> done/.test(line)) { pct = 100; label = line.slice(4); }
+    }
+    const running = ["queued", "running", "stopping"].includes(j.status);
+    if (j.status === "done") pct = 100;
+    let box = this.byId("jobprog-" + j.id);
+    if (!box) {
+      box = this.el("div", { class: "jobprog", id: "jobprog-" + j.id }, this.el("div", { class: "jobprog-t" }), this.el("div", { class: "jobprog-bar" }, this.el("i")));
+      det.querySelector("summary").after(box);
+    }
+    box.firstChild.textContent = running ? `${label} · ${Math.round(pct)}%` : j.status === "done" ? label : `Stopped (${j.status}) · ${label}`;
+    box.lastChild.firstChild.style.width = Math.round(pct) + "%";
+    box.classList.toggle("bad", !running && j.status !== "done");
+    box.classList.toggle("going", running);
+  },
+  // the auto-build's step from its own output lines: "==> n/5", "--- batch k/N", "--- switch i/N", "$ am <step>"
+  autobuildProgress(j, det, text) {
+    const steps = ["Scanning the dump", "The model reads the candidates", "Adding the switches", "Generating and building", "Installing and watching the log"];
+    let step = 0, pct = 0, detail = "";
+    for (const line of text.split("\n")) {
+      let m;
+      if ((m = line.match(/^==> (\d)\/5/))) { step = +m[1]; pct = [0, 2, 5, 60, 75, 90][step]; detail = ""; }
+      else if ((m = line.match(/^--- batch (\d+)\/(\d+) done/))) { pct = 5 + 55 * m[1] / m[2]; detail = `${m[1]} of ${m[2]} batches answered`; }
+      else if ((m = line.match(/^--- batch (\d+)\/(\d+)/))) { pct = 5 + 55 * (m[1] - 1) / m[2]; detail = `batch ${m[1]} of ${m[2]}`; }
+      else if ((m = line.match(/^--- switch (\d+)\/(\d+)/))) { pct = 60 + 15 * (m[1] - 1) / m[2]; detail = `switch ${m[1]} of ${m[2]}`; }
+      else if (/^\$ am gen /.test(line)) { pct = 76; detail = "generating the menu"; }
+      else if (/^\$ am build /.test(line)) { pct = 78; detail = "building the .ipa"; }
+      else if (/^\$ am sign /.test(line)) { pct = 91; detail = "signing and installing"; }
+      else if (/^\$ am log /.test(line)) { pct = 94; detail = "game opened, reading the log (45 s)"; }
+      else if (/^==> (done|built but)/.test(line)) { pct = 100; detail = ""; }
+    }
+    const running = ["queued", "running", "stopping"].includes(j.status);
+    if (j.status === "done") pct = 100;
+    let box = this.byId("jobprog-" + j.id);
+    if (!box) {
+      box = this.el("div", { class: "jobprog", id: "jobprog-" + j.id }, this.el("div", { class: "jobprog-t" }), this.el("div", { class: "jobprog-bar" }, this.el("i")));
+      det.querySelector("summary").after(box);
+    }
+    const label = !running ? (j.status === "done" ? "Finished" : `Stopped at step ${step || 1} of 5 (${j.status})`)
+      : step ? `Step ${step} of 5 · ${steps[step - 1]}${detail ? " · " + detail : ""}` : "Starting";
+    const secs = Math.max(0, Math.round((j.ended || j.finished || Date.now() / 1000) - j.started));
+    box.firstChild.textContent = `${label} · ${Math.round(pct)}% · ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
+    box.lastChild.firstChild.style.width = Math.round(pct) + "%";
+    box.classList.toggle("bad", !running && j.status !== "done");
+    box.classList.toggle("going", running);
   },
   poll(id, since) {
     since = since || 0;
@@ -812,11 +929,19 @@ const App = {
           `Candidates (scored by names and types only; not yet in the mod):\n${t.text}\n\n` +
           `For the 10 to 15 most valuable: what it likely does in play (check the class in the dump with am find / am fields if unsure), a menu title, a section (Survival, Combat, Pet & companion, Items & crafting, Progress, Exploration, In-app purchases, Other), confidence (high/medium/low), and the approach (pin, hook, call or inspect). For valid pin candidates only, give the value and exact command on its own line starting with "am pin ${this.mod} ..." (with --object, --value, --when lower when it has a getter, --as <key>, --title "..."). Do not invent pin values for inventory methods or types. Explain technical requirements and side effects; skip a candidate only for a concrete technical reason, not its topic.\n` +
           `Read only: change no files. Include purchases/IAP, full-game unlocks, ads, accounts and online play when relevant; topic labels are informational.`;
-        const j = await this.api("/api/claude", { prompt, read_only: true });
+        const j = await this.api("/api/claude", { prompt, read_only: true, engine: this.engine(), effort: this.effort() });
         this.showJob(j); this.poll(j.id); this.byId("jobsPanel").scrollIntoView({ behavior: "smooth", block: "nearest" });
-        this.toast("Claude is ranking the candidates: its answer streams into Jobs, with an Add button on each command", "ok");
+        this.toast(`${this.engineName()} is ranking the candidates: its answer streams into Jobs, with an Add button on each command`, "ok");
       } catch (e) { this.toast(e.message, "bad"); }
     };
+    const rank = this.el("button", { class: "small primary", onclick: explain }, `Explain and rank with ${this.engineShort()}`);
+    // Auto-build: the picked model chooses switches from this scan, Studio adds them, runs gen and builds the .ipa
+    const auto = this.el("button", { class: "small", title: "The selected model goes through every scan candidate and makes a switch of each useful one; Studio adds them, runs gen, builds the .ipa and, when all went well, installs it on the phone", onclick: async () => {
+      const who = this.engineName();
+      if (!confirm(`Auto-build ${this.detail ? this.detail.title : this.mod}: ${who} goes through every candidate in this scan and makes a switch of each useful one, no top 10 (nothing about purchases, store currency, ads, accounts or online play), Studio adds them with am pin, runs gen and builds the .ipa, and if all of that went well signs and installs it on the phone (USB, unlocked) and shows the new switches' status from the log. The mod's files are snapshotted first (Files tab restores). Start?`)) return;
+      try { const j = await this.api(`/api/mods/${this.mod}/autobuild`, { engine: this.engine(), effort: this.effort(), limit: 0 }); this.showJob(j); this.poll(j.id); this.byId("jobsPanel").scrollIntoView({ behavior: "smooth", block: "nearest" }); this.toast(`${who} is picking switches; Studio adds and builds them: follow it in Jobs`, "ok"); }
+      catch (e) { this.toast(e.message, "bad"); }
+    } }, "Auto-build menu");
     [area, mode, verified, flagged, hideHas].forEach(i => i.addEventListener("change", load));
     find.addEventListener("keydown", ev => { if (ev.key === "Enter") load(); });
     box.append(
@@ -825,7 +950,8 @@ const App = {
         this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center" }, hideHas, "hide what the mod has"),
         this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center" }, flagged, "only topic-labelled"),
         this.el("button", { class: "small", onclick: load }, "Scan"),
-        this.el("button", { class: "small primary", onclick: explain }, "Explain and rank with Claude")),
+        this.enginePicker(() => { rank.textContent = `Explain and rank with ${this.engineShort()}`; }),
+        rank, auto),
       note, table, more);
     load();
   },
@@ -897,6 +1023,28 @@ const App = {
         group("Help", [chip("all commands", "help", true), ...commands.map(c => chip(c, `help ${c}`, true))])));
     line.focus();
   },
+  // Which model answers Studio's prompts: Claude Code, or aider (the free model in ~/.aider.conf.yml, answers only).
+  // One choice for the whole page, remembered in this browser.
+  engine() {
+    try { const e = localStorage.getItem("studio.engine"); return ["aider", "codex", "gemini"].includes(e) ? e : "claude"; } catch (e) { return "claude"; }
+  },
+  // how hard the model thinks: "" keeps each engine's own default
+  effort() {
+    try { const e = localStorage.getItem("studio.effort"); return ["low", "medium", "high"].includes(e) ? e : ""; } catch (e) { return ""; }
+  },
+  engineName(e) { return { aider: "aider (free model)", codex: "Codex (GPT)", gemini: "Gemini (free)" }[e || this.engine()] || "Claude Code"; },
+  engineShort(e) { return { aider: "aider", codex: "Codex", gemini: "Gemini" }[e || this.engine()] || "Claude"; },
+  enginePicker(onChange) {
+    const pick = this.el("select", { title: "Which model answers: Claude Code; Codex with GPT (your ChatGPT sign-in); aider with the free model in ~/.aider.conf.yml; or Gemini through aider with the free Google key (aider and Gemini edit only the selected mod and run no commands)" },
+      [["claude", "Claude Code"], ["codex", "Codex · GPT"], ["gemini", "Gemini · free"], ["aider", "aider · free model"]].map(o => this.el("option", { value: o[0], text: o[1] })));
+    pick.value = this.engine();
+    pick.addEventListener("change", () => { try { localStorage.setItem("studio.engine", pick.value); } catch (e) { /* private window */ } if (onChange) onChange(); });
+    const level = this.el("select", { title: "Effort: how hard the model thinks. Higher is slower and, for paid models, uses more of the plan; Default keeps the engine's own setting" },
+      [["", "Effort: default"], ["low", "Effort: low"], ["medium", "Effort: medium"], ["high", "Effort: high"]].map(o => this.el("option", { value: o[0], text: o[1] })));
+    level.value = this.effort();
+    level.addEventListener("change", () => { try { localStorage.setItem("studio.effort", level.value); } catch (e) { /* private window */ } if (onChange) onChange(); });
+    return this.el("span", { style: "display:inline-flex;gap:6px" }, pick, level);
+  },
   // the prompt builder: a task + one line + this mod's facts -> a prompt for Claude Code (studio/prompts.json)
   promptBuilder(run) {
     const box = this.el("div", { class: "sec" }, this.el("h3", { text: "Prompt builder" }),
@@ -910,13 +1058,18 @@ const App = {
     const refresh = this.el("button", { class: "small", title: "read the mod's facts again (after a log, build or mark)", onclick: async () => { try { ctx = await this.api(`/api/mods/${this.mod}/context`); build(); this.toast("facts updated", "ok"); } catch (e) { this.toast(e.message, "bad"); } } }, "Refresh facts");
     const runBtn = this.el("button", { class: "small", onclick: async () => {
       const t = conf && (conf.tasks.find(x => x.id === task.value) || conf.tasks[0]); if (!t) return;
-      const readOnly = !!t.read_only;
-      if (!readOnly && !confirm("This task may change files: Claude Code can edit this repo and run any am command (build, sign, install on the phone). It cannot push, publish or run other shell commands. Run it?")) return;
-      try { const j = await this.api("/api/claude", { prompt: out.value, read_only: readOnly }); this.showJob(j); this.poll(j.id); this.byId("jobsPanel").scrollIntoView({ behavior: "smooth", block: "nearest" }); this.toast("Claude Code is working: its answer streams into Jobs", "ok"); }
+      const readOnly = !!t.read_only, engine = this.engine();
+      if ((engine === "aider" || engine === "gemini") && !readOnly) {
+        if (!confirm(`${this.engineName(engine)} will edit mods/${this.mod}: tweaks.json, hooks.json, mod.json and Tweak.x are sent with the prompt to ${engine === "gemini" ? "Google's free Gemini API" : "the free OpenRouter model"}. Studio snapshots them first (Files tab restores). aider runs no commands: the am commands it proposes appear as buttons in Jobs. Run it?`)) return;
+      } else if (!readOnly && engine === "codex") {
+        if (!confirm("Full access: Codex (GPT) runs this task start to finish with no sandbox: it edits the repo, runs any command on this PC with the network, and builds, signs and installs on the phone (am run). It is told not to push, publish, delete outside the mod or install other software, but nothing enforces that. Run it?")) return;
+      } else if (!readOnly && !confirm("This task may change files: Claude Code can edit this repo and run any am command (build, sign, install on the phone). It cannot push, publish or run other shell commands. Run it?")) return;
+      try { const j = await this.api("/api/claude", { prompt: out.value, read_only: readOnly, engine, effort: this.effort(), mod: this.mod }); this.showJob(j); this.poll(j.id); this.byId("jobsPanel").scrollIntoView({ behavior: "smooth", block: "nearest" }); this.toast(`${this.engineName(engine)} is working: its answer streams into Jobs`, "ok"); }
       catch (e) { this.toast(e.message, "bad"); }
     } }, "Run with Claude Code");
     const runNote = this.el("span", { class: "muted small" });
-    box.append(this.el("div", { class: "row" }, task, ask, tags, refresh), hints, out, this.el("div", { class: "row", style: "margin-top:6px" }, copy, runBtn, runNote));
+    const picker = this.enginePicker(() => build());
+    box.append(this.el("div", { class: "row" }, task, ask, tags, refresh), hints, out, this.el("div", { class: "row", style: "margin-top:6px" }, copy, picker, runBtn, runNote));
     let conf = null, ctx = null;
     const fill = (text, facts) => text.replace(/\{(\w+)\}/g, (m, k) => (k in facts ? String(facts[k]) : m));
     const build = () => {
@@ -928,9 +1081,23 @@ const App = {
       facts.limits = fill(conf.limits, facts);
       facts.where = fill(conf.where, facts);
       out.value = t.lines.map(l => fill(l, facts)).join("\n");
+      for (const workflow of ctx.learned_workflows || []) {
+        // These are review checklists from another tested game, never automatic proof or patch instructions.
+        if (!(workflow.topics || []).some(word => line.toLowerCase().includes(word.toLowerCase()))) continue;
+        out.value += `\n\nPreviously tested workflow: ${workflow.title}\n` +
+          `Evidence applies only to ${workflow.proven_on || "the recorded game/build"}. Check every criterion in this game; do not apply automatically.\n` +
+          (workflow.criteria || []).map(text => `- ${text}`).join("\n");
+      }
       tags.replaceChildren(t.read_only ? this.el("span", { class: "badge good", text: "read only" }) : this.el("span", { class: "badge warn", text: "changes files" }));
-      runBtn.textContent = t.read_only ? "Run with Claude Code (read only)" : "Run with Claude Code…";
-      runNote.textContent = t.read_only ? "Claude reads the repo and runs read-only am commands; it changes nothing." : "Asks first: Claude may edit files and run am commands (no push, no publish).";
+      const viaAider = this.engine() === "aider" || this.engine() === "gemini";
+      const viaCodex = this.engine() === "codex";
+      const short = this.engineShort();
+      runBtn.textContent = viaAider ? (t.read_only ? `Ask ${short} (read only)` : `Run with ${short}…`) : viaCodex ? (t.read_only ? "Run with Codex (read only)" : "Run with Codex…") : t.read_only ? "Run with Claude Code (read only)" : "Run with Claude Code…";
+      runNote.textContent = viaCodex
+        ? (t.read_only ? "Codex (GPT) reads the repo and runs read-only am commands in a read-only sandbox." : "Asks first: full access, start to finish: Codex edits, builds, signs and installs on the phone (no sandbox).")
+        : viaAider
+        ? (t.read_only ? `${short} answers from the prompt alone (free model): no files, no commands, nothing else leaves this PC.` : `Asks first: ${short} edits this mod's files (snapshot first); its am commands become buttons in Jobs.`)
+        : t.read_only ? "Claude reads the repo and runs read-only am commands; it changes nothing." : "Asks first: Claude may edit files and run am commands (no push, no publish).";
       const missing = [];
       if ((t.needs || []).includes("ask") && !line) missing.push([`Type the one line: ${t.ask}`]);
       if (t.id === "port" && line && !/^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+){2,}$/.test(line)) missing.push(["Use the game's bundle ID (Games tab or am games search shows it)."]);
@@ -953,6 +1120,252 @@ const App = {
   },
 
   // ---------------------------------------------------------------- games
+  // ---------------------------------------------------------------- store
+  // The store in one place: its numbers (public, and admin through the one-time link), our mods in it, every
+  // endpoint we depend on, keys and sign-ins (secret names and ages, never values) and the publishing workflows.
+  loadStore(parts) {
+    this.store = this.store || {};
+    for (const p of parts || ["link", "public", "admin", "moderation", "shots", "endpoints", "keys", "runs"]) {
+      this.store[p] = { loading: true, ...(this.store[p] && this.store[p].data ? { data: this.store[p].data } : {}) };
+      this.api("/api/store/" + p).then(data => { this.store[p] = { data, at: Date.now() }; })
+        .catch(e => { this.store[p] = { error: e.message }; })
+        .finally(() => { if (this.tab === "store") this.renderStore(); });
+    }
+    if (this.tab === "store") this.renderStore();
+  },
+  async storeLink() {
+    try {
+      const r = await this.api("/api/store/link/start", {});
+      window.open(r.approve_url, "_blank", "noopener");
+      this.store.link = { data: { status: "waiting", code: r.code, approve_url: r.approve_url } };
+      this.renderStore();
+      const until = Date.now() + 10 * 60e3;
+      const poll = async () => {
+        if (Date.now() > until) return;
+        const s = await this.api("/api/store/link/poll", {}).catch(() => null);
+        if (s && s.status === "linked") { this.toast("Mod Studio linked as admin", "ok"); this.loadStore(["link", "admin", "keys"]); return; }
+        if (s && s.status === "expired") { this.toast("The code expired: link again", "bad"); this.loadStore(["link"]); return; }
+        setTimeout(poll, 3000);
+      };
+      setTimeout(poll, 3000);
+    } catch (e) { this.toast(e.message, "bad"); }
+  },
+  // publish this PC's version of a mod, or take it out of the store: a Studio job (store_publish.py)
+  async storePublish(mod, action, question) {
+    let confirm = "";
+    if (action === "remove") {
+      confirm = prompt(`Take ${mod} out of the store? People who installed it keep it, but it leaves the store and its updates stop. Type ${mod} to confirm.`) || "";
+      if (confirm !== mod) { if (confirm) this.toast("The name didn't match: nothing removed", "bad"); return; }
+    } else if (!window.confirm(question)) return;
+    try {
+      const j = await this.api("/api/store/publish", { mod, action, confirm });
+      this.showJob(j); this.poll(j.id);
+      this.byId("jobsPanel").scrollIntoView({ behavior: "smooth", block: "nearest" });
+    } catch (e) { this.toast(e.message, "bad"); }
+  },
+  // the phone's screen as a link for this mod's post (studio/shots.py through Accretion Link)
+  async phoneShot() {
+    this.toast("Taking the phone's screenshot…");
+    try {
+      const r = await this.api("/api/store/shots/phone", { mod: this.mod, ttl: "1y" });
+      try { await navigator.clipboard.writeText(r.url); } catch (e) {}
+      this.toast(`Screenshot link copied; it's in this mod's post until ${new Date(r.expires_at).toLocaleDateString()}`, "ok");
+      if (this.store) this.loadStore(["shots"]);
+    } catch (e) { this.toast(e.message, "bad"); }
+  },
+  async storeAct(body, done) {
+    const r = await this.api("/api/store/act", body);
+    if (done) { this.toast(done, "ok"); this.loadStore(["moderation", "admin"]); }
+    return r;
+  },
+  renderStore() {
+    const box = this.byId("tab-store");
+    if (!this.store) return this.loadStore();
+    const S = this.store, el = this.el.bind(this);
+    const n = v => v === null || v === undefined || v === "" ? "—" : typeof v === "number" ? v.toLocaleString() : String(v);
+    const ago = iso => { if (!iso) return "—"; const s = (Date.now() - new Date(iso).getTime()) / 1000; return s < 90 ? "just now" : s < 5400 ? Math.round(s / 60) + " min ago" : s < 129600 ? Math.round(s / 3600) + " h ago" : Math.round(s / 86400) + " d ago"; };
+    const mb = b => b ? (b / 1048576).toFixed(b < 10485760 ? 1 : 0) + " MB" : "—";
+    const badge = (text, kind) => el("span", { class: "badge " + (kind || ""), text });
+    const panel = (title, right, ...body) => el("div", { class: "panel" }, el("div", { class: "panel-h" }, el("span", { text: title }), right || null), el("div", { class: "panel-b" }, ...body));
+    const state = p => S[p] && S[p].loading && !S[p].data ? el("p", { class: "hint", text: "Loading…" }) : S[p] && S[p].error ? el("p", { class: "hint", text: "Could not load: " + S[p].error }) : null;
+    const table = (head, rows, numeric) => el("div", { class: "store-scroll" }, el("table", { class: "store-t" },
+      el("tr", {}, head.map((h, i) => el("th", { class: numeric && numeric.includes(i) ? "n" : "", text: h }))),
+      rows.map(r => el("tr", {}, r.map((c, i) => el("td", { class: numeric && numeric.includes(i) ? "n" : "" }, c))))));
+    const pub = (S.public || {}).data || {}, st = pub.stats || {};
+    const admin = (S.admin || {}).data || {}, sec = admin.sections || {};
+    const linked = ((S.link || {}).data || {}).status === "linked" || admin.linked;
+    const okSec = k => sec[k] && !sec[k].error ? sec[k] : null;
+    box.replaceChildren();
+
+    // header row
+    box.append(el("div", { class: "row", style: "margin-bottom:12px" },
+      el("span", { class: "hint grow", style: "margin:0", text: "Read only. Numbers refresh when you open this tab or press Refresh." }),
+      el("button", { class: "small", onclick: () => this.loadStore() }, "Refresh all")));
+
+    // admin link
+    const link = (S.link || {}).data || {};
+    const linkBody = link.status === "linked" || admin.linked
+      ? el("div", { class: "row" }, el("span", { class: "hint grow", style: "margin:0", text: "Linked once with a code approved on getaccretion.app. The admin token stays on this PC (AM_ROOT/studio/admin.json) and only goes to the store's own functions." }),
+          el("button", { class: "small ghost", onclick: async () => { if (!confirm("Unlink Mod Studio from your Accretion admin account?")) return; await this.api("/api/store/link/unlink", {}).catch(e => this.toast(e.message, "bad")); this.store.admin = { data: { linked: false } }; this.loadStore(["link", "keys"]); } }, "Unlink"))
+      : link.status === "waiting"
+        ? el("div", { class: "row" }, el("span", { class: "grow" }, "Approve code ", el("b", { class: "mono", text: link.code || "" }), " on getaccretion.app while signed in as an admin. Studio checks every few seconds."),
+            link.approve_url ? el("button", { class: "small", onclick: () => window.open(link.approve_url, "_blank", "noopener") }, "Open the approve page") : null,
+            el("button", { class: "small ghost", onclick: () => this.storeLink() }, "New code"))
+        : el("div", { class: "row" }, el("span", { class: "hint grow", style: "margin:0", text: "Link once to see the admin numbers (downloads, accounts, community, cloud saves, share links). Studio shows a code; approve it on getaccretion.app signed in as an admin." }),
+            el("button", { class: "primary small", onclick: () => this.storeLink() }, "Link Mod Studio"));
+    box.append(panel("Accretion admin", linked ? badge(`signed in · ${admin.account || link.account || "admin"} · admin`, "good") : link.status === "waiting" ? badge("waiting for approval", "warn") : badge("not linked"),
+      linkBody, admin.error ? el("p", { class: "hint", text: admin.error }) : null));
+
+    // the store's tiles
+    const acc = okSec("accounts"), dl = okSec("downloads"), cs = okSec("cloud_saves");
+    const tile = (label, value, sub, kind) => el("div", { class: "tile" }, el("div", { class: "l", text: label }), el("div", { class: "nn", text: n(value) }), sub ? el("div", { class: "d " + (kind || ""), text: sub }) : null);
+    const tiles = el("div", { class: "tiles" },
+      tile("apps", st.apps, st.new_30d !== undefined ? `+${n(st.new_30d)} in 30 days` : null),
+      tile("curated", st.curated_apps, st.developers ? `${n(st.developers)} developers` : null),
+      tile("sources", st.sources_total, st.sources_failed ? `${st.sources_failed} failing` : "none failing", st.sources_failed ? "warn" : "good"),
+      tile("updated 7d", st.updated_7d, st.updated_30d ? `${n(st.updated_30d)} in 30 days` : null),
+      tile("downloads 7d", dl ? dl.total_7d : null, dl ? `${n(dl.total_30d)} in 30 days` : linked ? null : "link to see"),
+      tile("accounts", acc ? acc.total : null, acc ? `+${n(acc.new_7d)} this week` : linked ? null : "link to see"),
+      tile("cloud saves", cs ? cs.backups : null, cs ? `${n(cs.devices)} devices · ${mb(cs.bytes)}` : linked ? null : "link to see"),
+      tile("links removed", st.dead_links_removed, st.links_on_hold ? `${st.links_on_hold} on hold` : null));
+    const spark = dl && dl.per_day ? (() => { const max = Math.max(1, ...dl.per_day.map(d => d.n));
+      return el("div", {}, el("div", { class: "spark" }, dl.per_day.map(d => el("i", { title: `${d.day}: ${d.n}`, style: `height:${Math.max(3, Math.round(d.n / max * 100))}%` }))),
+        el("div", { class: "hint", style: "margin:4px 0 0", text: "downloads per day, 14 days" + (dl.via ? " · " + Object.entries(dl.via).map(([k, v]) => `${k} ${n(v)}`).join(" · ") : "") })); })() : null;
+    box.append(panel("The store", el("span", { class: "fig", text: st.built_at ? `built ${ago(st.built_at)} · ${st.size_mb || "?"} MB` : "" }), state("public"), tiles, spark));
+
+    // moderation: the site's #/mod page, acted on from here through the admin link
+    if (linked) {
+      const m = (S.moderation || {}).data || {}, reports = m.reports || [];
+      const list = v => Array.isArray(v) ? v : [];
+      const who = p => p ? el("span", {}, "@" + p.username, p.banned ? el("span", { class: "badge bad", style: "margin-left:6px", text: "banned" }) : null, p.role && p.role !== "user" ? el("span", { class: "badge accent", style: "margin-left:6px", text: p.role }) : null) : "—";
+      const btn = (label, cls, fn) => el("button", { class: "small " + (cls || ""), onclick: async ev => { ev.target.disabled = true; try { await fn(); } catch (e) { this.toast(e.message, "bad"); ev.target.disabled = false; } } }, label);
+      const act = (body, done) => this.storeAct(body, done);
+      const reportRows = reports.map(r => {
+        const target = r.post ? r.post.author_p : r.profile;
+        return el("div", { class: "mod-item" },
+          el("div", { class: "row" }, el("b", { text: r.post ? "Post" : "Profile" }),
+            el("span", { class: "muted small grow", text: `${r.reporter_p ? "reported by @" + r.reporter_p.username : "flagged by AI moderation"} · ${ago(r.created_at)}` })),
+          el("p", { class: "mod-reason", text: `“${r.reason}”` }),
+          r.post ? el("blockquote", { class: "mod-post", text: r.post.body }) : null,
+          el("div", { class: "row" }, el("span", { class: "small grow" }, "Author: ", who(target), r.post && r.post.app_id ? el("span", { class: "muted small mono", text: " · " + r.post.app_id }) : null),
+            r.post && !r.post.hidden ? btn("Hide post", "", async () => { await act({ action: "hide", target: String(r.post.id), flag: true }); await act({ action: "resolve", target: String(r.id), value: "resolved" }, "Post hidden"); }) : null,
+            target && !target.banned && target.role !== "admin" ? btn("Ban user", "", async () => { if (!confirm(`Ban @${target.username}? They can't post, like or report until unbanned.`)) throw new Error("Cancelled"); await act({ action: "ban", target: target.id, flag: true }); await act({ action: "resolve", target: String(r.id), value: "resolved" }, `@${target.username} banned`); }) : null,
+            btn("Dismiss", "ghost", () => act({ action: "resolve", target: String(r.id), value: "dismissed" }, "Dismissed"))));
+      });
+      const postRow = (p, hiddenList) => [el("span", { class: "small" }, who(p.author_p), el("div", { class: "muted small", text: `${ago(p.created_at)}${p.app_id ? " · " + p.app_id : ""}${p.parent_id ? " · reply" : ""}` })),
+        el("span", { class: "small mod-body", text: p.body.length > 220 ? p.body.slice(0, 220) + "…" : p.body }),
+        hiddenList || p.hidden ? btn("Unhide", "ghost", () => act({ action: "hide", target: String(p.id), flag: false }, "Post visible again")) : btn("Hide", "", () => act({ action: "hide", target: String(p.id), flag: true }, "Post hidden"))];
+      const roleUser = el("input", { placeholder: "username", style: "width:160px" });
+      const role = el("select", {}, [["mod", "Moderator"], ["user", "Regular user"], ["admin", "Admin"]].map(o => el("option", { value: o[0], text: o[1] })));
+      const supUser = el("input", { placeholder: "username", style: "width:160px" });
+      const team = list(m.team);
+      box.append(panel("Moderation", el("span", { class: "row" }, m.reports ? badge(reports.length ? `${reports.length} open report${reports.length === 1 ? "" : "s"}` : "no open reports", reports.length ? "warn" : "good") : null,
+          el("button", { class: "small ghost", onclick: () => this.loadStore(["moderation"]) }, "Refresh")), state("moderation"),
+        m.reports ? (reportRows.length ? el("div", {}, reportRows) : el("p", { class: "hint", text: "No open reports." })) : null,
+        m.reports ? el("details", { class: "feature-more" }, el("summary", { text: `Latest posts (${list(m.recent).length})` }),
+          table(["Author", "Post", ""], list(m.recent).map(p => postRow(p)))) : null,
+        m.reports ? el("details", { class: "feature-more" }, el("summary", { text: `Hidden posts (${list(m.hidden).length})` }),
+          list(m.hidden).length ? table(["Author", "Post", ""], list(m.hidden).map(p => postRow(p, true))) : el("p", { class: "hint", text: "None." })) : null,
+        m.reports ? el("details", { class: "feature-more" }, el("summary", { text: `Banned accounts (${list(m.banned).length})` }),
+          list(m.banned).length ? table(["Account", "Joined", ""], list(m.banned).map(u => ["@" + u.username, ago(u.created_at), btn("Unban", "ghost", () => act({ action: "ban", target: u.id, flag: false }, `@${u.username} unbanned`))])) : el("p", { class: "hint", text: "None." })) : null,
+        m.reports ? el("details", { class: "feature-more" }, el("summary", { text: `Team and supporters (${team.length})` }),
+          team.length ? table(["Account", "Role", "Supporter"], team.map(u => ["@" + u.username, u.role, u.supporter ? "♥" : ""])) : null,
+          el("div", { class: "row", style: "margin-top:10px" }, el("span", { class: "small", text: "Role" }), roleUser, role,
+            btn("Apply", "primary", async () => { const u = roleUser.value.trim().replace(/^@/, ""); if (!u) throw new Error("Type a username"); if (role.value === "admin" && !confirm(`Make @${u} an admin? Admins can change roles and ban.`)) throw new Error("Cancelled"); await act({ action: "role", target: u, value: role.value }, `@${u} is now ${role.value}`); })),
+          el("div", { class: "row", style: "margin-top:8px" }, el("span", { class: "small", text: "♥ Supporter" }), supUser,
+            btn("Give badge", "primary", async () => { const u = supUser.value.trim().replace(/^@/, ""); if (!u) throw new Error("Type a username"); await act({ action: "supporter", target: u, flag: true }, `@${u} is now a supporter ♥`); }),
+            btn("Remove", "ghost", async () => { const u = supUser.value.trim().replace(/^@/, ""); if (!u) throw new Error("Type a username"); await act({ action: "supporter", target: u, flag: false }, `@${u} is no longer a supporter`); }))) : null,
+        el("p", { class: "hint", text: "Actions go to the store at once, recorded under your admin account. Admins can't be banned from here, and your own role can't be changed here." })));
+    }
+
+    // our mods
+    const ours = pub.ours || [], appsSec = okSec("apps") || {}, perApp = (dl && dl.per_app) || {};
+    const saves = id => cs && cs.per_game ? Object.entries(cs.per_game).filter(([b]) => b === id || b.startsWith(id + ".")).reduce((s, [, g]) => s + g.backups, 0) : null;
+    const rows = ours.map(o => { const a = (appsSec.ours || {})[o.id] || {};
+      const here = !o.here ? badge("not here") : o.here === o.live ? badge(o.here, "good") : badge(o.here + " here", "warn");
+      const acts = el("span", { class: "row", style: "flex-wrap:nowrap" },
+        o.here && o.here !== o.live && o.mod ? el("button", { class: "small primary", title: `Publish ${o.here} from this PC: a pull request with auto-merge, then the ${o.kind === "tweak" ? "release" : "cloud build"}`,
+          onclick: () => this.storePublish(o.mod, "update", `Publish ${o.name} ${o.here} to the store (live: ${o.live})?`) }, `Publish ${o.here}`) : null,
+        o.mod ? el("button", { class: "small ghost", title: "Take it out of the store (a pull request with auto-merge)",
+          onclick: () => this.storePublish(o.mod, "remove") }, "Remove") : null);
+      return [el("span", {}, o.name || o.mod, " ", el("span", { class: "muted small", text: o.kind })), o.live || "—", here, n(a.views_7d), n((perApp[o.id] || {}).d7), n(a.installs_7d), n(a.likes), a.rating ? a.rating + ` (${a.ratings})` : "—", n(a.comments), n(saves(o.id)), ago(o.date), acts]; });
+    box.append(panel("Our mods in the store", el("span", { class: "fig", text: "7 days" }), state("public"),
+      ours.length ? table(["Mod", "Live", "Here", "Views", "Downloads", "Installs", "Likes", "Rating", "Comments", "Cloud saves", "Published", ""], rows, [3, 4, 5, 6, 7, 8, 9]) : null,
+      (pub.unlisted || []).length ? el("p", { class: "hint", text: "Not in the store: " + pub.unlisted.map(u => `${u.mod} ${u.version}${u.personal ? " (personal)" : ""}`).join(", ") + ". Personal mods aren't published from Studio; a public mod is added to the cloud build's list first, then Mods: build a mod publishes it." }) : null,
+      !linked && ours.length ? el("p", { class: "hint", text: "Views, downloads, likes and the rest need the admin link." }) : null));
+
+    // trending + community
+    if (linked) {
+      const tr = (okSec("apps") || {}).trending || [], com = okSec("community"), srch = okSec("searches"), sl = okSec("share_links");
+      const names = Object.fromEntries(ours.map(o => [o.id, o.name]));
+      box.append(el("div", { class: "store-grid" },
+        panel("Trending in the store", el("span", { class: "fig", text: "3×searches + 2×installs + views, 7 days" }),
+          tr.length ? table(["#", "App", "Views", "Installs", "Score"], tr.map((t, i) => [String(i + 1), names[t.id] || t.id, n(t.views_7d), n(t.installs_7d), n(t.score)]), [2, 3, 4]) : el("p", { class: "hint", text: sec.apps && sec.apps.error ? sec.apps.error : "No views yet." })),
+        panel("Community", com && com.reports_open ? badge(`${com.reports_open} reports waiting`, "warn") : null,
+          com ? table(["", ""], [["Posts this week", n(com.posts_7d)], ["Hidden posts", n(com.posts_hidden)], ["Open reports", n(com.reports_open)], ["Install reports (7 days)", n(com.install_reports_7d)],
+            ["Searches with no result", srch ? n(srch.missing_top.length) : "—"], ["Share links (active)", sl ? `${n(sl.active)} · ${n(sl.downloads)} downloads` : "—"],
+            ["Moderators and admins", acc ? n(acc.moderators) : "—"], ["Banned accounts", acc ? n(acc.banned) : "—"]], [1]) : el("p", { class: "hint", text: (sec.community || {}).error || "" }),
+          el("div", { class: "row", style: "margin-top:8px" }, el("button", { class: "small", onclick: () => window.open("https://getaccretion.app/#/mod", "_blank", "noopener") }, "Open the moderation page ›")))));
+      const ir = (com && com.install_reports_recent) || [], miss = (srch && srch.missing_top) || [];
+      box.append(el("div", { class: "store-grid" },
+        panel("Searches with no result", el("span", { class: "fig", text: "7 days" }),
+          miss.length ? table(["Search", "Times"], miss.slice(0, 12).map(m => [m.query, n(m.hits)]), [1]) : el("p", { class: "hint", text: "None this week." })),
+        panel("Latest install reports", null,
+          ir.length ? table(["App", "Stage", "iOS", "App version", "When"], ir.map(r => [names[r.bundle_id] || r.bundle_id || "—", r.stage || "—", r.ios || "—", r.app_version || "—", ago(r.created_at)])) : el("p", { class: "hint", text: "None." }))));
+      const links = (sl && sl.links) || [], builds = (okSec("builds") || {}).latest || {};
+      box.append(el("div", { class: "store-grid" },
+        panel("Share links", sl ? el("span", { class: "fig", text: `${n(sl.active)} active` }) : null,
+          links.length ? table(["Name", "Downloads", "Last", "Expires"], links.map(l => [l.name || l.note || l.id, n(l.downloads), ago(l.last_download_at), new Date(l.expires_at).toLocaleDateString()]), [1]) : el("p", { class: "hint", text: "No active links." })),
+        panel("Cloud saves by game", cs ? el("span", { class: "fig", text: `${n(cs.backups_7d)} backups this week` }) : null,
+          cs && Object.keys(cs.per_game).length ? table(["Game", "Devices", "Backups", "Size"], Object.entries(cs.per_game).map(([, g]) => [g.game || "—", n(g.devices), n(g.backups), mb(g.bytes)]), [1, 2, 3]) : el("p", { class: "hint", text: "No backups yet." }))));
+      if (Object.keys(builds).length) box.append(panel("Hosted builds", el("span", { class: "fig", text: `${Object.keys(builds).length} apps` }),
+        table(["App", "Latest", "Size", "Builds kept", "Added"], Object.entries(builds).sort((a, b) => String(b[1].created_at).localeCompare(String(a[1].created_at))).slice(0, 15).map(([id, b]) => [names[id] || id, b.version, mb(b.size), n(b.builds), ago(b.created_at)]), [2, 3])));
+    }
+
+    // screenshot links (phone shots for posts, ShareX on this PC): copy, renew, delete
+    const shotRows = ((S.shots || {}).data || {}).shots || [];
+    const life = el("select", {}, [["1y", "1 year"], ["6m", "6 months"], ["3m", "3 months"]].map(o => el("option", { value: o[0], text: o[1] })));
+    const left = iso => { const d = Math.round((new Date(iso) - Date.now()) / 86400000); return d < 0 ? badge(`expired ${-d} d ago`, "bad") : d < 14 ? badge(`${d} d left`, "warn") : badge(`${d} d left`); };
+    box.append(panel("Screenshot links", el("span", { class: "row" }, el("span", { class: "small muted", text: "renew for" }), life,
+        el("button", { class: "small ghost", onclick: () => this.loadStore(["shots"]) }, "Refresh")), state("shots"),
+      shotRows.length ? table(["Link", "What", "Taken", "Life", ""], shotRows.map(r => [
+        el("a", { href: r.url, target: "_blank", rel: "noopener", class: "mono small", text: r.id }),
+        el("span", { class: "small", text: `${r.label || "PC"} · ${r.content_type.split("/")[1]} · ${mb(r.size)}` }),
+        ago(r.created_at), left(r.expires_at),
+        el("span", { class: "row", style: "flex-wrap:nowrap" },
+          el("button", { class: "small", onclick: async () => { try { await navigator.clipboard.writeText(r.url); this.toast("Link copied", "ok"); } catch (e) { this.toast(r.url); } } }, "Copy"),
+          el("button", { class: "small", onclick: async () => { try { await this.api("/api/store/shots/renew", { id: r.id, ttl: life.value }); this.toast("Renewed", "ok"); this.loadStore(["shots"]); } catch (e) { this.toast(e.message, "bad"); } } }, "Renew"),
+          el("button", { class: "small ghost", onclick: async () => { if (!confirm("Delete this screenshot? Its link stops working everywhere it was pasted.")) return; try { await this.api("/api/store/shots/delete", { id: r.id }); this.toast("Deleted", "ok"); this.loadStore(["shots"]); } catch (e) { this.toast(e.message, "bad"); } } }, "Delete"))])) : (S.shots && S.shots.data ? el("p", { class: "hint", text: "No screenshot links yet. A mod's More menu has Phone screenshot for the post; ShareX on this PC uploads here too." }) : null),
+      el("p", { class: "hint", text: "Anyone with a link can open it until it expires. An expired link can be renewed for 30 days, then its file is deleted." })));
+
+    // endpoints
+    const ep = (S.endpoints || {}).data || {}, eps = ep.endpoints || [];
+    const down = eps.filter(e => !e.ok).length, slow = eps.filter(e => e.ok && e.slow).length;
+    box.append(panel("Endpoints", el("span", { class: "row" }, eps.length ? badge(down ? `${down} down` : slow ? `${slow} slow` : "all answering", down ? "bad" : slow ? "warn" : "good") : null,
+      el("button", { class: "small ghost", onclick: () => this.loadStore(["endpoints"]) }, "Check again")), state("endpoints"),
+      eps.length ? table(["Service", "Answer", "Time", ""], eps.map(e => [el("span", {}, e.name, el("div", { class: "muted small mono", text: e.url })), e.status ? String(e.status) : "no answer", e.ms + " ms",
+        badge(!e.ok ? "down" : e.slow ? "slow" : "ok", !e.ok ? "bad" : e.slow ? "warn" : "good")]), [2]) : null,
+      eps.length ? el("p", { class: "hint", text: "Each check expects the answer the service gives when it works (a function without a token answers 401). Checked " + ago(new Date(ep.checked_at * 1000).toISOString()) + "." }) : null));
+
+    // keys and sign-ins
+    const k = (S.keys || {}).data || {}, checks = k.checks || [], secrets = k.secrets || [];
+    const old = secrets.filter(s => s.old).length;
+    box.append(panel("Keys and sign-ins", el("span", { class: "row" }, checks.length ? badge(checks.every(c => c.ok) ? "all valid" : `${checks.filter(c => !c.ok).length} to look at`, checks.every(c => c.ok) ? "good" : "warn") : null,
+      el("button", { class: "small ghost", onclick: () => this.loadStore(["keys"]) }, "Revalidate")), state("keys"),
+      checks.length ? table(["Check", "Result", ""], checks.map(c => [c.name, el("span", { class: "small", text: c.detail }), badge(c.ok ? "valid" : "check", c.ok ? "good" : "warn")])) : null,
+      secrets.length ? el("details", { class: "feature-more", style: "margin-top:10px" }, el("summary", { text: `GitHub secrets: ${secrets.filter(s => s.name).length} across ${new Set(secrets.map(s => s.repo)).size} repos${old ? ` · ${old} older than 180 days` : " · none older than 180 days"}` }),
+        table(["Repo", "Secret", "Updated", ""], secrets.map(s => [s.repo.split("/")[1], s.name || el("span", { class: "muted", text: s.error }), s.updated ? ago(s.updated) : "—",
+          s.name ? el("a", { href: `https://github.com/${s.repo}/settings/secrets/actions/${s.name}`, target: "_blank", rel: "noopener", class: "small" }, s.old ? "Rotate ›" : "Update ›") : ""]))) : null,
+      el("p", { class: "hint", text: "Names and dates only: secret values never leave GitHub. Update opens GitHub's own page for that secret." })));
+
+    // workflows
+    const runs = ((S.runs || {}).data || {}).runs || [];
+    const rk = r => r.status && r.status !== "completed" ? ["running", "accent"] : r.conclusion === "success" ? ["success", "good"] : r.conclusion ? [r.conclusion, "bad"] : ["never run", ""];
+    box.append(panel("Publishing and automation", el("span", { class: "row" }, el("span", { class: "fig", text: "GitHub Actions" }), el("button", { class: "small ghost", onclick: () => this.loadStore(["runs"]) }, "Refresh")), state("runs"),
+      runs.length ? table(["Workflow", "Last run", "When", ""], runs.map(r => [el("span", {}, r.label, r.title && r.title !== r.label && !r.label.endsWith(r.title.replace(/^[^:]+: /, "")) ? el("div", { class: "muted small", text: r.title }) : null), badge(...rk(r)), ago(r.at),
+        r.url ? el("a", { href: r.url, target: "_blank", rel: "noopener", class: "small" }, "Open ›") : ""])) : null));
+  },
+
   renderGames() {
     const box = this.byId("tab-games");
     if (box.childElementCount) return;  // built once; Refresh reloads the list
@@ -1056,7 +1469,7 @@ const App = {
     const q = this.el("input", { class: "mono", placeholder: "bundle ID (com.company.game) or app name", value: preset || "", style: "width:100%" });
     const region = this.el("select", {}, [["us", "USA"], ["jp", "Japan"], ["cn", "China"], ["vn", "Vietnam"]].map(o => this.el("option", { value: o[0], text: o[1] })));
     const platform = this.el("select", {}, [["iphone", "iPhone / iPad"], ["appletv", "Apple TV"], ["vision", "Vision Pro"]].map(o => this.el("option", { value: o[0], text: o[1] })));
-    const source = this.el("select", {}, [["34306", "decrypt.34306.lol"], ["decrypt.day", "decrypt.day (browser)"], ["armconverter", "armconverter.com (browser, your account)"]].map(o => this.el("option", { value: o[0], text: o[1] })));
+    const source = this.el("select", {}, [["telegram", "Telegram decrypt bot (main)"], ["34306", "decrypt.34306.lol"], ["decrypt.day", "decrypt.day (browser)"], ["armconverter", "armconverter.com (browser, your account)"]].map(o => this.el("option", { value: o[0], text: o[1] })));
     const results = this.el("div", { style: "margin-top:10px;max-height:320px;overflow:auto" });
     const viaBrowser = () => {
       const bundle = q.value.trim(), isId = /^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)+$/.test(bundle);
@@ -1076,7 +1489,7 @@ const App = {
           const cached = a.is_cached ? this.el("span", { class: "badge good", text: "ready" }) : a.cached_version ? this.el("span", { class: "badge warn", text: "older " + a.cached_version + " ready" }) : this.el("span", { class: "badge", text: "needs a decrypt" });
           results.append(this.el("div", { class: "row", style: "margin-bottom:8px" },
             this.el("div", { class: "grow" }, this.el("b", { text: a.name }), " ", this.el("span", { class: "muted small", text: a.version + (a.size_bytes ? " · " + this.mb(Number(a.size_bytes)) : "") }), this.el("br"), this.el("span", { class: "mono small muted", text: a.bundle_id }), " ", cached),
-            this.el("button", { class: "small primary", onclick: () => { dlg.close(); this.job("fetch", [a.bundle_id, "--region", region.value, "--platform", platform.value]); } }, "Get")));
+            this.el("button", { class: "small primary", onclick: () => { dlg.close(); this.job("fetch", [a.bundle_id, "--source", "34306", "--region", region.value, "--platform", platform.value]); } }, "Get")));
         }
       } catch (e) {
         results.replaceChildren(this.el("p", { class: "hint", text: e.message }));
@@ -1161,3 +1574,11 @@ App.init();
 </script>
 </body>
 </html>
+      if (source.value === "telegram") {
+        // the bot gets the game's App Store link from your Telegram account; its answer is followed, checked
+        // (decrypted, the right app) and saved in intake/ (scripts/telegram_fetch.py)
+        const target = q.value.trim();
+        results.replaceChildren(this.el("p", { class: "hint", text: "Studio sends the game's App Store link to the decrypt bot from your Telegram account, follows the bot's answer and saves the decrypted .ipa in intake/. First time: sign in once in a console with python scripts/telegram_fetch.py login (uv run --with telethon)." }),
+          this.el("div", { class: "row" }, this.el("button", { class: "small primary", onclick: () => { dlg.close(); this.job("fetch", [target, "--source", "telegram", "--region", region.value]); } }, `Ask the bot for ${target}`)));
+        return;
+      }

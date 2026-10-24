@@ -3,6 +3,12 @@ Read first when resuming. Project row in `~/PROJECTS.md`. The handbook rules (`.
 this lives in the AccretionMods/mods repo, so nothing personal, no secrets, neutral commits, PRs with auto-merge.
 
 ## What it is
+Custom always-on features can be recorded in local `AM_ROOT/dev/<mod>.json` under `verified_features`.
+Studio shows their evidence separately from switches and marks results stale if either game or mod
+version changes. Local `patterns.json` may contain `workflows`: topic words, a proven-on scope and
+review criteria. Relevant prompt-builder requests include these checklists for every engine, explicitly
+as candidates requiring fresh analysis in the next game. Personal evidence stays outside Git.
+
 The eight approved workflow improvements are implemented (2026-10-22): managed instance reuse and
 source-version detection, capability/result filters, cached offset paging, grouped property variants,
 no-JIT candidate explanations, configuration snapshots with preview/recovery, persistent redacted job
@@ -54,8 +60,42 @@ chose a local web app in this repo over a desktop app, a Claude panel or an iOS 
   only); the `fetch` job waits for the download in Downloads and files it in intake/. Build & phone tab: "Get the
   newest from the decrypt site". Checked in the page against the live site (paused, captcha shown); no real download yet.
 
-## State (2026-10-22)
-- v1 built and checked in the built-in browser against the Wanderer example mod: mod list, Switches (18 items with
+## State (2026-10-23)
+- Branch codex/studio-feature-scope (pushed, main merged in). Added this session, all checked in a test copy of Studio
+  (AM_ROOT C:\AccretionMods-storetest, port 8779, launch config `mod-studio-storetest`) and against the live store:
+  - Store tab (`store_view.py`): store numbers, admin link (linked as b•••@me.com: token in AM_ROOT/studio/admin.json),
+    moderation (store `studio` function, `op=moderation|act`), our mods with Publish/Remove jobs (`store_publish.py`:
+    PR with auto-merge, then the tweak release or the cloud build, which the job now waits for), endpoints, keys and
+    GitHub secret ages, workflow runs, screenshot links.
+  - Auto-build progress bar (step, %, time) and a step bar for publish jobs.
+  - Screenshot links (`shots.py`, store `shots` function): phone screenshot through Accretion Link's tool server
+    (`accretion-link-cli serve`), 3m/6m/1y, renew/delete; post drafts put the mod's live links in place of LINK ONLY.
+  - Menu image page (`/menu-image`, `menu_image.py`): the menu drawn as on the phone (sheet, nav, search, 30 pt rows,
+    green/red/off states, Mix), PNG or upload as a post link. Measured against a phone screenshot; fonts differ
+    (Segoe UI here, SF Pro on the phone).
+  - Not tried by hand: the phone-screenshot and Menu image upload buttons.
+  - Effort picker (default/low/medium/high) next to the model picker, for every engine: Claude `--effort`, Codex
+    `model_reasoning_effort`, aider/Gemini `--reasoning-effort`. Gemini engine: aider with `gemini/gemini-3.6-flash`
+    (AM_GEMINI_MODEL changes it), key GEMINI_API_KEY in the Windows user environment (gcloud key accretion-local-gemini,
+    project accreation; Studio reads it from the registry when it started before the key existed). Free tier: 20
+    requests a day per model per project (seen on 3.6-flash), so a 9-batch Auto-build fits once or twice a day; CI
+    uses 3.5-flash(-lite), a separate quota. Checked: a real Gemini answer through aider in 7 s, pickers in the page.
+    Not tried: a full Auto-build with Gemini.
+  - Auto-build asks several batches at once (Claude/Codex 3, aider/Gemini 2, `--workers`), retries a failed or
+    rate-limited batch once, and reads JSON answers (`{"row", "value", "when", "title"}`): Studio builds each pin from
+    the scan row, checks the value against its type and runs dev.py pin in-process (gen once in step 4). Older
+    `am pin` lines still count. Stop kills the model processes too (taskkill /T). Unit-tested; not yet run end to end.
+  - Scan and pins reach hot-update games (2026-10-23, after Survivor: Ace+'s 80 Auto-build switches all landed on
+    bought packages' demo/effect scripts): the scan reads hot-update assemblies (HotFix*, HotUpdate*) instead of
+    Assembly-CSharp when a game has them (mod.json `scan_assemblies` overrides), names those classes with their
+    assembly (`HotFix:HotFix.GameManager`), reaches `Singleton<T>` managers through the base's static
+    (`GameManager.m_t`: the runtime looks up the parent chain and initialises the generic class), treats Photon `FP`
+    fields as int64 with `"scale": 65536`, and skips demo/sample/example/editor/test classes. Auto-build prints where
+    its candidates come from. Survivor: Ace: 647 candidates in HotFix (98 managers). Not reached yet: the fight's
+    own objects (HotFixBattle entities have no singleton or MonoBehaviour: needs a path through a manager).
+    Survivor: Ace+ restored to Keep screen awake, 1.0.3 built with the new runtime. Not phone-tested: a Singleton or
+    FP pin.
+- Earlier (v1, 2026-10-22): built and checked in the built-in browser against the Wanderer example mod: mod list, Switches (18 items with and checked in the built-in browser against the Wanderer example mod: mod list, Switches (18 items with
   hook/pin chips, watch line), Find (regex search, class methods, fields, Hook/Pin/Call forms: a pin added through
   the page landed in tweaks.json and the generated code), Suggest (36 rows from 58 learned patterns), Build & Phone
   (check-hooks job streamed into the console), Files; phone width (375 px) with no horizontal scroll; dark/light.

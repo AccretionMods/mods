@@ -87,7 +87,7 @@ class Report(unittest.TestCase):
             out = io.StringIO()
             with contextlib.redirect_stdout(out), mock.patch.object(dev, "cmd_new", fake_new), \
                     mock.patch.object(dev, "dump_path", lambda mod: game), \
-                    mock.patch.object(dev.dump_scan, "scan", lambda *a: scan):
+                    mock.patch.object(dev.dump_scan, "scan", lambda *a, **k: scan):
                 self.assertEqual(dev.main(["report", str(game)]), 0)
                 self.assertEqual(dev.main(["start", str(game)]), 0)
                 self.assertEqual(dev.main(["start", str(game)]), 1)  # a mod for this game exists now

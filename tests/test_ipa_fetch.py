@@ -12,6 +12,7 @@ import unittest
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest import mock
 from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
@@ -207,12 +208,37 @@ class Fetch(unittest.TestCase):
         old = dev.ROOT
         dev.ROOT = repo
         try:
-            self.assertEqual(dev.main(["fetch", "--mod", "game-plus"]), 0)
+            # the decrypt site by name: Telegram is the default source (tested below)
+            self.assertEqual(dev.main(["fetch", "--mod", "game-plus", "--source", "34306"]), 0)
             self.assertEqual(dev.main(["fetch", "--account"]), 0)
-            self.assertEqual(dev.main(["fetch", "com.example.missing"]), 1)
+            self.assertEqual(dev.main(["fetch", "com.example.missing", "--source", "34306"]), 1)
         finally:
             dev.ROOT = old
         self.assertEqual(len(list((self.root / "intake").glob("*.ipa"))), 1)
+
+    def test_telegram_source_runs_the_bot_script_and_takes_its_path(self):
+        lines = ["asked the bot for Game (com.example.game): https://apps.apple.com/us/app/game/id1\n",
+                 json.dumps({"path": str(self.root / "intake" / "Game.ipa")}) + "\n"]
+        said = []
+        proc = mock.Mock(stdout=iter(lines), wait=mock.Mock(return_value=0))
+        with mock.patch("subprocess.Popen", return_value=proc) as popen:
+            got = ipa_fetch.fetch(self.root, "com.example.game", source="telegram", say=said.append)
+        self.assertEqual(got, self.root / "intake" / "Game.ipa")
+        self.assertIn("telegram_fetch.py", " ".join(popen.call_args.args[0]))
+        self.assertEqual(said, [lines[0].strip()])
+        proc = mock.Mock(stdout=iter(["error: not signed in to Telegram\n"]), wait=mock.Mock(return_value=1))
+        with mock.patch("subprocess.Popen", return_value=proc), self.assertRaises(ipa_fetch.FetchError):
+            ipa_fetch.fetch(self.root, "com.example.game", source="telegram", say=said.append)
+
+    def test_telegram_links_come_from_buttons_text_links_and_text(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+        import telegram_fetch
+
+        button = mock.Mock(url="https://dl.example/a.ipa")
+        msg = mock.Mock(buttons=[[button]], entities=[1], message="also https://dl.example/b.ipa and https://apps.apple.com/x",
+                        get_entities_text=lambda: [(mock.Mock(url="https://dl.example/c.ipa"), "here")])
+        self.assertEqual(telegram_fetch.links_in(msg),
+                         ["https://dl.example/a.ipa", "https://dl.example/c.ipa", "https://dl.example/b.ipa"])
 
     def test_captcha_opens_the_browser_and_takes_the_download(self):
         FakeSite.state["captcha"] = True

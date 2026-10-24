@@ -75,6 +75,61 @@ public class Camera : Behaviour // TypeDefIndex: 21
 """
 
 
+HOT = """// Image 0: mscorlib.dll - 0
+// Image 1: HotFix.dll - 10
+// Image 2: Assembly-CSharp.dll - 30
+// Image 3: Framework.dll - 40
+
+// Namespace:
+public class Singleton<T> // TypeDefIndex: 41
+{
+\tprivate static T m_t; // 0x0
+\tpublic static T get_Instance() { }
+}
+
+// Namespace: HotFix
+public class GameManager : Singleton<GameManager> // TypeDefIndex: 11
+{
+\tpublic int Gold; // 0x10
+\tpublic FP MoveSpeed; // 0x18
+\tpublic void set_IsSpeedUp(bool value) { }
+\tpublic bool get_IsSpeedUp() { }
+}
+
+// Namespace: HotFix
+public class ListDemoScript : MonoBehaviour // TypeDefIndex: 12
+{
+\tpublic int mTotalDataCount; // 0x10
+}
+
+// Namespace: SuperScrollView
+public class ScrollItem : MonoBehaviour // TypeDefIndex: 31
+{
+\tpublic int Value; // 0x10
+}
+"""
+
+
+class HotUpdate(unittest.TestCase):
+    """A HybridCLR game: its code in HotFix, managers behind Singleton<T>, fixed-point FP, demo scripts."""
+
+    def test_scan_reads_the_hot_update_assembly_and_reaches_generic_singletons(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dump = Path(tmp) / "dump.cs"
+            dump.write_text(HOT, encoding="utf-8")
+            rows = {f"{r['class']}.{r['member']}": r for r in dump_scan.scan(dump)["rows"]}
+            gold = rows["HotFix:HotFix.GameManager.Gold"]
+            self.assertEqual(gold["object"], "HotFix:HotFix.GameManager.m_t")
+            self.assertIn("HotFix:HotFix.GameManager.set_IsSpeedUp", rows)
+            speed = rows["HotFix:HotFix.GameManager.MoveSpeed"]
+            self.assertEqual((speed["ctype"], speed["scale"]), ("int64_t", 65536))
+            self.assertFalse(any("Demo" in k for k in rows))  # a package's demo script
+            self.assertFalse(any("ScrollItem" in k for k in rows))  # Assembly-CSharp: packages, when HotFix exists
+            # mod.json scan_assemblies chooses instead
+            only = dump_scan.scan(dump, assemblies=["Assembly-CSharp"])["rows"]
+            self.assertEqual({r["class"] for r in only}, {"SuperScrollView.ScrollItem"})
+
+
 class Scan(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

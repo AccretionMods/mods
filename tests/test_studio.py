@@ -21,6 +21,72 @@ from test_dev_cli import DUMP
 
 
 class Api(unittest.TestCase):
+    def test_effort_reaches_every_engine_and_gemini_runs_through_aider(self):
+        from unittest import mock
+        with mock.patch.object(server, "claude_exe", return_value="claude"), \
+                mock.patch.object(server, "aider_exe", return_value="aider"), \
+                mock.patch.object(server, "gemini_key", return_value="test-key"):
+            self.assertEqual(server.claude_command("x", True, "high")[-2:], ["--effort", "high"])
+            self.assertNotIn("--effort", server.claude_command("x", True))
+            # a stand-in codex on the PATH: the command is checked without the CLI installed (CI has none)
+            fake = lambda name: "/usr/local/bin/codex" if name == "codex" else None  # noqa: E731
+            with mock.patch.object(server.shutil, "which", side_effect=fake):
+                self.assertIn('model_reasoning_effort="low"', server.codex_command("x", True, "low"))
+            cmd = server.gemini_command("x", None, "medium")
+            self.assertEqual(cmd[1:5], ["--model", "gemini/" + server.GEMINI_MODEL, "--reasoning-effort", "medium"])
+            self.assertNotIn("test-key", " ".join(cmd))  # the key goes through the environment only
+            self.assertNotIn("--model", server.aider_command("x"))
+        with mock.patch.object(server, "gemini_key", return_value=""):
+            with self.assertRaises(dev.DevError):
+                server.gemini_command("x")
+        with self.assertRaises(dev.DevError):
+            server.start_claude("a prompt long enough", True, "claude", "", "max")
+
+    def test_autobuild_reads_json_picks_and_builds_the_pin_itself(self):
+        import autobuild
+        rows = [{"class": "Player", "object": "Player.instance", "member": "health", "name": "health",
+                 "ctype": "int32_t", "kind": "field", "area": "Survival"},
+                {"class": "Player", "object": "Player.instance", "member": "set_God", "name": "God",
+                 "ctype": "bool", "kind": "setter", "area": "Survival"}]
+        answer = ["```json", '[{"row": 1, "value": 99.6, "when": "lower", "title": "Full health"},',
+                  ' {"row": 2, "value": "true", "title": "God mode"}, {"row": 7, "value": 1}]', "```",
+                  "Here: {\"row\": \"x\"}", "am pin game-plus Player.health --value 5 --as hp"]
+        found, skipped = autobuild.picks("game-plus", rows, answer)
+        self.assertEqual([k for k, _ in found], ["row", "row", "cmd"])
+        self.assertTrue(any("row 7" in s for s in skipped) and any("not a number" in s for s in skipped))
+        self.assertEqual(autobuild.value_for(rows[0], 99.6), "100")
+        self.assertEqual(autobuild.value_for(rows[1], "true"), "true")
+        self.assertIsNone(autobuild.value_for(rows[1], 5))
+        self.assertIsNone(autobuild.value_for(rows[0], "lots"))
+        self.assertEqual(autobuild.value_for(dict(rows[0], ctype="float"), 1.5), "1.5")
+        taken = {"fullHealth"}
+        argv, why = autobuild.pin_argv("game-plus", rows[0], found[0][1][1], taken)
+        self.assertIsNone(why)
+        self.assertEqual(argv[:8], ["pin", "game-plus", "Player.health", "--object", "Player.instance",
+                                    "--value", "100", "--when"])
+        self.assertEqual(argv[argv.index("--as") + 1], "fullHealth2")  # taken: numbered
+
+    def test_autobuild_pins_in_process_without_gen(self):
+        import autobuild
+        folder = dev.mod_dir("game-plus")
+        before = (folder / "tweaks.json").read_text(encoding="utf-8") if (folder / "tweaks.json").is_file() else None
+        try:
+            ok, text = autobuild.pin_here(["pin", "game-plus", "PurchaseState.Gems", "--object",
+                                           "PurchaseState.instance", "--value", "500", "--as", "gemsTest",
+                                           "--title", "Gems"])
+            self.assertTrue(ok, text)
+            data = json.loads((folder / "tweaks.json").read_text(encoding="utf-8"))
+            self.assertIn("gemsTest", [t["key"] for t in data["tweaks"]])
+            self.assertIs(autobuild.dev.cmd_gen, dev.cmd_gen)  # put back
+            ok, text = autobuild.pin_here(["pin", "game-plus", "PurchaseState.Nothing", "--value", "1"])
+            self.assertFalse(ok)
+            self.assertIn("no field", text)
+        finally:
+            if before is None:
+                (folder / "tweaks.json").unlink(missing_ok=True)
+            else:
+                (folder / "tweaks.json").write_text(before, encoding="utf-8")
+
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
@@ -103,6 +169,35 @@ public class OnlineState : MonoBehaviour // TypeDefIndex: 111
                 return r.status, json.loads(r.read())
         except urllib.error.HTTPError as e:
             return e.code, json.loads(e.read())
+
+    def test_custom_feature_evidence_is_versioned_and_reused_as_criteria(self):
+        old = dev.load_state("game-plus")
+        path = dev.patterns_path()
+        previous = path.read_bytes() if path.exists() else None
+        result = {"result": "works", "app_version": "1.0", "mod_version": "1.0.0", "date": "2026-10-22"}
+        feature = {"key": "customFeature", "title": "Custom feature", "verified": result}
+        try:
+            dev.save_state("game-plus", dict(old, verified_features=[feature]))
+            dev.write_json(path, {"version": 2, "patterns": {}, "members": {}, "workflows": [{"title": "Review persistence", "criteria": ["Validate storage and readback"]}]})
+            status, detail = self.get("/api/mods/game-plus")
+            self.assertEqual(status, 200)
+            self.assertEqual(detail["features"][0]["verification_state"], "works")
+            _, context = self.get("/api/mods/game-plus/context")
+            self.assertIn("Custom feature", context["works"])
+            self.assertEqual(context["learned_workflows"][0]["criteria"], ["Validate storage and readback"])
+            for changed in ({"app_version": "old"}, {"mod_version": "old"}):
+                feature["verified"] = dict(result, **changed)
+                dev.save_state("game-plus", dict(old, verified_features=[feature]))
+                _, detail = self.get("/api/mods/game-plus")
+                self.assertEqual(detail["features"][0]["verification_state"], "stale")
+                _, context = self.get("/api/mods/game-plus/context")
+                self.assertNotIn("Custom feature", context["works"])
+        finally:
+            dev.save_state("game-plus", old)
+            if previous is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.write_bytes(previous)
 
     def test_mods_and_detail(self):
         status, studio = self.get("/api/studio")

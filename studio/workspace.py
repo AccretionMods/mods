@@ -201,7 +201,19 @@ def snapshot_create(
     }
     # Recovery snapshots may contain temporarily invalid edited configs; restoration validates them.
     atomic_json(path, data)
+    snapshot_prune(state_root, mod_name)
     return _snapshot_summary(data)
+
+
+SNAPSHOT_KEEP = 30  # per mod: a few days of Add, Pin and builds (each can be a megabyte)
+
+
+def snapshot_prune(state_root, mod_name, keep=SNAPSHOT_KEEP):
+    """Only the newest `keep` snapshots of a mod stay (by file time; a restore's recovery snapshot is new)."""
+    folder = _snapshot_dir(state_root, mod_name)
+    paths = sorted(folder.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for old in paths[keep:]:
+        old.unlink(missing_ok=True)
 
 
 def snapshot_list(state_root, mod_name) -> list:
