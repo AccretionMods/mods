@@ -30,7 +30,8 @@ def problems(catalog):
         for target in t.get("targets") or []:
             if not BUNDLE_ID.match(target):
                 errors.append(f"{where}: bad target bundle ID {target!r}")
-        for url in [t.get("debURL")] + list(t.get("requires") or []) + [t.get("projectURL")]:
+        # iconURL: optional, the game's App Store icon the store shows for the tweak
+        for url in [t.get("debURL")] + list(t.get("requires") or []) + [t.get("projectURL"), t.get("iconURL")]:
             if url is not None and not str(url).startswith("https://"):
                 errors.append(f"{where}: not an https link: {url}")
         for url in [t.get("debURL")] + list(t.get("requires") or []):
