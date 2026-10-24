@@ -33,7 +33,8 @@ import appstore  # noqa: E402 - _protect (Windows data protection) and state_dir
 import ipa_fetch  # noqa: E402 - import_ipa, safe_name, FetchError
 
 CHAT = int(os.environ.get("AM_TELEGRAM_CHAT") or 7019185679)
-CREDENTIAL = "AccretionMods/telegram/api"
+# the Windows Credential Manager entry's name (not a secret: the app keys are stored under it)
+VAULT_TARGET = "AccretionMods/telegram/api"
 POLL = 3  # seconds between looks at the chat
 DOWNLOAD_WORDS = re.compile(r"download|get|ipa|decrypt|descargar", re.IGNORECASE)
 
@@ -44,7 +45,7 @@ def _session_path():
 
 def _vault():
     vault = ipa_fetch.Vault("telegram")
-    vault.target = CREDENTIAL
+    vault.target = VAULT_TARGET
     return vault
 
 
