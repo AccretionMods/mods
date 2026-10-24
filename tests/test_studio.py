@@ -28,7 +28,10 @@ class Api(unittest.TestCase):
                 mock.patch.object(server, "gemini_key", return_value="test-key"):
             self.assertEqual(server.claude_command("x", True, "high")[-2:], ["--effort", "high"])
             self.assertNotIn("--effort", server.claude_command("x", True))
-            self.assertIn('model_reasoning_effort="low"', server.codex_command("x", True, "low"))
+            # a stand-in codex on the PATH: the command is checked without the CLI installed (CI has none)
+            fake = lambda name: "/usr/local/bin/codex" if name == "codex" else None  # noqa: E731
+            with mock.patch.object(server.shutil, "which", side_effect=fake):
+                self.assertIn('model_reasoning_effort="low"', server.codex_command("x", True, "low"))
             cmd = server.gemini_command("x", None, "medium")
             self.assertEqual(cmd[1:5], ["--model", "gemini/" + server.GEMINI_MODEL, "--reasoning-effort", "medium"])
             self.assertNotIn("test-key", " ".join(cmd))  # the key goes through the environment only
