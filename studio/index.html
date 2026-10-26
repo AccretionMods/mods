@@ -232,6 +232,8 @@ h2, h3 { font-family: var(--display); }
 .phonepanel .line .r { display: block; font: 12px var(--mono); color: var(--muted); overflow-wrap: anywhere; margin-top: 2px; }
 .phonepanel .acts { display: flex; flex-direction: column; gap: 6px; }
 .phonepanel .acts button { width: 100%; min-height: 40px; }
+/* the mods list stays beside the work area and scrolls on its own (below the header, above the jobs dock) */
+.layout > aside.card { position: sticky; top: 76px; max-height: calc(100vh - 76px - 64px); overflow-y: auto; overscroll-behavior: contain; }
 .mod .head { display: flex; gap: 10px; align-items: center; min-width: 0; }
 .mod .head > div { min-width: 0; }
 .mod .head .s { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }  /* beside the icon: one line each */
@@ -253,6 +255,7 @@ h2, h3 { font-family: var(--display); }
 @media (max-width: 860px) {
   .layout { grid-template-columns: 1fr; padding: 14px 12px 76px; }
   header { position: static; }  /* several rows tall on a phone: it scrolls away instead of covering the page */
+  .layout > aside.card { position: static; max-height: 40vh; }  /* on a phone the list sits above the work area */
   .status { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 </style>
@@ -445,6 +448,8 @@ const App = {
     this.mod = name; localStorage.setItem("studio.mod", name);
     await this.refresh();
     document.querySelectorAll(".mod[data-name]").forEach(e => e.classList.toggle("active", e.dataset.name === name));
+    // the work area from its top (tabs, status): the list keeps its own scroll position beside it
+    if (window.scrollY > 0) window.scrollTo({ top: 0, behavior: "smooth" });
   },
   async refresh(detail) {
     this.detail = detail || await this.api(`/api/mods/${this.mod}`);
@@ -461,6 +466,21 @@ const App = {
     });
     this.byId("sel").replaceChildren(this.el("b", { text: `${d.title} ${d.version}` }), ` · ${d.target} ${d.app_version}`,
       this.el("label", { class: "muted small", style: "margin:0 0 0 12px;display:inline-flex;gap:6px;align-items:center", title: "The mod menu's \"More at getaccretion.app ›\" link, the Accretion mark by the title and \"Made by Accretion.\" Off: this mod's next build has none of them (mod.json branding: false); Cloud saves stay." }, branding, "Accretion branding in the menu"));
+    // how this mod installs on the phone: the game's own ID (recommended) or a separate copy beside it. Local
+    // builds only (dev state): store entries and releases keep mod.json's bundle_id
+    const mode = this.el("select", { title: `Install ID for local builds: ${d.install_bundle}`, "aria-label": "Install as" },
+      [["original", "Original game ID"], ["separate", "Separate copy"]].map(o => this.el("option", { value: o[0], text: o[1] })));
+    mode.value = d.install_mode;
+    mode.addEventListener("change", async () => {
+      try {
+        const r = await this.api(`/api/mods/${this.mod}/install-mode`, { mode: mode.value });
+        this.detail.install_mode = r.install_mode; this.detail.install_bundle = r.install_bundle;
+        mode.title = `Install ID for local builds: ${r.install_bundle}`;
+        this.toast(r.install_mode === "original" ? `Next build installs as the game itself (${r.install_bundle}); recommended for compatibility`
+                                                 : `Next build installs as a separate copy (${r.install_bundle}) beside the original`, "ok");
+      } catch (e) { mode.value = this.detail.install_mode; this.toast(e.message, "bad"); }
+    });
+    this.byId("sel").append(this.el("label", { class: "muted small", style: "margin:0 0 0 12px;display:inline-flex;gap:6px;align-items:center" }, "Install as", mode));
     this.byId("runPhone").disabled = false;
     const tweaks = (d.tweaks_json || {}).tweaks || [];
     this.byId("navCount").textContent = tweaks.length ? String(tweaks.length) : "";
@@ -503,6 +523,22 @@ const App = {
       this.el("span", { class: "badge " + (st.state === "ok" ? "good" : "bad"), text: st.state === "ok" ? "working" : "waiting" }), " ",
       this.el("span", { text: titles.get(key) || key }),
       st.reason ? this.el("span", { class: "r", text: st.reason }) : null)));
+  },
+  // Build and run; in original-ID mode, asks first when the phone has the original game (an app Studio did not
+  // install) under that ID: installing replaces it, so it needs an explicit yes (--replace-original)
+  async runOnPhone(args) {
+    if (this.detail && this.detail.install_mode === "original") {
+      let check = null;
+      try { check = await this.api(`/api/mods/${this.mod}/install-check`); } catch (e) { check = null; }
+      if (check && check.replaces_original) {
+        const yes = confirm(`The original game (${check.bundle}) is installed on the phone and Studio did not install it.\n\n`
+          + "If the signer keeps the game's ID, installing this build replaces the original app (its data may be replaced too).\n\n"
+          + "Replace it? Cancel keeps the original: switch Install as to Separate copy to install beside it.");
+        if (!yes) { this.toast("Not installed: the original game stays", "ok"); return; }
+        args = [...args, "--replace-original"];
+      }
+    }
+    return this.job("run", args);
   },
   openJobs(open = true) {
     const dock = this.byId("jobsPanel");
@@ -558,7 +594,7 @@ const App = {
     box.append(this.el("div", { class: "panel" },
       this.el("div", { class: "panel-h" }, this.el("span", { text: "Try it on the phone" }), this.el("span", { class: "fig", text: d.last_ipa ? d.last_ipa.split(/[\\/]/).pop() : "no build yet" })),
       this.el("div", { class: "bar", style: "padding-top:0" },
-        this.el("button", { class: "primary", title: "build the .ipa, sign it, install it, open the game and read its log", onclick: () => this.job("run", [...(bump.checked ? ["--bump"] : []), "--seconds", "75"]) }, "Build and run on the phone"),
+        this.el("button", { class: "primary", title: "build the .ipa, sign it, install it, open the game and read its log", onclick: () => this.runOnPhone([...(bump.checked ? ["--bump"] : []), "--seconds", "75"]) }, "Build and run on the phone"),
         this.el("button", { title: "sends this mod's switches to the installed game: they apply within 2 s, no build (needs a build that has live pins)", onclick: () => this.job("push", []) }, "Push switches"),
         this.el("button", { title: "turns the switches on from the PC one category at a time, reads which reach the game, turns them off again (am test)", onclick: () => this.job("test", []) }, "Test switches"),
         this.el("label", { style: "margin:0 6px;display:inline-flex;gap:6px;align-items:center" }, bump, "bump version"),
@@ -1781,7 +1817,7 @@ const App = {
     this.byId("reloadMods").addEventListener("click", () => this.loadMods());
     this.byId("clearJobs").addEventListener("click", () => { this.byId("jobs").replaceChildren(); this.drawJobChips(); });
     // workspace: header Build and run, phone panel, jobs dock
-    this.byId("runPhone").addEventListener("click", () => this.mod && this.job("run", ["--seconds", "75"]));
+    this.byId("runPhone").addEventListener("click", () => this.mod && this.runOnPhone(["--seconds", "75"]));
     this.byId("phoneWatch").addEventListener("click", async () => { if (!this.mod) return; await this.job("log", ["--seconds", "300"]); setTimeout(() => this.refreshLive(), 3000); });
     this.byId("phonePush").addEventListener("click", () => this.mod && this.job("push", []));
     this.byId("phoneShotBtn").addEventListener("click", () => this.mod && this.phoneShot());

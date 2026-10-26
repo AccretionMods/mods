@@ -107,10 +107,11 @@ published="${version}-mod$(field version)"
 flags=(-u -w)
 case "$(field remove_extensions)" in all) flags+=(-e) ;; *) flags+=(-g) ;; esac
 
+# AM_INSTALL_BUNDLE: dev.py build's install-mode ID (the game's own for "original"); unset in CI and publish
 out="${3:-$root}/${mod}_${published}_accretion.ipa"
 echo "==> Injecting into $out"
 "$HOME/.cyan/bin/cyan" -i "$work/base.ipa" -o "$out" -f "$dylib" \
-    -n "$(field display_name)" -b "$(field bundle_id)" "${flags[@]}" --overwrite
+    -n "$(field display_name)" -b "${AM_INSTALL_BUNDLE:-$(field bundle_id)}" "${flags[@]}" --overwrite
 
 # The visible version becomes the published one; the build number (CFBundleVersion) stays as is.
 python3 - "$out" "$published" <<'PY'

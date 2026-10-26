@@ -818,6 +818,10 @@ def mod_summary(name):
         "app_version": meta.get("tested_app_version", ""),
         "personal": bool(meta.get("personal")),
         "branding": meta.get("branding", True) is not False,  # the menu's Accretion link, mark and wording
+        # how local builds install on the phone (dev state, never mod.json: store entries keep bundle_id)
+        "install_mode": dev.install_mode(name),
+        "install_bundle": dev.install_bundle(name, meta),
+        "installed_bundle": state.get("installed_bundle"),
         "has_tweaks": tweaks is not None,
         "tweaks": len(tweaks["tweaks"]) if tweaks else 0,
         "hooks": len(hooks),
@@ -1271,6 +1275,18 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         q = {k: v[-1] for k, v in parse_qs(url.query).items()}
         parts = [p for p in url.path.split("/") if p]
+        if len(parts) == 4 and parts[:2] == ["api", "mods"] and parts[3] == "install-check":
+            # before Build and run in original-ID mode: is the original game (an app Studio did not install) there?
+            if not (MOD_NAME.fullmatch(parts[2]) and (ROOT / "mods" / parts[2] / "mod.json").is_file()):
+                return self.send_json({"error": "no such mod"}, HTTPStatus.NOT_FOUND)
+            mod, bundle = parts[2], dev.install_bundle(parts[2])
+            try:
+                apps = dev.phone_apps()
+            except dev.DevError as e:
+                return self.send_json({"mode": dev.install_mode(mod), "bundle": bundle, "phone": False, "error": str(e)})
+            return self.send_json({"mode": dev.install_mode(mod), "bundle": bundle, "phone": True,
+                                   "replaces_original": dev.install_mode(mod) == "original"
+                                   and dev.replacing_original(mod, bundle, apps)})
         if len(parts) == 3 and parts[:2] == ["api", "icons"]:
             # a game's App Store icon for the Mods list: looked up once for every mod's game, kept on disk
             others = [m.get("target_bundle_id") for m in mod_metas()]
@@ -1596,6 +1612,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"error": "on: true or false"}, HTTPStatus.BAD_REQUEST)
             dev.write_json(path, meta)
             return self.send_json({"branding": body["on"]})
+        if len(parts) == 4 and parts[:2] == ["api", "mods"] and parts[3] == "install-mode":
+            # original (the game's own ID) or separate (mod.json's bundle_id beside the original), for local builds
+            self.local_only()
+            if not (MOD_NAME.fullmatch(parts[2]) and (ROOT / "mods" / parts[2] / "mod.json").is_file()):
+                return self.send_json({"error": "no such mod"}, HTTPStatus.NOT_FOUND)
+            if body.get("mode") not in dev.INSTALL_MODES:
+                return self.send_json({"error": "mode: original or separate"}, HTTPStatus.BAD_REQUEST)
+            state = dev.load_state(parts[2])
+            state["install_mode"] = body["mode"]
+            dev.save_state(parts[2], state)
+            return self.send_json({"install_mode": body["mode"], "install_bundle": dev.install_bundle(parts[2])})
         if len(parts) == 4 and parts[:2] == ["api", "mods"] and parts[3] in QUICK:
             self.local_only()
             name = self.mod_name(parts[2])

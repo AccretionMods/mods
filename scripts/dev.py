@@ -1210,7 +1210,7 @@ def cmd_new(args):
         },
     )
     gen_tweaks.generate(str(folder))
-    save_state(name, {"base_ipa": str(ipa), "app_version": version})
+    save_state(name, {"base_ipa": str(ipa), "app_version": version, "install_mode": "original"})  # new mods: the game's ID
     r = subprocess.run(
         [sys.executable, str(HERE / "validate_mods.py"), name], check=False
     )
@@ -1320,8 +1320,12 @@ def cmd_build(args):
                 f"{base.name} is not the base mod.json names (sha256 differs); pass --base or update mod.json"
             )
         print(f"==> Injecting into {base.name}")
+        bundle = install_bundle(args.mod, meta)  # the install mode's ID; CI and publish.py keep mod.json's bundle_id
+        if not re.fullmatch(r"[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)+", bundle):
+            raise DevError(f"{bundle!r} is not a bundle ID")
+        print(f"==> Install ID: {bundle} ({INSTALL_MODES[install_mode(args.mod)]})")
         code, out = run_in_wsl(
-            f'cd "{repo}" && scripts/local_ipa.sh {args.mod} "{wsl_path(base)}" "{wsl_path(builds)}"'
+            f'cd "{repo}" && AM_INSTALL_BUNDLE={bundle} scripts/local_ipa.sh {args.mod} "{wsl_path(base)}" "{wsl_path(builds)}"'
         )
         if code != 0:
             raise DevError("local_ipa.sh failed")
@@ -1440,6 +1444,72 @@ def usbmux_device_id():
     return devid
 
 
+INSTALL_MODES = {
+    "original": "Original game ID: recommended for compatibility",
+    "separate": "Separate copy: installs alongside the original",
+}
+
+
+def install_mode(mod):
+    """How the mod installs on the owner's phone: "original" (the game's own bundle ID) or "separate" (mod.json's
+    bundle_id beside the original). Kept in the dev state, never in mod.json: store entries, published releases
+    and CI builds keep using mod.json's bundle_id. New mods start on "original" (cmd_new); projects from before
+    this setting keep "separate", what they always built, until it is changed."""
+    return load_state(mod).get("install_mode") or "separate"
+
+
+def install_bundle(mod, meta=None):
+    """The bundle ID a local build of mod gets (before signing)."""
+    meta = meta or read_json(mod_dir(mod) / "mod.json")
+    return meta["target_bundle_id"] if install_mode(mod) == "original" else meta["bundle_id"]
+
+
+def cmd_install_mode(args):
+    if not args.mode:
+        mode = install_mode(args.mod)
+        print(f"{args.mod}: {INSTALL_MODES[mode]} ({install_bundle(args.mod)})")
+        return 0
+    state = load_state(args.mod)
+    state["install_mode"] = args.mode
+    save_state(args.mod, state)
+    print(f"==> {args.mod}: {INSTALL_MODES[args.mode]} ({install_bundle(args.mod)}); the next build uses it")
+    return 0
+
+
+def phone_apps():
+    """{bundle ID: info} of the apps on the USB phone."""
+    r = subprocess.run([pymobiledevice3_cli(), "apps", "list"], capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", stdin=subprocess.DEVNULL, check=False)
+    if r.returncode != 0:
+        detail = r.stderr.strip().splitlines()[-1] if r.stderr.strip() else ""
+        raise DevError(f"could not list the phone's apps: {detail}")
+    try:
+        return json.loads(r.stdout[r.stdout.index("{"):])
+    except ValueError:
+        raise DevError("pymobiledevice3 apps list printed no JSON") from None
+
+
+def installed_id(mod, meta=None, apps=None):
+    """The mod's app on the USB phone, or None: the ID Studio verified after its last install when it is still
+    there, else a copy of the install-mode ID with a signer's team suffix, else a copy under mod.json's
+    bundle_id (installs from before the setting). The original game itself never counts as the mod."""
+    meta = meta or read_json(mod_dir(mod) / "mod.json")
+    apps = apps if apps is not None else phone_apps()
+    known = load_state(mod).get("installed_bundle")
+    if known and known in apps:
+        return known
+    for prefix, exact in ((install_bundle(mod, meta), False), (meta["bundle_id"], True)):
+        found = sorted(b for b in apps if (exact and b == prefix) or b.startswith(prefix + "."))
+        if found:
+            return found[0]
+    return None
+
+
+def replacing_original(mod, bundle, apps):
+    """True when installing bundle would replace an app Studio did not install: the original game."""
+    return bundle in apps and bundle != load_state(mod).get("installed_bundle")
+
+
 def cmd_sign(args):
     if not WINDOWS:
         raise DevError(
@@ -1453,8 +1523,12 @@ def cmd_sign(args):
         if args.out
         else ipa.with_name(ipa.stem.replace("_accretion", "") + "_signed.ipa")
     )
+    mod = getattr(args, "mod", None)
+    chosen = ipa_info(ipa)[0]["CFBundleIdentifier"]
+    # "original" installs can replace the game: sign first, look at the phone, then install (no plumesign install)
+    careful = bool(args.install and mod and install_mode(mod) == "original")
     cmd = [plumesign(), "sign", "-p", str(ipa), "--apple-id", "-o", str(out)]
-    if args.install:
+    if args.install and not careful:
         cmd += ["--register-and-install", "--udid", usbmux_device_id()]
     print("==> " + " ".join(cmd))
     r = subprocess.run(
@@ -1463,26 +1537,43 @@ def cmd_sign(args):
     if r.returncode != 0:
         raise DevError(f"plumesign failed ({r.returncode})")
     print(f"==> {out}")
+    bundle = ipa_info(out)[0]["CFBundleIdentifier"]
+    if bundle != chosen:
+        print(f"==> the signer changed the app ID: {chosen} -> {bundle} (Apple ID signing adds the team ID when it "
+              "can't register the original; the phone tools follow the signed ID)")
+    else:
+        print(f"==> app ID kept: {bundle}")
+    if mod:
+        state = load_state(mod)
+        state.update(signed_bundle=bundle, signed_from=chosen)
+        save_state(mod, state)
     if args.install:
-        # plumesign's install has left the app missing minutes later (2026-10-21, FBSApplicationLibrary NotFound);
-        # check the phone's list and install the signed copy over USB if it is not there
-        info, _ = ipa_info(out)
-        bundle = info["CFBundleIdentifier"]
-        if bundle in installed_bundles(bundle.rsplit(".", 2)[0]):
-            print(f"==> installed as {bundle}")
-        else:
-            print(
-                f"==> {bundle} is not on the phone after plumesign's install; installing the signed copy over USB"
+        apps = phone_apps()
+        if careful and replacing_original(mod, bundle, apps) and not getattr(args, "replace_original", False):
+            raise DevError(
+                f"{bundle} is already on the phone and Studio did not install it: this is the original game. "
+                "Installing replaces it (its app and possibly its data). Run again with --replace-original to "
+                "replace it, or choose \"separate\" (dev.py install-mode " + mod + " separate)."
             )
-            if (
-                subprocess.run(
-                    [pymobiledevice3_cli(), "apps", "install", str(out)],
-                    stdin=subprocess.DEVNULL,
-                    check=False,
-                ).returncode
-                != 0
-            ):
-                raise DevError("pymobiledevice3 apps install failed")
+        if careful or bundle not in apps:
+            if not careful:
+                # plumesign's install has left the app missing minutes later (2026-10-21, FBSApplicationLibrary
+                # NotFound); install the signed copy over USB if it is not there
+                print(f"==> {bundle} is not on the phone after plumesign's install; installing the signed copy over USB")
+            elif bundle in apps:
+                print(f"==> replacing {bundle} on the phone (confirmed)")
+            if subprocess.run([pymobiledevice3_cli(), "apps", "install", str(out)],
+                              stdin=subprocess.DEVNULL, check=False).returncode != 0:
+                raise DevError("pymobiledevice3 apps install failed (a phone the Apple ID has not registered yet: "
+                               "install once with install-mode separate, or plumesign --register-and-install)")
+            apps = phone_apps()
+        if bundle not in apps:
+            raise DevError(f"{bundle} is not on the phone after the install")
+        print(f"==> installed as {bundle}")
+        if mod:
+            state = load_state(mod)
+            state["installed_bundle"] = bundle  # verified on the phone: the phone tools use it
+            save_state(mod, state)
         if getattr(args, "launch", False):
             launch_app(bundle)
     return 0
@@ -1538,15 +1629,9 @@ def cmd_run(args):
     ipa = load_state(args.mod).get("last_ipa")
     if not ipa:
         raise DevError("no .ipa from the build")
-    cmd_sign(argparse.Namespace(ipa=ipa, install=True, out=None, launch=False))
-    signed = Path(ipa).with_name(
-        Path(ipa).stem.replace("_accretion", "") + "_signed.ipa"
-    )
-    bundle = ipa_info(signed)[0]["CFBundleIdentifier"]
-    state = load_state(args.mod)
-    state["installed_bundle"] = bundle
-    save_state(args.mod, state)
-    launch_app(bundle)
+    cmd_sign(argparse.Namespace(ipa=ipa, install=True, out=None, launch=False, mod=args.mod,
+                                replace_original=getattr(args, "replace_original", False)))
+    launch_app(load_state(args.mod)["installed_bundle"])  # the ID sign verified on the phone
     return cmd_log(argparse.Namespace(mod=args.mod, seconds=args.seconds, launch=False))
 
 
@@ -1585,9 +1670,9 @@ def cmd_push(args):
     it, so the build's own switches apply again. Needs a build that has AMLivePins (built after it existed)."""
     folder = mod_dir(args.mod)
     meta = read_json(folder / "mod.json")
-    found = installed_bundles(meta["bundle_id"])
+    found = [b for b in [installed_id(args.mod, meta)] if b]  # the verified installed ID (install mode aware)
     if not found:
-        raise DevError(f"{meta['bundle_id']} is not on the phone (dev.py run {args.mod})")
+        raise DevError(f"{args.mod} is not on the phone (dev.py run {args.mod})")
     cli = pymobiledevice3_cli()
     if args.off:
         r = subprocess.run([cli, "apps", "rm", found[0], "Documents/live_tweaks.json"], capture_output=True, text=True)
@@ -1610,7 +1695,7 @@ def cmd_log(args):
     folder = mod_dir(args.mod)
     meta = read_json(folder / "mod.json")
     if getattr(args, "launch", False):
-        found = installed_bundles(meta["bundle_id"])
+        found = [b for b in [installed_id(args.mod, meta)] if b]  # the verified installed ID (install mode aware)
         if not found:
             raise DevError(
                 f"{meta['bundle_id']} is not on the phone (dev.py sign <ipa> --install)"
@@ -1863,9 +1948,9 @@ def cmd_test(args):
     folder = mod_dir(args.mod)
     meta = read_json(folder / "mod.json")
     tweaks = load_tweaks(folder, meta)
-    found = installed_bundles(meta["bundle_id"])
+    found = [b for b in [installed_id(args.mod, meta)] if b]  # the verified installed ID (install mode aware)
     if not found:
-        raise DevError(f"{meta['bundle_id']} is not on the phone (dev.py run {args.mod})")
+        raise DevError(f"{args.mod} is not on the phone (dev.py run {args.mod})")
     rounds = test_rounds(tweaks, args.section, args.keys)
     titles = {t["key"]: t["title"] for t in tweaks["tweaks"]}
     results = {}
@@ -2804,6 +2889,9 @@ def build_parser():
     s = sub.add_parser("sign")
     s.add_argument("ipa")
     s.add_argument("--install", action="store_true")
+    s.add_argument("--mod", help="the mod this build is from: its install mode, signed and installed IDs")
+    s.add_argument("--replace-original", action="store_true",
+                   help="install even though the original game (an app Studio did not install) has this ID")
     s.add_argument(
         "--launch", action="store_true", help="with --install: open the app afterwards"
     )
@@ -2832,7 +2920,14 @@ def build_parser():
     s.add_argument("--bump", action="store_true")
     s.add_argument("--base")
     s.add_argument("--seconds", type=int, default=60)
+    s.add_argument("--replace-original", action="store_true",
+                   help="original-ID mode: replace the original game on the phone (asked for when it is there)")
     s.set_defaults(fn=cmd_run)
+
+    s = sub.add_parser("install-mode", help="how the mod installs: original (the game's ID) or separate (its own)")
+    s.add_argument("mod")
+    s.add_argument("mode", nargs="?", choices=sorted(INSTALL_MODES))
+    s.set_defaults(fn=cmd_install_mode)
 
     s = sub.add_parser("status")
     s.add_argument("mod")
