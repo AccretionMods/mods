@@ -91,6 +91,8 @@ main.card::after { content: ""; position: absolute; inset: -1px; border-radius: 
 .mod { padding: 11px 13px; border: 1px solid var(--line); border-radius: 12px; cursor: pointer; background: var(--surface); transition: border-color .15s, transform .15s; }
 .mod:hover { border-color: color-mix(in srgb, var(--line) 40%, var(--accent)); transform: translateY(-1px); }
 .mod.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.mod.compact { padding: 8px 11px; }
+.mod.compact .badges { margin-top: 5px; }
 .mod .t { font-family: var(--display); font-weight: 600; font-size: 15px; }
 .mod .s { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; font-family: var(--mono); }
 .badges { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
@@ -295,34 +297,85 @@ const App = {
 
   async loadMods() {
     const data = await this.api("/api/mods");
-    // latest build first (the date under each), then the ones never built, by name
-    this.mods = data.mods.slice().sort((a, b) => (b.built || 0) - (a.built || 0) || a.title.localeCompare(b.title));
+    this.mods = data.mods.slice();
     this.byId("amRoot").textContent = "Workspace: " + data.am_root;
+    this.modsControls();
+    this.drawMods();
+    if (!this.mod && this.mods.length) this.select(localStorage.getItem("studio.mod") || this.mods[0].name);
+  },
+  // the Mods list's search, filter, sort and density, kept in this browser (studio.mods.*)
+  modsPref(key, fallback) { try { return localStorage.getItem("studio.mods." + key) || fallback; } catch (e) { return fallback; } },
+  modsSave(key, value) { try { localStorage.setItem("studio.mods." + key, value); } catch (e) { /* private window */ } },
+  modsControls() {
+    if (this.byId("modsTools")) return;
+    const search = this.el("input", { id: "modsSearch", placeholder: "Filter: name, game or bundle ID", style: "width:100%" });
+    search.value = this.modsPref("q", "");
+    search.addEventListener("input", () => { this.modsSave("q", search.value); this.drawMods(); });
+    const sort = this.el("select", { id: "modsSort", title: "Order of the list" },
+      [["built", "Last built"], ["name", "Name"], ["game", "By game"], ["switches", "Most switches"]].map(o => this.el("option", { value: o[0], text: o[1] })));
+    sort.value = this.modsPref("sort", "built");
+    sort.addEventListener("change", () => { this.modsSave("sort", sort.value); this.drawMods(); });
+    const compact = this.el("input", { type: "checkbox", id: "modsCompact" });
+    compact.checked = this.modsPref("compact", "0") === "1";
+    compact.addEventListener("change", () => { this.modsSave("compact", compact.checked ? "1" : "0"); this.drawMods(); });
+    const chips = this.el("div", { id: "modsChips", class: "badges", style: "margin:8px 0 2px" });
+    for (const [key, label] of [["all", "All"], ["personal", "Personal"], ["public", "Public"], ["switches", "Switches"], ["hand", "Hand-written"], ["nodump", "No dump"]]) {
+      chips.append(this.el("button", { class: "small", "data-filter": key, type: "button", onclick: () => { this.modsSave("filter", key); this.drawMods(); } }, label));
+    }
+    const tools = this.el("div", { id: "modsTools", style: "margin-bottom:10px" }, search, chips,
+      this.el("div", { class: "row", style: "margin-top:6px;gap:8px;align-items:center" }, sort,
+        this.el("label", { class: "muted small", style: "margin:0;display:inline-flex;gap:6px;align-items:center" }, compact, "compact"),
+        this.el("span", { id: "modsCount", class: "muted small grow", style: "text-align:right" })));
+    this.byId("mods").before(tools);
+  },
+  drawMods() {
     const box = this.byId("mods"); box.replaceChildren();
+    const q = (this.byId("modsSearch").value || "").trim().toLowerCase();
+    const filter = this.modsPref("filter", "all"), sort = this.byId("modsSort").value, compact = this.byId("modsCompact").checked;
+    this.byId("modsChips").querySelectorAll("button").forEach(b => b.classList.toggle("primary", b.dataset.filter === filter));
+    const keep = {
+      all: () => true, personal: m => m.personal, public: m => !m.personal,
+      switches: m => m.has_tweaks, hand: m => !m.has_tweaks, nodump: m => !m.dump,
+    }[filter] || (() => true);
+    const shown = this.mods.filter(m => keep(m) && (!q || [m.title, m.name, m.target].some(t => String(t || "").toLowerCase().includes(q))));
+    const byName = (a, b) => a.title.localeCompare(b.title);
+    shown.sort({
+      built: (a, b) => (b.built || 0) - (a.built || 0) || byName(a, b),  // latest build first, never built last
+      name: byName,
+      game: (a, b) => a.target.localeCompare(b.target) || byName(a, b),
+      switches: (a, b) => (b.tweaks || 0) - (a.tweaks || 0) || byName(a, b),
+    }[sort] || byName);
+    this.byId("modsCount").textContent = shown.length === this.mods.length ? `${shown.length} mods` : `${shown.length} of ${this.mods.length}`;
     const when = t => { const d = new Date(t * 1000), today = new Date().toDateString() === d.toDateString();
       return "built " + (today ? "today " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
                                : d.toLocaleDateString([], { month: "short", day: "numeric", year: d.getFullYear() === new Date().getFullYear() ? undefined : "numeric" })); };
-    for (const m of this.mods) {
+    let game = null;
+    for (const m of shown) {
+      if (sort === "game" && m.target !== game) {  // one header per game: its mods together (Wanderer Dev beside The Wanderer+)
+        game = m.target;
+        box.append(this.el("div", { class: "label", style: "margin:10px 2px 2px;font-size:11px", text: `${m.target} ${m.app_version}`.trim() }));
+      }
       const badges = [
         m.personal ? this.el("span", { class: "badge", text: "personal" }) : null,
         this.el("span", { class: "badge accent", text: `${m.hooks} hooks${m.hooks_jit ? ", " + m.hooks_jit + " JIT" : ""}` }),
         m.has_tweaks ? this.el("span", { class: "badge", text: m.tweaks + " switches" }) : this.el("span", { class: "badge warn", text: "hand-written" }),
         this.el("span", { class: "badge " + (m.dump ? "good" : "bad"), text: m.dump ? "dump" : "no dump" }),
       ];
-      box.append(this.el("div", { class: "mod" + (m.name === this.mod ? " active" : ""), onclick: () => this.select(m.name) },
+      box.append(this.el("div", { class: "mod" + (m.name === this.mod ? " active" : "") + (compact ? " compact" : ""), "data-name": m.name, onclick: () => this.select(m.name),
+                                  title: compact ? `${m.target} ${m.app_version} · ${m.built ? when(m.built) : "never built"}` : null },
         this.el("div", { class: "t", text: `${m.title} ${m.version}` }),
-        this.el("div", { class: "s", text: `${m.target} ${m.app_version}` }),
-        this.el("div", { class: "s", text: m.built ? when(m.built) : "never built" }),
+        compact ? null : this.el("div", { class: "s", text: `${m.target} ${m.app_version}` }),
+        compact ? null : this.el("div", { class: "s", text: m.built ? when(m.built) : "never built" }),
         this.el("div", { class: "badges" }, badges)));
     }
-    if (!this.mod && this.mods.length) this.select(localStorage.getItem("studio.mod") || this.mods[0].name);
+    if (!shown.length) box.append(this.el("p", { class: "hint", text: "No mod matches. Clear the filter or pick All." }));
   },
   async select(name) {
     if (!this.mods.some(m => m.name === name)) name = this.mods[0] && this.mods[0].name;
     if (!name) return;
     this.mod = name; localStorage.setItem("studio.mod", name);
     await this.refresh();
-    document.querySelectorAll(".mod").forEach((e, i) => e.classList.toggle("active", this.mods[i].name === name));
+    document.querySelectorAll(".mod[data-name]").forEach(e => e.classList.toggle("active", e.dataset.name === name));
   },
   async refresh(detail) {
     this.detail = detail || await this.api(`/api/mods/${this.mod}`);
