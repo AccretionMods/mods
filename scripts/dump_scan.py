@@ -9,9 +9,11 @@ then sorts each into an area by its names, scores it, and adds informational top
 accounts and online play). Every topic remains a candidate. Rows are suggestions: the scan reads names and
 types, never what the code does, so a phone test (and the menu's status dot) decides.
 
-scan(dump) -> {"rows": [...], "flagged": [...], "classes": N}; cached as scan.json next to dump.cs.
+scan(dump) -> {"rows": [...], "flagged": [...], "classes": N}; cached as scan-<choice>.json next to dump.cs.
 """
 
+import bisect
+import hashlib
 import json
 import os
 import re
@@ -19,7 +21,7 @@ from pathlib import Path
 
 from il2cpp_dump import ADDRESS, FLOATS, INTEGERS, SIGNATURE, TYPE, TYPE_INDEX, Method, split_params
 
-VERSION = 14  # also the assembly named after the game's bundle ID (VampireSurvivors.Runtime)
+VERSION = 15  # presentation, counter and bookkeeping rows ranked lower; the game's own assembly from its bundle ID
 
 IMAGE = re.compile(r"^// Image \d+: (.+?)(?:\.dll)? - (\d+)\s*$")
 NAMESPACE = re.compile(r"^\s*// Namespace: ?(\S*)")
@@ -76,6 +78,19 @@ PROBABILITY = re.compile(r"chance|probab|odds", re.IGNORECASE)
 # switch restores it (gen_tweaks restorable pins do)
 SAVED = re.compile(r"save|snapshot|serializ|persist|container|profile", re.IGNORECASE)
 UI_CLASS = re.compile(r"(button|panel|popup|screen|menu|view|toggle|ui)$", re.IGNORECASE)  # "SaveLoadButton" is UI
+# classes whose values are presentation, not play: player options (damage numbers on/off), UI widgets and visual
+# effects. Their rows stay in the scan, ranked lower (Vampire Survivors: 160 option rows, 600 on UI objects)
+PRESENTATION = re.compile(r"(?:options|settings|preferences|prefs|accessibility|localization)(?:data)?$|"
+                          r"(?:button|panel|popup|screen|menu|view|toggle|widget|tooltip|hud|ui)$|^ui_?|"
+                          r"reflection|shadow|shader|particle|renderer|vfx|tween|animator|camera|lighting|material",
+                          re.IGNORECASE)
+UI_NAMESPACE = re.compile(r"(?:^|\.)(?:UI|Ui|Views?|Menus?|Graphics|Rendering|Audio)(?:\.|$)")
+# statistics the game counts (kills, totals, play time): changing them changes a number on a results screen
+COUNTER = re.compile(r"killed|kills$|total|play_?time|direct_?hits|hits_?taken|times_?(?:played|died)|statistic",
+                     re.IGNORECASE)
+# the code's own bookkeeping: set-up done, something changed, shown or hidden
+BOOKKEEPING = re.compile(r"init|complete|changed|dirty|loaded|ready|initiali[sz]ed|hide|show|visible|icon|collider|"
+                         r"for_?online|synced?", re.IGNORECASE)
 
 
 def _split_words(name):
@@ -176,7 +191,7 @@ def parse(path, assemblies=None, bundle_id=None):
                 if m:
                     images.append((int(m.group(2)), m.group(1)))
                 continue
-            m = NAMESPACE.match(line)
+            m = NAMESPACE.match(line) if "// Namespace" in line else None  # substring first: ~2M lines
             if m:
                 namespace = m.group(1)
                 continue
@@ -218,7 +233,7 @@ def parse(path, assemblies=None, bundle_id=None):
             if line.startswith("}"):
                 current = None
                 continue
-            m = FIELD.match(line)
+            m = FIELD.match(line) if "; // 0x" in line else None
             if m:
                 mods, ftype, fname, offset = m.group(1), m.group(2).strip(), m.group(3), m.group(4)
                 kind = scalar(ftype)
@@ -235,7 +250,7 @@ def parse(path, assemblies=None, bundle_id=None):
                 else:
                     current["holds"].add(re.sub(r"[<\[].*", "", ftype).rsplit(".", 1)[-1])
                 continue
-            m = METHOD.match(line)
+            m = METHOD.match(line) if ("get_" in line or "set_" in line) else None
             if m:
                 rtype, kind, prop, arg = m.groups()
                 if kind == "get" and scalar(rtype):
@@ -294,6 +309,8 @@ def build(classes, existing=frozenset(), learned=None):
             obj, reach = f"{cls}[]", 1
         else:
             continue
+        local = cls.rpartition(":")[2]
+        presentation = bool(PRESENTATION.search(local.rsplit(".", 1)[-1]) or UI_NAMESPACE.search(local.rpartition(".")[0]))
         members = []
         for prop, ctype in info["props"].items():
             members.append((f"set_{prop}", prop, ctype, "setter", None, prop in info["getters"], False))
@@ -323,6 +340,14 @@ def build(classes, existing=frozenset(), learned=None):
             if private:
                 score -= 1
             if obj.endswith("[]") and area == "Other":
+                score -= 2
+            if presentation:
+                score -= 3
+                row["presentation"] = True
+            words = _split_words(name)
+            if COUNTER.search(words):
+                score -= 2
+            if ctype == "bool" and BOOKKEEPING.search(words):
                 score -= 2
             row.update(_suggest(name, "float" if scale else ctype, getter))
             if cls.rpartition(":")[2].rsplit(".", 1)[-1] in saved:
@@ -360,11 +385,18 @@ def existing_targets(tweaks):
     return out
 
 
+def cache_file(dump, assemblies=None, bundle_id=None):
+    """scan(dump)'s cache beside dump.cs: one file per assembly choice, since mods share a game build's dump
+    (scripts/dump_cache.py) and may read different assemblies of it."""
+    choice = json.dumps([sorted(assemblies or []), bundle_id or ""])
+    return Path(dump).with_name(f"scan-{hashlib.sha1(choice.encode()).hexdigest()[:8]}.json")
+
+
 def scan(dump, tweaks=None, learned=None, assemblies=None, bundle_id=None):
-    """Rows for a dump.cs, cached in scan.json beside it (rebuilt when the dump, VERSION or the chosen assemblies
+    """Rows for a dump.cs, cached beside it (cache_file; rebuilt when the dump, VERSION or the chosen assemblies
     change). assemblies: mod.json "scan_assemblies" (default: hot-update assemblies, else Assembly-CSharp)."""
     dump = Path(dump)
-    cache = dump.with_name("scan.json")
+    cache = cache_file(dump, assemblies, bundle_id)
     st = dump.stat()
     stamp = {"version": VERSION, "size": st.st_size, "mtime": st.st_mtime_ns, "assemblies": sorted(assemblies or []),
              "bundle_id": bundle_id or ""}
@@ -399,6 +431,7 @@ def purchase_inventory(path):
     field = re.compile(r"^\s*(?:(?:public|private|protected|internal|static|readonly|const)\s+)*"
                        r"([\w.<>\[\], ]+?)\s+([\w<>]+)(?:\s*=\s*[^;]+)?; // (0x[0-9A-Fa-f]+)")
     images, rows = [], []
+    starts = None
     namespace = cls = assembly = ""
     code = None
     scalar = INTEGERS | FLOATS | {"bool"}
@@ -409,8 +442,19 @@ def purchase_inventory(path):
                         r"storekit|storefront|payment|premium|vip|subscri|token_?(balance|currency)|"
                         r"(?:^|[._ ])(?:store|buy|currency|coins?|gems?|diamonds?)(?:$|[._ ])")
 
+    # the topic test runs once per class and once per member name: _split_words never joins across the dots, so
+    # "assembly.class" and "member" tested apart match exactly what the joined name does (2.5x faster on 100 MB)
+    class_hit, member_hits = False, {}
+
     def matches(member):
-        return topics.search(_split_words(f"{assembly}.{cls}.{member}")) is not None
+        if class_hit:
+            return True
+        hit = member_hits.get(member)
+        if hit is None:
+            hit = member_hits[member] = topics.search(_split_words(member)) is not None
+        return hit
+
+
 
     def add(member, ctype, kind, signature, offset=None, method=None):
         row = {"class": cls, "object": cls, "member": member, "name": member,
@@ -423,30 +467,42 @@ def purchase_inventory(path):
 
     with open(path, encoding="utf-8", errors="replace") as source:
         for line in source:
-            image = IMAGE.match(line)
+            # cheap substring tests first: three regexes on each of ~2 million lines were most of this pass
+            image = IMAGE.match(line) if line.startswith("// Image ") else None
             if image:
                 images.append((int(image.group(2)), image.group(1)))
+                starts = None
                 continue
-            ns = NAMESPACE.match(line)
+            ns = NAMESPACE.match(line) if "// Namespace" in line else None
             if ns:
                 namespace, cls = ns.group(1), ""
                 code = None
                 continue
-            typ, index = TYPE.match(line), TYPE_INDEX.search(line)
+            index = TYPE_INDEX.search(line) if "// TypeDefIndex:" in line else None
+            typ = TYPE.match(line) if index else None
             if typ and index:
                 cls = f"{namespace}.{typ.group(1)}" if namespace else typ.group(1)
-                assembly = next((name for start, name in reversed(images) if start <= int(index.group(1))), "")
+                if starts is None:  # the image table is in order: the last image starting at or before the index
+                    starts = [s for s, _ in images] if all(a[0] <= b[0] for a, b in zip(images, images[1:])) else []
+                at = int(index.group(1))
+                if starts:
+                    i = bisect.bisect_right(starts, at) - 1
+                    assembly = images[i][1] if i >= 0 else ""
+                else:
+                    assembly = next((name for start, name in reversed(images) if start <= at), "")
                 code = None
                 if "<" in cls:  # closures, delegates, async/iterator state machines and unsupported generics
                     cls = ""
+                class_hit = bool(cls) and topics.search(_split_words(f"{assembly}.{cls}")) is not None
                 continue
             if not cls:
                 continue
             if line.lstrip().startswith("// RVA:"):
                 code = ADDRESS.match(line)  # -1 means abstract/no implementation; never reuse the previous RVA
                 continue
-            f = field.match(line)
-            sig = SIGNATURE.match(line.strip())
+            # only field lines ("...; // 0x10") and method lines ("...(...)") can be rows: skip the regexes otherwise
+            f = field.match(line) if "; // 0x" in line else None
+            sig = SIGNATURE.match(line.strip()) if not f and "(" in line else None
             if f:
                 ctype, member, offset = f.groups()
                 if ctype in scalar and "<" not in member and not re.search(r"\b(const|readonly)\b", line) and matches(member):

@@ -187,6 +187,14 @@ class Members(unittest.TestCase):
             dev_learn.record_tweak_pins(store, self.SKILL, game, "fails")
         self.assertEqual(dev_learn.member_boost(store, "SkillPoints", "int32_t", "game.b"), (0, None))
 
+    def test_the_scan_booster_answers_like_member_boost(self):
+        store = {"patterns": {}, "members": {}}
+        dev_learn.record_tweak_pins(store, self.SKILL, "game.a", "works")
+        for args in [("_skillPoints", "int32_t", "SkillsSave"), ("SkillPoints", "int32_t", ""), ("Points", "int32_t", ""),
+                     ("_skillPoints", "float", "SkillsSave"), ("Gold", "int32_t", "Bag")]:
+            for game in ("game.a", "game.b"):
+                self.assertEqual(dev_learn.booster(store, game)(*args), dev_learn.member_boost(store, args[0], args[1], game, args[2]))
+
     def test_version_1_pins_move_out_of_the_method_patterns(self):
         store = {"version": 1, "patterns": {"accuracy|void": {"action": "pin", "method": "Accuracy", "uses": []},
                                             "attack|void": {"action": "arg", "method": "Attack", "uses": []}}}

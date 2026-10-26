@@ -40,6 +40,8 @@ it); signing and device logs need the phone on USB and run on Windows (plumesign
   dev.py learn <mod>                                             import an existing mod's hooks.json into the patterns
   dev.py fetch <bundle-id | name | --mod M> [--region us]        a decrypted .ipa from the decrypt site into intake/
          [--platform iphone] [--force]                           (AM_DECRYPT_URL; default decrypt.34306.lol, a third party)
+         [--version 1.2.3]                                       (decrypt.whoeevee.com first, the Telegram bot next)
+  dev.py fetch --save-key | --forget-key                         decrypt.whoeevee.com's access token (hidden input)
   dev.py fetch --login [--email E] | --logout | --account        the site account a new decrypt needs
   dev.py fetch --save-login | --forget-login                     keep it in Windows Credential Manager; fetch signs in
   dev.py start <bundle-id | file.ipa> [--name N] [--title T]      new game in one go: decrypted copy, report,
@@ -90,6 +92,7 @@ ROOT = (
 sys.path.insert(0, str(HERE))
 
 import dev_learn
+import dump_cache
 import dump_scan
 import moddability
 import games
@@ -272,19 +275,32 @@ def run_dumper(folder, binary, metadata, out):
         raise DevError(f"Il2CppDumper failed ({r.returncode})")
 
 
-def dump(mod, base=None, force=False):
-    meta = read_json(mod_dir(mod) / "mod.json")
-    ipa = find_base(mod, meta, base)
+def index_old_dumps():
+    """Dumps made before the dump cache, registered in place the first time the cache is used."""
+    states = {p.stem: read_json(p) for p in (am_root() / "dev").glob("*.json") if (ROOT / "mods" / p.stem).is_dir()}
+    for key, folder, how in dump_cache.index_existing(am_root(), states):
+        print(f"==> dump cache: {folder.name} registered ({how})")
+
+
+def dump_build(ipa, force=False, structs=False, fallback_dir=None):
+    """dump.cs of an .ipa's game build, dumped once (scripts/dump_cache.py): a build already dumped is reused
+    without running the dumper; force dumps it again in the same folder; structs also writes il2cpp.h and
+    script.json. Touches no mod's state (dump() does). fallback_dir: where a build without a cache key goes."""
+    ipa = Path(ipa)
     info, app = ipa_info(ipa)
     version = info.get("CFBundleShortVersionString", "0")
-    work = am_root() / "work" / f"dump-{mod}-{version}"
+    bundle = info.get("CFBundleIdentifier") or "game"
+    if not dump_cache.index_path(am_root()).is_file():
+        index_old_dumps()
+    key = dump_cache.key_of_ipa(ipa, app)
+    hit = dump_cache.find(am_root(), key) if key else None
+    if hit and not force and (hit.get("structs") or not structs):
+        print(f"==> dump cached: {bundle} {version} is a build already dumped ({hit['dir']}); no dumper run"
+              " (--force to redo)")
+        return Path(hit["dir"]) / "out" / "dump.cs", key
+    work = Path(hit["dir"]) if hit else (dump_cache.new_dir(am_root(), bundle, version, key) if key
+                                         else Path(fallback_dir or am_root() / "work" / f"dump-{bundle}-{version}"))
     out = work / "out"
-    state = load_state(mod)
-    state.update(base_ipa=str(ipa), app_version=version, dump_dir=str(work))
-    save_state(mod, state)
-    if (out / "dump.cs").is_file() and not force:
-        print(f"==> dump exists: {out / 'dump.cs'} (--force to redo)")
-        return out / "dump.cs"
     work.mkdir(parents=True, exist_ok=True)
     binary = work / "UnityFramework"
     metadata = work / "global-metadata.dat"
@@ -304,14 +320,65 @@ def dump(mod, base=None, force=False):
                 shutil.copyfileobj(src, dst, 1 << 20)
     mv = metadata_version(metadata)
     folder, label = dumper_for(mv)
-    print(f"==> Metadata v{mv}: {label}")
+    print(f"==> Metadata v{mv}: {label}" + ("" if structs else " (lean: no il2cpp.h / script.json; --structs writes them)"))
     out.mkdir(exist_ok=True)
-    run_dumper(folder, binary, metadata, out)
+    run_dumper(folder if structs else dump_cache.lean_dumper(folder), binary, metadata, out)
     if not (out / "dump.cs").is_file():
         raise DevError("the dumper wrote no dump.cs")
+    if key:
+        dump_cache.register(am_root(), key, work, bundle, version, label, structs)
     size = (out / "dump.cs").stat().st_size
     print(f"==> {out / 'dump.cs'} ({size / 1e6:.1f} MB)")
-    return out / "dump.cs"
+    return out / "dump.cs", key
+
+
+def dump(mod, base=None, force=False, structs=False):
+    """The mod's base .ipa dumped once per game build (dump_build), and the mod pointed at that dump."""
+    meta = read_json(mod_dir(mod) / "mod.json")
+    ipa = find_base(mod, meta, base)
+    info, _ = ipa_info(ipa)
+    version = info.get("CFBundleShortVersionString", "0")
+    dump_cs, key = dump_build(ipa, force, structs, am_root() / "work" / f"dump-{mod}-{version}")
+    state = load_state(mod)
+    state.update(base_ipa=str(ipa), app_version=version, dump_dir=str(dump_cs.parent.parent), dump_key=key)
+    save_state(mod, state)
+    return dump_cs
+
+
+def cmd_dumps(args):
+    """Every dumped game build: folder, size, the mods using it; old per-mod copies of one build are named (their
+    space can be freed by hand: nothing here deletes)."""
+    if args.index or not dump_cache.index_path(am_root()).is_file():
+        index_old_dumps()
+    states = {p.stem: read_json(p) for p in (am_root() / "dev").glob("*.json") if (ROOT / "mods" / p.stem).is_dir()}
+    users = {}
+    for mod, st in states.items():
+        if st.get("dump_dir"):
+            users.setdefault(str(Path(st["dump_dir"])), []).append(mod)
+    index = dump_cache.load(am_root())
+
+    def size(folder):
+        return sum(f.stat().st_size for f in Path(folder).rglob("*") if f.is_file()) if Path(folder).is_dir() else 0
+
+    total = 0
+    for key, e in sorted(index.items(), key=lambda kv: kv[1]["dir"]):
+        n = size(e["dir"])
+        total += n
+        mods = users.get(str(Path(e["dir"])), [])
+        print(f"  {key}  {Path(e['dir']).name:44} {n / 1e6:7.0f} MB  {', '.join(mods) or '(no mod)'}"
+              + ("  +structs" if e.get("structs") else ""))
+    print(f"==> {len(index)} dumped builds, {total / 1e6:.0f} MB")
+    known = {str(Path(e["dir"])) for e in index.values()}
+    spare = [(d, size(d)) for d in sorted((am_root() / "work").glob("dump-*")) if str(d) not in known and size(d)]
+    if spare:
+        print("    not in the cache (a second copy of a build above, or a mod's older dump); free them by hand if unused:")
+        for d, n in spare:
+            same = ""
+            if (d / "UnityFramework").is_file() and (d / "global-metadata.dat").is_file():
+                twin = index.get(dump_cache.key_of_files(d / "UnityFramework", d / "global-metadata.dat"))
+                same = f"  same build as {Path(twin['dir']).name}" if twin else ""
+            print(f"      {d.name:44} {n / 1e6:7.0f} MB  {', '.join(users.get(str(d), [])) or '(no mod)'}{same}")
+    return 0
 
 
 def dump_path(mod):
@@ -694,7 +761,9 @@ def cmd_pin(args):
         singleton = None
         if not statics:  # GameManager : Singleton<GameManager>: the instance lives on the generic base
             try:
-                data = json.loads(dump_path(args.mod).with_name("scan.json").read_text(encoding="utf-8"))["data"]
+                m_ = read_json(mod_dir(args.mod) / "mod.json")
+                cache = dump_scan.cache_file(dump_path(args.mod), m_.get("scan_assemblies"), m_.get("target_bundle_id"))
+                data = json.loads(cache.read_text(encoding="utf-8"))["data"]
                 singleton = (data.get(cls) or {}).get("singleton")
             except (OSError, ValueError, KeyError):
                 singleton = None
@@ -901,8 +970,9 @@ def pin_problems_in_dump(mod):
     meta = read_json(folder / "mod.json")
     tweaks = load_tweaks(folder, meta)
     dump_scan.scan(dump_path(mod), tweaks, assemblies=meta.get("scan_assemblies"),
-                   bundle_id=meta.get("target_bundle_id"))  # refreshes scan.json (read below)
-    data = json.loads((dump_path(mod).with_name("scan.json")).read_text(encoding="utf-8"))["data"]
+                   bundle_id=meta.get("target_bundle_id"))  # refreshes the scan cache (read below)
+    cache = dump_scan.cache_file(dump_path(mod), meta.get("scan_assemblies"), meta.get("target_bundle_id"))
+    data = json.loads(cache.read_text(encoding="utf-8"))["data"]
     methods = {}
     for m in dump_methods(mod):
         methods.setdefault((m.class_name.split(".")[-1], m.name), []).append(m)
@@ -2266,7 +2336,7 @@ def scan_rows(mod, area=None, find=None, flagged=False):
     store = dev_learn.load(patterns_path())
     game = meta.get("target_bundle_id")
     result = dump_scan.scan(dump_path(mod), load_tweaks(folder, meta),
-                            learned=lambda name, ctype, cls: dev_learn.member_boost(store, name, ctype, game, cls),
+                            learned=dev_learn.booster(store, game),  # member_boost, indexed once for the scan
                             assemblies=meta.get("scan_assemblies"), bundle_id=meta.get("target_bundle_id"))
     rows = (result["flagged"] if flagged else result["rows"]) + result.get("inventory", [])
     if area:
@@ -2511,6 +2581,23 @@ def cmd_games(args):
 
 
 def cmd_fetch(args):
+    if args.save_key or args.forget_key:  # decrypt.whoeevee.com's personal access token
+        vault = ipa_fetch.Vault(ipa_fetch.EEVEE_SITE)
+        try:
+            if args.forget_key:
+                vault.forget()
+                print("decrypt.whoeevee.com token removed from Windows Credential Manager")
+                return 0
+            import getpass
+
+            token = getpass.getpass("decrypt.whoeevee.com access token (hidden, kept in Windows Credential Manager): ").strip()
+            if not ipa_fetch.TOKEN.match(token):
+                raise DevError("that doesn't look like an access token (letters, digits and dashes): nothing saved")
+            vault.save("apiKey", token)
+        except ipa_fetch.FetchError as e:
+            raise DevError(str(e)) from e
+        print(f"saved in Windows Credential Manager as {vault.target}; fetch uses it for decrypt.whoeevee.com")
+        return 0
     client = ipa_fetch.Client(am_root())
     try:
         vault = ipa_fetch.Vault(client.base)
@@ -2557,7 +2644,7 @@ def cmd_fetch(args):
         target = args.target or read_json(mod_dir(args.mod) / "mod.json")["target_bundle_id"]
         ipa_fetch.fetch(
             am_root(), target, args.region, args.platform, args.force,
-            browser=not args.no_browser, source=args.source,
+            browser=not args.no_browser, source=args.source, version=args.app_version,
         )
     except ipa_fetch.FetchError as e:
         raise DevError(str(e)) from e
@@ -2579,11 +2666,16 @@ def build_parser():
     s.add_argument("--no-dump", action="store_true")
     s.set_defaults(fn=cmd_new)
 
-    s = sub.add_parser("dump")
+    s = sub.add_parser("dump", help="dump the base .ipa once per game build (a build already dumped is reused)")
     s.add_argument("mod")
     s.add_argument("--base")
-    s.add_argument("--force", action="store_true")
-    s.set_defaults(fn=lambda a: 0 if dump(a.mod, a.base, a.force) else 1)
+    s.add_argument("--force", action="store_true", help="run the dumper again for this build")
+    s.add_argument("--structs", action="store_true", help="also write il2cpp.h and script.json (~500 MB)")
+    s.set_defaults(fn=lambda a: 0 if dump(a.mod, a.base, a.force, a.structs) else 1)
+
+    s = sub.add_parser("dumps", help="the dump cache: every dumped game build, its size and the mods using it")
+    s.add_argument("--index", action="store_true", help="register dumps made before the cache (in place)")
+    s.set_defaults(fn=cmd_dumps)
 
     s = sub.add_parser("find")
     s.add_argument("mod")
@@ -2826,7 +2918,7 @@ def build_parser():
     s.add_argument("--name", help="mod folder name (default: <app>-plus)")
     s.add_argument("--title", help="menu title (default: <app>+)")
     s.add_argument("--region", default="us", choices=ipa_fetch.REGIONS)
-    s.add_argument("--source", default="telegram", choices=list(ipa_fetch.SOURCES))
+    s.add_argument("--source", default="eevee", choices=list(ipa_fetch.SOURCES))
     s.set_defaults(fn=cmd_start)
 
     s = sub.add_parser("scan", help="no-JIT switch candidates in the dump, scored; sold/online flagged")
@@ -2869,10 +2961,14 @@ def build_parser():
     s.add_argument("--import", dest="import_file", help="check a downloaded .ipa and move it into intake/")
     s.add_argument("--no-browser", action="store_true", help="fail instead of opening the site for a captcha")
     s.add_argument(
-        "--source", default="telegram", choices=list(ipa_fetch.SOURCES),
-        help="telegram (default): the owner's Telegram decrypt bot (telegram_fetch.py login once); 34306: "
+        "--source", default="eevee", choices=list(ipa_fetch.SOURCES),
+        help="eevee (default): decrypt.whoeevee.com's API (--save-key once), the Telegram bot when it has "
+        "nothing; telegram: the owner's Telegram decrypt bot (telegram_fetch.py login once); 34306: "
         "decrypt.34306.lol (API, captcha -> browser); decrypt.day, armconverter: in the browser",
     )
+    s.add_argument("--version", dest="app_version", help="eevee: this bundle version (e.g. 9.0.62) instead of the newest")
+    s.add_argument("--save-key", action="store_true", help="keep decrypt.whoeevee.com's access token (hidden input)")
+    s.add_argument("--forget-key", action="store_true", help="remove the saved decrypt.whoeevee.com token")
     s.set_defaults(fn=cmd_fetch)
     return p
 

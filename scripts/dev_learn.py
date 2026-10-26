@@ -425,6 +425,52 @@ def member_boost(store, name, ctype, game=None, cls=""):
     return best
 
 
+def booster(store, game=None):
+    """member_boost for one whole scan: the patterns indexed once by value kind and word, so a row is compared only
+    with the patterns that share a word with it (any match of two-thirds shares one). Same answers in the same
+    order as member_boost (the first best wins); a scan of 6,700 rows went from about 4 s to well under 1 s."""
+    entries, index, scored = [], {}, {}
+    for k, p in members(store).items():
+        pw, pk = k.rsplit("|", 1)
+        words = set(pw.split())
+        i = len(entries)
+        entries.append((words, p))
+        for w in words:
+            index.setdefault((pk, w), []).append(i)
+
+    def score(i):
+        if i not in scored:
+            uses = [u for u in entries[i][1].get("uses", []) if u.get("game") != game]
+            scored[i] = (uses, sum(MEMBER_SCORE.get(u.get("result"), 0) for u in uses))
+        return scored[i]
+
+    def boost(name, ctype, cls=""):
+        key = member_key(name, ctype, cls)
+        if not key:
+            return 0, None
+        words, kind = key.rsplit("|", 1)
+        words = set(words.split())
+        best = (0, None)
+        for i in sorted({i for w in words for i in index.get((kind, w), ())}):
+            pw = entries[i][0]
+            share = len(words & pw) / max(len(words | pw), 1)
+            if share < 0.66:
+                continue
+            uses, sc = score(i)
+            if sc <= 0:
+                continue
+            bonus = round(min(sc, 10) * (1 if share == 1 else 0.5))
+            if bonus > best[0]:
+                use = best_use(uses)
+                works = sum(1 for u in uses if u.get("result") == "works")
+                fails = sum(1 for u in uses if u.get("result") == "fails")
+                reached = sum(1 for u in uses if u.get("result") == "reached")
+                best = (bonus, dict(use, works=works, fails=fails, reached=reached))
+        return best
+
+    return boost
+
+
 def migrate(store):
     """Version 1 kept pins as fake methods ("accuracy|void", action "pin"): move them out of the method patterns.
     Their uses keep their results; the member and type come from the tweaks again on the next dev.py learn."""

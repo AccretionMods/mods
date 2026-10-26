@@ -20,6 +20,7 @@ Studio snapshots the mod's files first (Files tab restores them).
 
 import argparse
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -73,6 +74,45 @@ def candidates(mod):
     _, rows = dev.scan_rows(mod)
     return [r for r in rows if not r.get("has") and not r.get("flag") and not r.get("inspect_only")
             and r.get("area") != "In-app purchases" and not ONLINE.search(f"{r['class']} {r['object']}")]
+
+
+def fingerprint(row):
+    """A candidate's identity across runs and game versions: what it reaches, not where it sits in the dump."""
+    key = [row.get("class"), row.get("member"), row.get("ctype"), row.get("kind"), row.get("object"), row.get("path")]
+    return hashlib.sha1(json.dumps(key, sort_keys=True).encode()).hexdigest()[:16]
+
+
+def reviewed_path(mod):
+    return dev.am_root() / "dev" / f"{mod}.reviewed.json"
+
+
+def load_reviewed(mod):
+    """{fingerprint: {"decision": "picked"|"passed", "target", "version", "engine", "at"}} from earlier runs."""
+    try:
+        return json.loads(reviewed_path(mod).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def remember_reviewed(mod, reviewed, batches, answers, results, version, engine):
+    """Every row of a batch the model really answered: picked or passed. A batch that failed, hit a rate limit or
+    ran out of allowance is not recorded, so its rows are asked again next time."""
+    today = time.strftime("%Y-%m-%d")
+    for n, batch in enumerate(batches, 1):
+        answer = answers.get(n) or []
+        found, skipped = results.get(n, ([], []))
+        if (not answer or "out of allowance" in skipped or answer[0].startswith("could not start")
+                or any(RATE_LIMITED.search(a) or OUT_OF_ALLOWANCE.search(a) for a in answer)):
+            continue
+        chosen = {fingerprint(item[0]) for kind, item in found if kind == "row"}
+        named = {item[3] for kind, item in found if kind == "cmd" and len(item) > 3}  # older "am pin" answers
+        for row in batch:
+            fp, target = fingerprint(row), f"{row['class']}.{row['member']}"
+            reviewed[fp] = {"decision": "picked" if fp in chosen or target in named else "passed", "target": target,
+                            "version": version, "engine": engine, "at": today}
+    path = reviewed_path(mod)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(reviewed, indent=1, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def table(rows):
@@ -273,6 +313,10 @@ def main(argv=None):
     p.add_argument("--limit", type=int, default=0, help="at most this many switches (0: every usable one)")
     p.add_argument("--workers", type=int, default=0, help="batches asked at once (default: per engine)")
     p.add_argument("--no-install", action="store_true", help="stop after the build")
+    p.add_argument("--with-presentation", action="store_true",
+                   help="also ask about option, UI, camera and effect classes (left out by default)")
+    p.add_argument("--again", action="store_true",
+                   help="also ask about candidates a model already passed on (same target, any earlier version)")
     args = p.parse_args(argv)
     mod, limit = args.mod, max(0, args.limit)
     folder = dev.mod_dir(mod)
@@ -283,8 +327,19 @@ def main(argv=None):
 
     say(f"==> 1/5 scan: every no-JIT candidate for {mod}")
     rows = candidates(mod)
+    if not args.with_presentation:  # options, UI widgets, cameras, effects: the scan ranks them low, the model skips them
+        before = len(rows)
+        rows = [r for r in rows if not r.get("presentation")]
+        if before - len(rows):
+            say(f"    {before - len(rows)} presentation rows (options, UI, camera, effects) left out (--with-presentation asks)")
+    reviewed = load_reviewed(mod)
+    if reviewed and not args.again:  # a new game version or a second run: only what no model has looked at yet
+        before = len(rows)
+        rows = [r for r in rows if fingerprint(r) not in reviewed]
+        if before - len(rows):
+            say(f"    {before - len(rows)} reviewed in an earlier run (same target): not asked again (--again asks)")
     if not rows:
-        say("nothing new to add: every scan candidate is in the mod already, labelled, or inspect-only")
+        say("nothing new to add: every scan candidate is in the mod already, labelled, inspect-only or reviewed before")
         return 1
     say(f"    {len(rows)} candidates")
     # where they come from, so a scan of the wrong code shows before any model time is spent (Survivor: Ace's first
@@ -312,7 +367,7 @@ def main(argv=None):
     batches = [rows[i:i + BATCH] for i in range(0, len(rows), BATCH)]
     workers = max(1, min(args.workers or WORKERS.get(args.engine, 2), len(batches)))
     say(f"==> 2/5 {who} goes through all {len(rows)} in {len(batches)} batch(es) of up to {BATCH}, {workers} at once")
-    results = {}
+    results, answers = {}, {}
     with ThreadPoolExecutor(max_workers=workers) as pool:
         jobs = {pool.submit(ask_batch, args.engine, args.effort or "", mod, meta, b): n
                 for n, b in enumerate(batches, 1)}
@@ -320,6 +375,7 @@ def main(argv=None):
             n = jobs[future]
             answer, found, skipped, attempts = future.result()
             results[n] = (found, skipped)
+            answers[n] = answer
             with OUT:  # the whole batch together, so batches running at once don't interleave
                 print(f"--- batch {done}/{len(batches)} done: batch {n}, {len(found)} picked"
                       + (f", {len(skipped)} skipped" if skipped else "")
@@ -329,6 +385,7 @@ def main(argv=None):
                 for why in skipped:
                     print(f"  skipped: {why}", flush=True)
 
+    remember_reviewed(mod, reviewed, batches, answers, results, meta.get("tested_app_version"), args.engine)
     say("==> 3/5 adding the picked switches")
     tweaks = json.loads((folder / "tweaks.json").read_text(encoding="utf-8"))
     taken = {t["key"] for t in tweaks.get("tweaks", [])}

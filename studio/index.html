@@ -1668,7 +1668,7 @@ const App = {
     const q = this.el("input", { class: "mono", placeholder: "bundle ID (com.company.game) or app name", value: preset || "", style: "width:100%" });
     const region = this.el("select", {}, [["us", "USA"], ["jp", "Japan"], ["cn", "China"], ["vn", "Vietnam"]].map(o => this.el("option", { value: o[0], text: o[1] })));
     const platform = this.el("select", {}, [["iphone", "iPhone / iPad"], ["appletv", "Apple TV"], ["vision", "Vision Pro"]].map(o => this.el("option", { value: o[0], text: o[1] })));
-    const source = this.el("select", {}, [["telegram", "Telegram decrypt bot (main)"], ["34306", "decrypt.34306.lol"], ["decrypt.day", "decrypt.day (browser)"], ["armconverter", "armconverter.com (browser, your account)"]].map(o => this.el("option", { value: o[0], text: o[1] })));
+    const source = this.el("select", {}, [["eevee", "decrypt.whoeevee.com (main)"], ["telegram", "Telegram decrypt bot"], ["34306", "decrypt.34306.lol"], ["decrypt.day", "decrypt.day (browser)"], ["armconverter", "armconverter.com (browser, your account)"]].map(o => this.el("option", { value: o[0], text: o[1] })));
     const results = this.el("div", { style: "margin-top:10px;max-height:320px;overflow:auto" });
     const viaBrowser = () => {
       const bundle = q.value.trim(), isId = /^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)+$/.test(bundle);
@@ -1678,6 +1678,23 @@ const App = {
     const account = this.el("div", { class: "sec", style: "margin-top:12px" });
     const search = async () => {
       if (q.value.trim().length < 2) return;
+      if (source.value === "eevee") {
+        // decrypt.whoeevee.com's API with your access token (dev.py fetch --save-key): the newest version or the one
+        // you type; if it has nothing for the newest, Studio asks the Telegram bot (scripts/ipa_fetch.py eevee)
+        const target = q.value.trim();
+        const version = this.el("input", { class: "mono", placeholder: "version (empty: newest)", style: "width:180px" });
+        results.replaceChildren(this.el("p", { class: "hint", text: "Studio asks decrypt.whoeevee.com for the decrypted .ipa (bundle ID, App Store link or id), checks it and saves it in intake/. First time: save your access token once in a console with python scripts/dev.py fetch --save-key (hidden input)." }),
+          this.el("div", { class: "row" }, version, this.el("button", { class: "small primary", onclick: () => { dlg.close(); const v = version.value.trim(); this.job("fetch", [target, "--source", "eevee", "--region", region.value, ...(v ? ["--version", v] : [])]); } }, `Get ${target}`)));
+        return;
+      }
+      if (source.value === "telegram") {
+        // the bot gets the game's App Store link from your Telegram account; its answer is followed, checked
+        // (decrypted, the right app) and saved in intake/ (scripts/telegram_fetch.py)
+        const target = q.value.trim();
+        results.replaceChildren(this.el("p", { class: "hint", text: "Studio sends the game's App Store link to the decrypt bot from your Telegram account, follows the bot's answer and saves the decrypted .ipa in intake/. First time: sign in once in a console with python scripts/telegram_fetch.py login (uv run --with telethon)." }),
+          this.el("div", { class: "row" }, this.el("button", { class: "small primary", onclick: () => { dlg.close(); this.job("fetch", [target, "--source", "telegram", "--region", region.value]); } }, `Ask the bot for ${target}`)));
+        return;
+      }
       if (source.value !== "34306") { results.replaceChildren(...viaBrowser()); return; }
       results.replaceChildren(this.el("p", { class: "hint", text: "Searching…" }));
       try {
@@ -1787,11 +1804,3 @@ App.init();
 </script>
 </body>
 </html>
-      if (source.value === "telegram") {
-        // the bot gets the game's App Store link from your Telegram account; its answer is followed, checked
-        // (decrypted, the right app) and saved in intake/ (scripts/telegram_fetch.py)
-        const target = q.value.trim();
-        results.replaceChildren(this.el("p", { class: "hint", text: "Studio sends the game's App Store link to the decrypt bot from your Telegram account, follows the bot's answer and saves the decrypted .ipa in intake/. First time: sign in once in a console with python scripts/telegram_fetch.py login (uv run --with telethon)." }),
-          this.el("div", { class: "row" }, this.el("button", { class: "small primary", onclick: () => { dlg.close(); this.job("fetch", [target, "--source", "telegram", "--region", region.value]); } }, `Ask the bot for ${target}`)));
-        return;
-      }

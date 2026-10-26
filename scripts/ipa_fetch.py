@@ -14,6 +14,11 @@ When the site asks for a captcha (decrypt.34306.lol does, for scripts), nothing 
 opens the site in the browser, the owner downloads the app there, and fetch picks the file up from Downloads,
 checks it and moves it into intake/ (import_ipa; `dev.py fetch --import file.ipa` does the same by hand).
 
+The main source is decrypt.whoeevee.com's API (eevee()): GET /decrypted with the app's App Store id, the owner's
+personal access token and an optional bundle version answers {"link", "error"}; the link's .ipa is downloaded,
+checked and recorded like any other. The token lives in Windows Credential Manager ("AccretionMods/decrypt/
+decrypt.whoeevee.com", `dev.py fetch --save-key`), is sent to that host only and never printed or logged.
+
 Other sources (SOURCES) have no API we use: decrypt.day sits behind a bot check and armconverter.com's store
 needs the owner's sign-in, so for them fetch goes straight to that browser hand-off.
 """
@@ -42,7 +47,8 @@ POLL_SECONDS = 5  # the site allows 30 requests a minute per address
 WATCH_SECONDS = 3  # how often Downloads is looked at
 # name -> (page to open, {region} filled in; True when it is an unfaird site whose API fetch uses)
 SOURCES = {
-    "telegram": (None, None),  # the owner's Telegram decrypt bot (scripts/telegram_fetch.py): the main source
+    "eevee": (None, None),  # decrypt.whoeevee.com's API with the owner's access token: the main source
+    "telegram": (None, None),  # the owner's Telegram decrypt bot (scripts/telegram_fetch.py): the fallback
     "34306": (None, True),  # AM_DECRYPT_URL or DEFAULT_SITE
     "decrypt.day": ("https://decrypt.day/home", False),
     "armconverter": ("https://armconverter.com/store/{region}", False),
@@ -437,14 +443,167 @@ def by_hand(root, page, target, region, say, wait_limit):
     return import_ipa(root, got, target, page, region, say)
 
 
+EEVEE_SITE = "https://decrypt.whoeevee.com"
+APP_STORE_ID = re.compile(r"apps\.apple\.com/.*?\bid(\d+)")
+TOKEN = re.compile(r"^[A-Za-z0-9-]{16,128}$")
+
+
+LOOKUP_HOURS = 6  # Apple's answer for an app (id, bundle ID, current version) is reused this long
+
+
+def app_lookup(target, region="us", opener=None, root=None):
+    """{"id", "bundle", "version"} of an app from its bundle ID, App Store link or id: Apple's public lookup, the
+    region's store first, then the US one; cached LOOKUP_HOURS in <AM_ROOT>/cache/appstore-lookup.json."""
+    text = str(target).strip()
+    m = APP_STORE_ID.search(text)
+    key = m.group(1) if m else text
+    if not (key.isdigit() or is_bundle_id(key)):
+        raise FetchError(f"{text!r} is not a bundle ID, an App Store link or an App Store id")
+    cache_path = Path(root or os.environ.get("AM_ROOT") or Path.home() / "AccretionMods") / "cache" / "appstore-lookup.json"
+    try:
+        cache = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        cache = {}
+    hit = cache.get(f"{region}:{key}")
+    if hit and time.time() - hit.get("at", 0) < LOOKUP_HOURS * 3600:
+        return hit["app"]
+    open_ = opener or urllib.request.urlopen
+    for country in dict.fromkeys([region, "us"]):
+        q = urllib.parse.urlencode({("id" if key.isdigit() else "bundleId"): key, "country": country, "entity": "software"})
+        req = urllib.request.Request(f"https://itunes.apple.com/lookup?{q}", headers={"User-Agent": USER_AGENT})
+        try:
+            with open_(req, timeout=30) as r:
+                found = json.loads(r.read()).get("results", [])
+        except (urllib.error.URLError, OSError, ValueError) as e:
+            raise FetchError(f"couldn't look {text} up in the App Store ({e})") from e
+        if found and found[0].get("trackId"):
+            app = {"id": str(found[0]["trackId"]), "bundle": found[0].get("bundleId"), "version": found[0].get("version")}
+            cache[f"{region}:{key}"] = {"app": app, "at": time.time()}
+            try:
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                cache_path.write_text(json.dumps(cache, indent=1) + "\n", encoding="utf-8")
+            except OSError:
+                pass  # a cache that can't be written only costs a lookup next time
+            return app
+    raise FetchError(f"{text} is not in the App Store ({' or '.join(dict.fromkeys([region, 'us']))}): give its App Store link or id")
+
+
+def app_store_id(target, region="us", opener=None, root=None):
+    """The App Store id the decrypt API takes (a raw id or link needs no lookup)."""
+    text = str(target).strip()
+    if text.isdigit():
+        return text
+    m = APP_STORE_ID.search(text)
+    if m:
+        return m.group(1)
+    return app_lookup(text, region, opener, root)["id"]
+
+
+def local_copy(root, bundle, version):
+    """An .ipa of bundle at version already in intake/ (from its .source.json record), or None."""
+    for record in sorted((Path(root) / "intake").glob("*.ipa.source.json")):
+        try:
+            r = json.loads(record.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        ipa = record.with_name(record.name[: -len(".source.json")])
+        if r.get("bundle_id") == bundle and r.get("version") == version and ipa.is_file():
+            return ipa
+    return None
+
+
+def eevee_token():
+    saved = Vault(EEVEE_SITE).load()
+    if not saved or not saved[1]:
+        raise FetchError("no access token saved for decrypt.whoeevee.com: run `dev.py fetch --save-key` once in "
+                         "your own console (hidden input, kept in Windows Credential Manager)")
+    return saved[1]
+
+
+def eevee(root, target, region="us", version=None, say=print, token=None, opener=None):
+    """decrypt.whoeevee.com's API: the decrypted .ipa of target (newest, or that bundle version) into intake/.
+    A version already in intake/ is used as it is: no API call, no download (the newest is Apple's current one)."""
+    text = str(target).strip()
+    try:
+        info = app_lookup(text, region, opener, root)
+    except FetchError:
+        if not (text.isdigit() or APP_STORE_ID.search(text)):
+            raise
+        info = {"id": app_store_id(text), "bundle": None, "version": None}
+    want = version or info.get("version")
+    have = local_copy(root, info.get("bundle"), want) if info.get("bundle") and want else None
+    if have:
+        say(f"{info['bundle']} {want} is already in intake/: {have.name} (no download)")
+        return have
+    app = info["id"]
+    params = {"appId": app, "apiKey": token or eevee_token()}
+    if version:
+        params["version"] = version
+    open_ = opener or urllib.request.urlopen
+    say(f"asking decrypt.whoeevee.com for app {app} ({'version ' + version if version else 'newest version'})")
+    req = urllib.request.Request(f"{EEVEE_SITE}/decrypted?{urllib.parse.urlencode(params)}",
+                                 headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
+    try:  # `from None` throughout: the request URL carries the token and must not end up in a traceback
+        with open_(req, timeout=900) as r:
+            data = json.loads(r.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        try:
+            why = json.loads(e.read() or b"{}").get("error")
+        except ValueError:
+            why = None
+        raise FetchError(f"decrypt.whoeevee.com answered {e.code}: {why or e.reason}") from None
+    except (urllib.error.URLError, OSError) as e:
+        raise FetchError(f"couldn't reach decrypt.whoeevee.com ({getattr(e, 'reason', e)})") from None
+    except ValueError:
+        raise FetchError("decrypt.whoeevee.com sent something that is not JSON") from None
+    if data.get("error") or not data.get("link"):
+        raise FetchError("decrypt.whoeevee.com: " + (data.get("error") or "no link and no reason given"))
+    link = urllib.parse.urlparse(data["link"])
+    if link.scheme != "https" or link.hostname != urllib.parse.urlparse(EEVEE_SITE).hostname:
+        raise FetchError(f"the download link points outside decrypt.whoeevee.com ({link.hostname}): not taken")
+    name = safe_name(urllib.parse.unquote(Path(link.path).name) or f"{app}.ipa")
+    if not name.lower().endswith(".ipa"):
+        name += ".ipa"
+    partial = Path(root) / "intake" / ".partial"
+    partial.mkdir(parents=True, exist_ok=True)
+    part = partial / (name + ".download")
+    try:
+        with open_(urllib.request.Request(data["link"], headers={"User-Agent": USER_AGENT}), timeout=120) as r, \
+                open(part, "wb") as f:
+            total, done, shown = int(r.headers.get("Content-Length") or 0), 0, 0
+            for chunk in iter(lambda: r.read(1 << 20), b""):
+                f.write(chunk)
+                done += len(chunk)
+                if done - shown >= 50 << 20:
+                    shown = done
+                    say(f"  {done / 1e6:.0f} MB" + (f" of {total / 1e6:.0f} MB" if total else ""))
+    except (urllib.error.URLError, OSError) as e:
+        part.unlink(missing_ok=True)
+        raise FetchError(f"the download from decrypt.whoeevee.com stopped ({getattr(e, 'reason', e)})") from None
+    ipa = part.with_name(name)
+    os.replace(part, ipa)
+    say(f"downloaded {name} ({done / 1e6:.1f} MB)")
+    bundle = str(target).strip() if is_bundle_id(str(target).strip()) else None
+    return import_ipa(root, ipa, bundle, site_url=EEVEE_SITE, region=region, say=say, via="decrypt.whoeevee.com API")
+
+
 def fetch(root, target, region="us", platform="iphone", force=False, folder=None, say=print, client=None,
-          browser=True, wait_limit=1800, source="34306"):  # dev.py and Studio pass their default, "telegram"
+          browser=True, wait_limit=1800, source="34306", version=None):  # dev.py and Studio pass "eevee"
     """Lookup, decrypt on the site if needed, download into intake/, check. Returns the .ipa path.
 
     When the site wants a captcha, or the source has no API, it opens in the browser and this waits for the
-    owner's download. "telegram" asks the owner's Telegram decrypt bot instead (scripts/telegram_fetch.py)."""
+    owner's download. "eevee" asks decrypt.whoeevee.com's API (a bundle version, or the newest) and, when that
+    gives nothing for the newest version, the Telegram bot; "telegram" asks only the owner's Telegram decrypt bot."""
     if source not in SOURCES:
         raise FetchError(f"no source {source!r}: {', '.join(SOURCES)}")
+    if source == "eevee":
+        try:
+            return eevee(root, target, region, version, say)
+        except FetchError as e:
+            if version:
+                raise  # the Telegram bot can't pick a version
+            say(f"{e}; asking the Telegram decrypt bot instead")
+            return telegram(root, target, region, wait_limit, say)
     if source == "telegram":
         return telegram(root, target, region, wait_limit, say)
     page, api = SOURCES[source]

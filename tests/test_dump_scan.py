@@ -178,8 +178,10 @@ class Scan(unittest.TestCase):
         self.assertTrue(rows["SkillsManager.set_SkillPoints"]["has"])
         self.assertTrue(rows["Enemy.suppressedAttacksRemaining"]["has"])
         self.assertFalse(rows["SkillsManager.Accuracy"]["has"])
-        cache = json.loads(self.dump.with_name("scan.json").read_text())
+        cache = json.loads(dump_scan.cache_file(self.dump).read_text())
         self.assertEqual(cache["stamp"]["version"], dump_scan.VERSION)
+        # a second mod reading other assemblies of the same shared dump keeps its own cache file
+        self.assertNotEqual(dump_scan.cache_file(self.dump), dump_scan.cache_file(self.dump, ["HotFix"]))
         self.dump.write_text(DUMP.replace("public bool CanStun; // 0x79", ""), encoding="utf-8")
         os.utime(self.dump, (1, 1))  # a new dump: the cache is rebuilt
         _, rows, _ = self.rows()
