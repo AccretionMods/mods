@@ -146,7 +146,9 @@ def _helper(request):
     exe = helper_path()
     if not exe.is_file():
         raise AppStoreError("the App Store helper isn't installed yet (python scripts/appstore.py install-helper)")
-    request = {**request, "cookies": str(state_dir() / "appstore-helper.cookies")}
+    # kbsync: the blob the store's downloads send, kept between runs (making one takes the emulator ~40 s)
+    request = {**request, "cookies": str(state_dir() / "appstore-helper.cookies"),
+               "kbsync": str(state_dir() / "appstore-helper.kbsync")}
     try:
         r = subprocess.run([str(exe)], input=json.dumps(request), capture_output=True, text=True, timeout=300,
                            check=False)

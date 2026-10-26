@@ -5,7 +5,7 @@
 // One JSON request on stdin, one JSON answer on stdout (scripts/appstore.py is the only caller):
 //
 //	{"cmd": "login", "email", "password", "code", "cookies"}  -> {"account": {...}} or {"needs_code": true}
-//	{"cmd": "url", "account", "app_id", "cookies"}            -> {"url", "version", "bundle"}, {"needs_license": true}
+//	{"cmd": "url", "account", "app_id", "cookies", "kbsync"}  -> {"url", "version", "bundle"}, {"needs_license": true}
 //	                                                             or {"expired": true}
 //	{"cmd": "license", "account", "app_id", "cookies"}        -> {"ok": true} (free apps only)
 //	{"cmd": "versions", "account", "app_id", "cookies"}       -> {"ids": [...], "latest"} (the store's version ids)
@@ -47,12 +47,30 @@ type request struct {
 	VersionID string           `json:"version_id"`
 	Output    string           `json:"output"`
 	Cookies   string           `json:"cookies"`
+	KBSync    string           `json:"kbsync"`
 }
 
-// memKeychain keeps what ipatool would save (the account, its kbsync cache) for this run only.
+// kbsyncKey is ipatool's keychain entry for the kbsync blob its downloads send (pkg/appstore kbsyncCacheKey).
+// Making one runs Apple's code in the emulator for about 40 s; ipatool reuses it while the store accepts it.
+const kbsyncKey = "kbsync-v1"
+
+// memKeychain keeps what ipatool would save for this run only, except the kbsync blob: with a path it is also
+// kept in that file (one entry, owner-only), so the next run reuses it instead of generating a new one.
+// The account is never written: Studio passes it with each request.
 type memKeychain struct {
 	mu    sync.Mutex
 	items map[string][]byte
+	path  string
+}
+
+func newKeychain(path string) *memKeychain {
+	k := &memKeychain{items: map[string][]byte{}, path: path}
+	if path != "" {
+		if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
+			k.items[kbsyncKey] = data
+		}
+	}
+	return k
 }
 
 func (k *memKeychain) Get(key string) ([]byte, error) {
@@ -69,6 +87,12 @@ func (k *memKeychain) Set(key string, data []byte) error {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	k.items[key] = data
+	if key == kbsyncKey && k.path != "" {
+		tmp := k.path + ".tmp"
+		if err := os.WriteFile(tmp, data, 0o600); err == nil {
+			_ = os.Rename(tmp, k.path) // best effort, as ipatool's own cache: a failed save costs one regeneration
+		}
+	}
 	return nil
 }
 
@@ -76,6 +100,9 @@ func (k *memKeychain) Remove(key string) error {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	delete(k.items, key)
+	if key == kbsyncKey && k.path != "" {
+		_ = os.Remove(k.path) // ipatool drops a blob the store rejected
+	}
 	return nil
 }
 
@@ -134,7 +161,7 @@ func run() (map[string]any, error) {
 
 	osys := operatingsystem.New()
 	store := appstore.NewAppStore(appstore.Args{
-		Keychain:        &memKeychain{items: map[string][]byte{}},
+		Keychain:        newKeychain(req.KBSync),
 		CookieJar:       jar,
 		OperatingSystem: osys,
 		Machine:         machine.New(machine.Args{OS: osys}),
