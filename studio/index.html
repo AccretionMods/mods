@@ -216,37 +216,91 @@ h2, h3 { font-family: var(--display); }
 .game .seller { color: var(--muted); font-size: 12.5px; overflow-wrap: anywhere; }
 .game .meta { color: var(--muted); font-size: 12px; font-family: var(--mono); }
 .game .acts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: auto; }
+/* workspace: stage nav | content | phone panel, the mods list in a drawer, jobs docked at the bottom */
+.layout { grid-template-columns: 210px minmax(0, 1fr) 300px; max-width: 1640px; padding-bottom: 76px; align-items: start; }
+.modsbtn { display: inline-flex; align-items: center; gap: 8px; font-family: var(--display); font-weight: 600; }
+.stages { position: sticky; top: 76px; display: flex; flex-direction: column; gap: 2px; padding: 10px; }
+.stages .grp { font: 500 10.5px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); padding: 12px 10px 4px; }
+.stages .grp:first-child { padding-top: 2px; }
+.stages button { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; min-height: 40px; border-color: transparent; background: none; }
+.stages button:hover { background: var(--raised); border-color: transparent; }
+.stages button.active { background: var(--raised); color: var(--accent-text); border-color: var(--line); font-weight: 600; }
+.stages button.tool { min-height: 34px; font-size: 13px; color: var(--muted); }
+.stages button.tool.active { color: var(--accent-text); }
+.stages .n { margin-left: auto; font: 12px var(--mono); color: var(--muted); }
+.status { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 0 0 16px; }
+.status .box { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; background: var(--surface); min-width: 0; }
+.status .l { font-size: 12px; color: var(--muted); }
+.status .v { margin-top: 3px; font-weight: 600; display: flex; gap: 8px; align-items: center; min-width: 0; }
+.status .v span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.status .good { color: var(--good); } .status .warn { color: var(--warn); } .status .bad { color: var(--bad); } .status .muted { color: var(--muted); font-weight: 500; }
+.phonepanel { position: sticky; top: 76px; display: flex; flex-direction: column; gap: 10px; }
+.phonepanel h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.phonepanel .lines { display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow: auto; }
+.phonepanel .line { border: 1px solid var(--line); border-radius: 9px; padding: 7px 10px; background: var(--surface); font-size: 13px; }
+.phonepanel .line .r { display: block; font: 12px var(--mono); color: var(--muted); overflow-wrap: anywhere; margin-top: 2px; }
+.phonepanel .acts { display: flex; flex-direction: column; gap: 6px; }
+.phonepanel .acts button { width: 100%; min-height: 40px; }
+#modsDrawer { margin: 0 auto 0 0; height: 100vh; max-height: 100vh; width: min(360px, 92vw); border-radius: 0 18px 18px 0; padding: 18px; overflow: auto; box-sizing: border-box; }
+#modsDrawer .row.top { margin-bottom: 12px; }
+.dock { position: fixed; left: 0; right: 0; bottom: 0; z-index: 7; background: var(--surface); border-top: 1px solid var(--line); box-shadow: 0 -8px 24px rgba(0,0,0,.25); }
+.dock .bar { padding: 6px 16px; min-height: 44px; flex-wrap: nowrap; }
+.dock .chips { flex-wrap: nowrap; overflow: hidden; margin: 0; flex: 1; min-width: 0; }
+.dock .jchip { display: inline-flex; align-items: center; gap: 6px; font: 12px var(--mono); padding: 3px 9px; border-radius: 7px; background: var(--raised); border: 1px solid var(--line); white-space: nowrap; cursor: pointer; color: var(--fg); min-height: 0; }
+.dock .body { display: none; max-height: 50vh; overflow: auto; padding: 4px 16px 12px; }
+.dock.open .body { display: block; }
+.dock .jdot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+.dock .jdot.run { background: var(--accent); } .dock .jdot.ok { background: var(--good); } .dock .jdot.bad { background: var(--bad); }
+@media (max-width: 1180px) {
+  .layout { grid-template-columns: 200px minmax(0, 1fr); }
+  .phonepanel { grid-column: 1 / -1; position: static; }
+  .phonepanel .lines { max-height: none; }
+}
+@media (max-width: 860px) {
+  .layout { grid-template-columns: 1fr; padding: 14px 12px 76px; }
+  header { position: static; }  /* several rows tall on a phone: it scrolls away instead of covering the page */
+  .stages { position: static; flex-direction: row; overflow-x: auto; padding: 6px; }
+  .stages .grp { display: none; }
+  .stages button { width: auto; flex: none; white-space: nowrap; }
+  .status { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 </style>
 </head>
 <body>
 <div class="light a"></div><div class="light b"></div>
 <header>
   <div class="brand"><span class="live"></span><b>ACCRETION</b>/ mod studio</div>
+  <button id="modsBtn" class="modsbtn" aria-haspopup="dialog" title="Choose a mod"><span id="modsBtnText">Choose a mod</span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg></button>
   <div class="sel" id="sel">no mod selected</div>
+  <button id="runPhone" class="primary" title="build the .ipa, sign it, install it, open the game and read its log" disabled>Build and run on the phone</button>
   <button id="getBtn">Get .ipa</button>
   <button id="newBtn">New mod</button>
   <button id="themeBtn" title="Dark / light">Theme</button>
   <span id="studioVersion" class="small muted"></span>
   <button id="restartStudio" class="hidden">Load update</button>
 </header>
+<dialog id="modsDrawer" aria-label="Mods">
+  <div class="row top"><span class="label grow">Mods</span><button class="small ghost" id="reloadMods">Reload</button><button class="small ghost" id="modsClose" aria-label="Close the mods list">Close</button></div>
+  <div class="mods" id="mods"></div>
+  <p class="hint" id="amRoot"></p>
+</dialog>
 <div class="layout">
-  <aside class="card">
-    <div class="row" style="margin-bottom:12px"><span class="label grow">Mods</span><button class="small ghost" id="reloadMods">Reload</button></div>
-    <div class="mods" id="mods"></div>
-    <p class="hint" id="amRoot"></p>
-  </aside>
+  <nav class="card stages" id="tabs" aria-label="Stages">
+    <span class="grp">Make</span>
+    <button data-tab="switches" class="active">Switches<span class="n" id="navCount"></span></button>
+    <button data-tab="find">Find</button>
+    <button data-tab="suggest">Suggest</button>
+    <button data-tab="scan">Scan</button>
+    <span class="grp">Ship</span>
+    <button data-tab="phone">Build &amp; Phone</button>
+    <button data-tab="store">Store</button>
+    <span class="grp">Tools</span>
+    <button data-tab="files" class="tool">Files</button>
+    <button data-tab="games" class="tool">Games</button>
+    <button data-tab="console" class="tool">Console</button>
+  </nav>
   <main class="card">
-    <div class="tabs" id="tabs">
-      <button data-tab="switches" class="active">Switches</button>
-      <button data-tab="find">Find</button>
-      <button data-tab="suggest">Suggest</button>
-      <button data-tab="scan">Scan</button>
-      <button data-tab="phone">Build &amp; Phone</button>
-      <button data-tab="files">Files</button>
-      <button data-tab="games">Games</button>
-      <button data-tab="store">Store</button>
-      <button data-tab="console">Console</button>
-    </div>
+    <div class="status hidden" id="statusStrip" aria-label="This mod's state"></div>
     <section id="tab-switches"></section>
     <section id="tab-find" class="hidden"></section>
     <section id="tab-suggest" class="hidden"></section>
@@ -256,13 +310,29 @@ h2, h3 { font-family: var(--display); }
     <section id="tab-games" class="hidden"></section>
     <section id="tab-store" class="hidden"></section>
     <section id="tab-console" class="hidden"></section>
-    <section class="sec" id="jobsPanel" style="margin-top:18px;border-top:1px solid var(--line);padding-top:12px">
-      <div class="row"><span class="label grow">Jobs</span><button class="small ghost" id="clearJobs">Clear</button></div>
-      <p class="hint" id="jobsHint">Output of builds, signing, logs and console commands shows here, under every tab.</p>
-      <div id="jobs"></div>
-    </section>
   </main>
+  <aside class="card phonepanel" id="phonePanel" aria-label="On the phone">
+    <div class="row"><h2 class="grow">On the phone</h2><span class="badge good hidden" id="phoneLive">live</span></div>
+    <div class="lines" id="phoneLines"></div>
+    <div class="acts">
+      <button id="phoneWatch" title="reads the phone's log: each switch shows its state here">Watch the phone (5 min)</button>
+      <button id="phonePush" title="sends this mod's switches to the installed game: they apply within 2 s, no build (needs a build that has live pins)">Push switches</button>
+      <button id="phoneShotBtn" title="takes the phone's screen now and uploads it as a 1-year link for this mod's post">Phone screenshot</button>
+    </div>
+  </aside>
 </div>
+<section class="dock" id="jobsPanel" aria-label="Jobs">
+  <div class="row bar">
+    <span class="label">Jobs</span>
+    <div class="chips" id="jobChips"></div>
+    <button class="small ghost" id="clearJobs">Clear</button>
+    <button class="small" id="jobsToggle" aria-expanded="false" aria-controls="jobsBody">Show</button>
+  </div>
+  <div class="body" id="jobsBody">
+    <p class="hint" id="jobsHint">Output of builds, signing, logs and console commands shows here, under every tab.</p>
+    <div id="jobs"></div>
+  </div>
+</section>
 
 <dialog id="dlg"><div id="dlgBody"></div></dialog>
 
@@ -374,6 +444,7 @@ const App = {
     if (!this.mods.some(m => m.name === name)) name = this.mods[0] && this.mods[0].name;
     if (!name) return;
     this.mod = name; localStorage.setItem("studio.mod", name);
+    const drawer = this.byId("modsDrawer"); if (drawer.open) drawer.close();
     await this.refresh();
     document.querySelectorAll(".mod[data-name]").forEach(e => e.classList.toggle("active", e.dataset.name === name));
   },
@@ -392,7 +463,66 @@ const App = {
     });
     this.byId("sel").replaceChildren(this.el("b", { text: `${d.title} ${d.version}` }), ` · ${d.target} ${d.app_version}`,
       this.el("label", { class: "muted small", style: "margin:0 0 0 12px;display:inline-flex;gap:6px;align-items:center", title: "The mod menu's \"More at getaccretion.app ›\" link, the Accretion mark by the title and \"Made by Accretion.\" Off: this mod's next build has none of them (mod.json branding: false); Cloud saves stay." }, branding, "Accretion branding in the menu"));
+    this.byId("modsBtnText").textContent = d.title;
+    this.byId("runPhone").disabled = false;
+    const tweaks = (d.tweaks_json || {}).tweaks || [];
+    this.byId("navCount").textContent = tweaks.length ? String(tweaks.length) : "";
+    if (this.liveFor !== this.mod) this.live = null;
+    this.renderStatus();
     this.render();
+    this.refreshLive();
+  },
+
+  // ---------------------------------------------------------------- workspace: status strip, phone panel, jobs dock
+  renderStatus() {
+    const box = this.byId("statusStrip"), d = this.detail;
+    if (!d) { box.classList.add("hidden"); return; }
+    const tweaks = (d.tweaks_json || {}).tweaks || [];
+    const all = [...tweaks, ...(d.features || [])];
+    const works = all.filter(t => t.verification_state === "works").length;
+    const live = this.live || {};
+    const cell = (label, cls, text, extra) => this.el("div", { class: "box" }, this.el("div", { class: "l", text: label }),
+      this.el("div", { class: "v " + cls }, this.el("span", { text, title: text }), extra || null));
+    const ipa = d.last_ipa ? d.last_ipa.split(/[\\/]/).pop() : "";
+    const runtime = live.runtime === "attached" ? ["good", "Attached"] : live.runtime === "not found" ? ["bad", "Not found"] : ["muted", "Not seen yet"];
+    box.replaceChildren(
+      d.dump ? cell("Dump", "good", "Ready · " + (d.app_version || "?"))
+        : cell("Dump", "warn", "Not made yet", this.el("button", { class: "small", onclick: () => this.job("dump", []) }, "Dump")),
+      cell("Last build", ipa ? "" : "muted", ipa ? `${d.version} · ${ipa}` : "No build yet"),
+      cell("Runtime on the phone", runtime[0], runtime[1] + (live.watching ? " · watching" : "")),
+      cell("Switches confirmed", all.length && works === all.length ? "good" : all.length ? "warn" : "muted", all.length ? `${works} of ${all.length}` : "No switches yet"));
+    box.classList.remove("hidden");
+  },
+  renderPhonePanel() {
+    const box = this.byId("phoneLines"), live = this.live || { switches: {} };
+    this.byId("phoneLive").classList.toggle("hidden", !live.watching);
+    const titles = new Map((((this.detail || {}).tweaks_json || {}).tweaks || []).map(t => [t.key, t.title]));
+    const rows = Object.entries(live.switches || {}).filter(([, st]) => st.state !== "off");
+    if (!rows.length) {
+      box.replaceChildren(this.el("p", { class: "hint", style: "margin:0", text: "Switch states show here once the game logs them: Build and run, or Watch the phone, then turn switches on in the game." }));
+      return;
+    }
+    box.replaceChildren(...rows.map(([key, st]) => this.el("div", { class: "line" },
+      this.el("span", { class: "badge " + (st.state === "ok" ? "good" : "bad"), text: st.state === "ok" ? "working" : "waiting" }), " ",
+      this.el("span", { text: titles.get(key) || key }),
+      st.reason ? this.el("span", { class: "r", text: st.reason }) : null)));
+  },
+  openJobs(open = true) {
+    const dock = this.byId("jobsPanel");
+    dock.classList.toggle("open", open);
+    const t = this.byId("jobsToggle"); t.textContent = open ? "Hide" : "Show"; t.setAttribute("aria-expanded", String(open));
+    try { localStorage.setItem("studio.jobs.open", open ? "1" : "0"); } catch (e) { /* private window */ }
+    if (open) { const first = this.byId("jobs").firstElementChild; if (first) first.scrollIntoView({ block: "nearest" }); }
+  },
+  drawJobChips() {
+    const box = this.byId("jobChips"); if (!box) return;
+    box.replaceChildren(...[...this.byId("jobs").children].slice(0, 3).map(det => {
+      const st = det.querySelector("[id^=jobst-]"), status = st ? st.textContent : "";
+      const dot = ["queued", "running", "stopping"].includes(status) ? "run" : status === "done" ? "ok" : "bad";
+      const name = det.querySelector("summary .mono");
+      return this.el("button", { class: "jchip", type: "button", title: status, onclick: () => { this.openJobs(true); det.open = true; det.scrollIntoView({ block: "nearest" }); } },
+        this.el("span", { class: "jdot " + dot }), (name ? name.textContent : "job").slice(0, 48));
+    }));
   },
   setTab(tab) {
     this.tab = tab;
@@ -773,7 +903,7 @@ const App = {
       const j = await this.api("/api/jobs", body);
       this.showJob(j);
       this.poll(j.id);
-      this.byId("jobsPanel").scrollIntoView({ behavior: "smooth", block: "nearest" });
+      this.openJobs();
     } catch (e) { this.toast(e.message, "bad"); }
   },
   showJob(j) {
@@ -793,6 +923,7 @@ const App = {
     const st = this.byId("jobst-" + j.id); st.textContent = j.status; st.className = "badge " + (j.status === "done" ? "good" : ["queued", "running"].includes(j.status) ? "accent" : "bad");
     const out = this.byId("jobout-" + j.id);
     if (j.lines && j.lines.length) { out.textContent += (out.textContent ? "\n" : "") + j.lines.join("\n"); out.scrollTop = out.scrollHeight; }
+    this.drawJobChips();
     if (j.command === "autobuild") this.autobuildProgress(j, det, out.textContent);
     if (j.command === "store") this.stepProgress(j, det, out.textContent);
     if (["claude", "aider", "codex", "gemini"].includes(j.command) && j.status !== "running" && !this.byId("jobcmds-" + j.id)) {
@@ -994,7 +1125,7 @@ const App = {
           `For the 10 to 15 most valuable: what it likely does in play (check the class in the dump with am find / am fields if unsure), a menu title, a section (Survival, Combat, Pet & companion, Items & crafting, Progress, Exploration, In-app purchases, Other), confidence (high/medium/low), and the approach (pin, hook, call or inspect). For valid pin candidates only, give the value and exact command on its own line starting with "am pin ${this.mod} ..." (with --object, --value, --when lower when it has a getter, --as <key>, --title "..."). Do not invent pin values for inventory methods or types. Explain technical requirements and side effects; skip a candidate only for a concrete technical reason, not its topic.\n` +
           `Read only: change no files. Include purchases/IAP, full-game unlocks, ads, accounts and online play when relevant; topic labels are informational.`;
         const j = await this.api("/api/claude", { prompt, read_only: true, engine: this.engine(), effort: this.effort() });
-        this.showJob(j); this.poll(j.id); this.byId("jobsPanel").scrollIntoView({ behavior: "smooth", block: "nearest" });
+        this.showJob(j); this.poll(j.id); this.openJobs();
         this.toast(`${this.engineName()} is ranking the candidates: its answer streams into Jobs, with an Add button on each command`, "ok");
       } catch (e) { this.toast(e.message, "bad"); }
     };
@@ -1003,7 +1134,7 @@ const App = {
     const auto = this.el("button", { class: "small", title: "The selected model goes through every scan candidate and makes a switch of each useful one; Studio adds them, runs gen, builds the .ipa and, when all went well, installs it on the phone", onclick: async () => {
       const who = this.engineName();
       if (!confirm(`Auto-build ${this.detail ? this.detail.title : this.mod}: ${who} goes through every candidate in this scan and makes a switch of each useful one, no top 10 (nothing about purchases, store currency, ads, accounts or online play), Studio adds them with am pin, runs gen and builds the .ipa, and if all of that went well signs and installs it on the phone (USB, unlocked) and shows the new switches' status from the log. The mod's files are snapshotted first (Files tab restores). Start?`)) return;
-      try { const j = await this.api(`/api/mods/${this.mod}/autobuild`, { engine: this.engine(), effort: this.effort(), limit: 0 }); this.showJob(j); this.poll(j.id); this.byId("jobsPanel").scrollIntoView({ behavior: "smooth", block: "nearest" }); this.toast(`${who} is picking switches; Studio adds and builds them: follow it in Jobs`, "ok"); }
+      try { const j = await this.api(`/api/mods/${this.mod}/autobuild`, { engine: this.engine(), effort: this.effort(), limit: 0 }); this.showJob(j); this.poll(j.id); this.openJobs(); this.toast(`${who} is picking switches; Studio adds and builds them: follow it in Jobs`, "ok"); }
       catch (e) { this.toast(e.message, "bad"); }
     } }, "Auto-build menu");
     [area, mode, verified, flagged, hideHas].forEach(i => i.addEventListener("change", load));
@@ -1021,12 +1152,16 @@ const App = {
   },
 
   // Each switch's state on the phone, from the menu's status lines in Studio's log and run jobs.
+  // Runs on every tab: it also feeds the phone panel and the status strip.
   async refreshLive() {
-    if (this.tab !== "switches" || !this.mod) return;
+    if (!this.mod) return;
     const mod = this.mod;
     let live;
     try { live = await this.api(`/api/mods/${mod}/live`); } catch (e) { return; }
     if (mod !== this.mod) return;
+    this.live = live; this.liveFor = mod;
+    this.renderPhonePanel();
+    this.renderStatus();
     for (const [key, st] of Object.entries(live.switches)) {
       const span = this.byId("live-" + key); if (!span) continue;
       const text = st.state === "ok" ? "on the phone: working" : st.state === "off" ? "on the phone: off" : "on the phone: " + st.reason;
@@ -1051,7 +1186,7 @@ const App = {
       history = history.filter(h => h !== text).concat(text).slice(-100); at = history.length;
       try { localStorage.setItem("studio.console.history", JSON.stringify(history)); } catch (e) {}
       line.value = "";
-      try { const j = await this.api("/api/console", { line: text }); this.showJob(j); this.poll(j.id); this.byId("jobsPanel").scrollIntoView({ behavior: "smooth", block: "nearest" }); }
+      try { const j = await this.api("/api/console", { line: text }); this.showJob(j); this.poll(j.id); this.openJobs(); }
       catch (e) { this.toast(e.message, "bad"); }
     };
     line.addEventListener("keydown", ev => {
@@ -1128,7 +1263,7 @@ const App = {
       } else if (!readOnly && engine === "codex") {
         if (!confirm("Full access: Codex (GPT) runs this task start to finish with no sandbox: it edits the repo, runs any command on this PC with the network, and builds, signs and installs on the phone (am run). It is told not to push, publish, delete outside the mod or install other software, but nothing enforces that. Run it?")) return;
       } else if (!readOnly && !confirm("This task may change files: Claude Code can edit this repo and run any am command (build, sign, install on the phone). It cannot push, publish or run other shell commands. Run it?")) return;
-      try { const j = await this.api("/api/claude", { prompt: out.value, read_only: readOnly, engine, effort: this.effort(), mod: this.mod }); this.showJob(j); this.poll(j.id); this.byId("jobsPanel").scrollIntoView({ behavior: "smooth", block: "nearest" }); this.toast(`${this.engineName(engine)} is working: its answer streams into Jobs`, "ok"); }
+      try { const j = await this.api("/api/claude", { prompt: out.value, read_only: readOnly, engine, effort: this.effort(), mod: this.mod }); this.showJob(j); this.poll(j.id); this.openJobs(); this.toast(`${this.engineName(engine)} is working: its answer streams into Jobs`, "ok"); }
       catch (e) { this.toast(e.message, "bad"); }
     } }, "Run with Claude Code");
     const runNote = this.el("span", { class: "muted small" });
@@ -1224,7 +1359,7 @@ const App = {
     try {
       const j = await this.api("/api/store/publish", { mod, action, confirm });
       this.showJob(j); this.poll(j.id);
-      this.byId("jobsPanel").scrollIntoView({ behavior: "smooth", block: "nearest" });
+      this.openJobs();
     } catch (e) { this.toast(e.message, "bad"); }
   },
   // the phone's screen as a link for this mod's post (studio/shots.py through Accretion Link)
@@ -1630,8 +1765,22 @@ const App = {
     this.byId("newBtn").addEventListener("click", () => this.newModDialog());
     this.byId("getBtn").addEventListener("click", () => this.getIpaDialog());
     this.byId("reloadMods").addEventListener("click", () => this.loadMods());
-    this.byId("clearJobs").addEventListener("click", () => this.byId("jobs").replaceChildren());
-    this.loadMods().catch(e => this.toast(e.message, "bad"));
+    this.byId("clearJobs").addEventListener("click", () => { this.byId("jobs").replaceChildren(); this.drawJobChips(); });
+    // workspace: mods drawer, header Build and run, phone panel, jobs dock
+    const drawer = this.byId("modsDrawer");
+    this.byId("modsBtn").addEventListener("click", () => drawer.showModal());
+    this.byId("modsClose").addEventListener("click", () => drawer.close());
+    drawer.addEventListener("click", ev => { if (ev.target === drawer) drawer.close(); });  // a click on the backdrop
+    this.byId("runPhone").addEventListener("click", () => this.mod && this.job("run", ["--seconds", "75"]));
+    this.byId("phoneWatch").addEventListener("click", async () => { if (!this.mod) return; await this.job("log", ["--seconds", "300"]); setTimeout(() => this.refreshLive(), 3000); });
+    this.byId("phonePush").addEventListener("click", () => this.mod && this.job("push", []));
+    this.byId("phoneShotBtn").addEventListener("click", () => this.mod && this.phoneShot());
+    this.byId("jobsToggle").addEventListener("click", () => this.openJobs(!this.byId("jobsPanel").classList.contains("open")));
+    let jobsOpen = false;
+    try { jobsOpen = localStorage.getItem("studio.jobs.open") === "1"; } catch (e) { /* private window */ }
+    this.openJobs(jobsOpen);
+    this.renderPhonePanel();
+    this.loadMods().then(() => { if (!this.mod) drawer.showModal(); }).catch(e => this.toast(e.message, "bad"));
   },
 };
 App.init();

@@ -3,6 +3,12 @@ Read first when resuming. Project row in `~/PROJECTS.md`. The handbook rules (`.
 this lives in the AccretionMods/mods repo, so nothing personal, no secrets, neutral commits, PRs with auto-merge.
 
 ## What it is
+Workspace layout (2026-10-26): stage nav on the left (Make / Ship / Tools, same tab buttons), the Mods
+list in a drawer opened from the header's mod button, a status strip on every tab (dump, last build, runtime on the
+phone, switches confirmed), "Build and run on the phone" in the header, an "On the phone" panel (live switch states,
+Watch / Push / Screenshot) and the jobs list as a bottom dock (3 newest as chips, open state in `studio.jobs.open`).
+`/api/mods/<mod>/live` gained `runtime` ("attached" / "not found" / null). Checked in the browser at 1440 px (dark,
+light), 800 px and 375 px. Design canvas with the next steps (guided phone test, one-switch editor): handbook HANDOFF.
 Custom always-on features can be recorded in local `AM_ROOT/dev/<mod>.json` under `verified_features`.
 Studio shows their evidence separately from switches and marks results stale if either game or mod
 version changes. Local `patterns.json` may contain `workflows`: topic words, a proven-on scope and

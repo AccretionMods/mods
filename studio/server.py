@@ -868,17 +868,25 @@ LOG_ERROR = re.compile(
 
 
 LIVE_STATUS = re.compile(r"\[AccretionMods\] status (\w+) (ok|off|waiting: (.*))$")
+# the runtime's own report (runtime/AMIl2cpp.m): its hook summary once the Unity VM is found, or giving up
+RUNTIME_ATTACHED = re.compile(r"\bhooks: \d+ installed")
+RUNTIME_MISSING = re.compile(r"Unity runtime not found")
 
 
 def live_status(name):
     """Each switch's last state on the phone, from the menu's "status" log lines in Studio's log and run jobs
-    for this mod (oldest job first, so the newest line wins): {key: {"state", "reason"}}, and whether one runs."""
-    states, watching = {}, False
+    for this mod (oldest job first, so the newest line wins): {key: {"state", "reason"}}, whether one runs, and
+    whether the runtime attached to the game ("attached", "not found" or None, from its hooks / not-found line)."""
+    states, watching, runtime = {}, False, None
     for job in sorted(JOBS.values(), key=lambda j: j.started):
         if job.command not in ("log", "run") or job.argv[:1] != [name]:
             continue
         watching = watching or job.status == "running"
         for line in job.lines:
+            if RUNTIME_ATTACHED.search(line):
+                runtime = "attached"
+            elif RUNTIME_MISSING.search(line):
+                runtime = "not found"
             m = LIVE_STATUS.search(line.rstrip())
             if m:
                 state = "waiting" if m.group(2).startswith("waiting") else m.group(2)
@@ -886,7 +894,7 @@ def live_status(name):
                     "state": state,
                     "reason": (m.group(3) or "").strip(),
                 }
-    return {"switches": states, "watching": watching}
+    return {"switches": states, "watching": watching, "runtime": runtime}
 
 
 def mod_context(name):

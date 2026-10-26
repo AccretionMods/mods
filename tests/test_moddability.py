@@ -133,6 +133,27 @@ class Live(unittest.TestCase):
         self.assertTrue(live["watching"])
         self.assertEqual(live["switches"]["keepStats"], {"state": "off", "reason": ""})  # the newest line wins
         self.assertEqual(live["switches"]["enemiesMiss"], {"state": "waiting", "reason": "Start a fight to see it work"})
+        self.assertIsNone(live["runtime"])  # no runtime line logged yet
+
+    def test_runtime_attached_or_not_found(self):
+        import server
+
+        job = server.Job("run", ["game-plus", "--seconds", "75"])
+        job.lines = ["[AccretionMods] waiting for the Unity VM (API found, corlib 0x1, 120 tries left)",
+                     "[AccretionMods] hooks: 0 installed, 0 missing, 0 without replacement, 0 failed, 0 vtable slots"]
+        later = server.Job("log", ["game-plus"])
+        later.lines = ["[AccretionMods] Unity runtime not found; no hooks installed"]
+        old = dict(server.JOBS)
+        server.JOBS.clear()
+        server.JOBS.update({"a": job})
+        try:
+            self.assertEqual(server.live_status("game-plus")["runtime"], "attached")
+            later.started = job.started + 1
+            server.JOBS["b"] = later
+            self.assertEqual(server.live_status("game-plus")["runtime"], "not found")  # the newest job wins
+        finally:
+            server.JOBS.clear()
+            server.JOBS.update(old)
 
 
 if __name__ == "__main__":
