@@ -2034,7 +2034,11 @@ static NSString *AMGameName(NSString *fallback) {
     name.text = self.title;
     name.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
     name.textColor = AM_FG;
+#ifdef AM_NO_BRANDING
+    UIStackView *titleView = [[UIStackView alloc] initWithArrangedSubviews:@[name]];  // mod.json "branding": false
+#else
     UIStackView *titleView = [[UIStackView alloc] initWithArrangedSubviews:@[[AMLogo new], name]];
+#endif
     titleView.spacing = 8;
     titleView.alignment = UIStackViewAlignmentCenter;
     self.navigationItem.titleView = titleView;
@@ -2074,7 +2078,9 @@ static NSString *AMGameName(NSString *fallback) {
     self.more.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
     self.more.accessibilityLabel = @"More at getaccretion.app";
     [self.more addTarget:self action:@selector(openSite) forControlEvents:UIControlEventTouchUpInside];
-    [foot addSubview:self.more];
+#ifndef AM_NO_BRANDING
+    [foot addSubview:self.more];  // mod.json "branding": false builds without it (scripts/build.sh)
+#endif
     table.tableFooterView = foot;
     [self showNote];
 }
@@ -2113,8 +2119,13 @@ static NSString *AMGameName(NSString *fallback) {
 }
 
 - (void)showNote {
+#ifdef AM_NO_BRANDING
+    NSString *made = @"";  // mod.json "branding": false
+#else
+    NSString *made = @"Made by Accretion. ";
+#endif
     self.note.text = self.shownTitles.count
-        ? @"Made by Accretion. Settings stay on this device. A dot by a switch that is on: green when it reaches the game, red with what to do."
+        ? [made stringByAppendingString:@"Settings stay on this device. A dot by a switch that is on: green when it reaches the game, red with what to do."]
         : [NSString stringWithFormat:@"No switch matches “%@”.", self.query];
 }
 

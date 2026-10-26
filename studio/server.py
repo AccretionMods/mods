@@ -806,6 +806,7 @@ def mod_summary(name):
         "target": meta["target_bundle_id"],
         "app_version": meta.get("tested_app_version", ""),
         "personal": bool(meta.get("personal")),
+        "branding": meta.get("branding", True) is not False,  # the menu's Accretion link, mark and wording
         "has_tweaks": tweaks is not None,
         "tweaks": len(tweaks["tweaks"]) if tweaks else 0,
         "hooks": len(hooks),
@@ -921,6 +922,7 @@ def mod_context(name):
         "title": d["title"],
         "version": d["version"],
         "target": d["target"],
+        "branding": d["branding"],
         "app_version": d["app_version"] or "?",
         "personal": d["personal"],
         "dump": d["dump"],
@@ -1548,6 +1550,22 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"error": "no such job"}, HTTPStatus.NOT_FOUND)
             job.stop()
             return self.send_json(job.view(len(job.lines)))
+        if len(parts) == 4 and parts[:2] == ["api", "mods"] and parts[3] == "branding":
+            # mod.json "branding": the menu's getaccretion.app link, mark by the title and "Made by Accretion." in this
+            # mod's next build (scripts/build.sh); Cloud saves stay either way
+            self.local_only()
+            if not (MOD_NAME.fullmatch(parts[2]) and (ROOT / "mods" / parts[2] / "mod.json").is_file()):
+                return self.send_json({"error": "no such mod"}, HTTPStatus.NOT_FOUND)
+            path = ROOT / "mods" / parts[2] / "mod.json"
+            meta = dev.read_json(path)
+            if body.get("on") is True:
+                meta.pop("branding", None)  # the default: shown
+            elif body.get("on") is False:
+                meta["branding"] = False
+            else:
+                return self.send_json({"error": "on: true or false"}, HTTPStatus.BAD_REQUEST)
+            dev.write_json(path, meta)
+            return self.send_json({"branding": body["on"]})
         if len(parts) == 4 and parts[:2] == ["api", "mods"] and parts[3] in QUICK:
             self.local_only()
             name = self.mod_name(parts[2])

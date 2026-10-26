@@ -327,7 +327,18 @@ const App = {
   async refresh(detail) {
     this.detail = detail || await this.api(`/api/mods/${this.mod}`);
     const d = this.detail;
-    this.byId("sel").replaceChildren(this.el("b", { text: `${d.title} ${d.version}` }), ` · ${d.target} ${d.app_version}`);
+    // Accretion's branding in the mod menu (the getaccretion.app link, the mark by the title, "Made by Accretion."):
+    // mod.json "branding", used by this mod's next build; Cloud saves stay either way
+    const branding = this.el("input", { type: "checkbox" });
+    branding.checked = d.branding !== false;
+    branding.addEventListener("change", async () => {
+      try {
+        await this.api(`/api/mods/${this.mod}/branding`, { on: branding.checked });
+        this.toast(branding.checked ? "Next build: Accretion's link, mark and wording are back in the menu" : "Next build: no Accretion link, mark or wording in the menu (Cloud saves stay)", "ok");
+      } catch (e) { branding.checked = !branding.checked; this.toast(e.message, "bad"); }
+    });
+    this.byId("sel").replaceChildren(this.el("b", { text: `${d.title} ${d.version}` }), ` · ${d.target} ${d.app_version}`,
+      this.el("label", { class: "muted small", style: "margin:0 0 0 12px;display:inline-flex;gap:6px;align-items:center", title: "The mod menu's \"More at getaccretion.app ›\" link, the Accretion mark by the title and \"Made by Accretion.\" Off: this mod's next build has none of them (mod.json branding: false); Cloud saves stay." }, branding, "Accretion branding in the menu"));
     this.render();
   },
   setTab(tab) {

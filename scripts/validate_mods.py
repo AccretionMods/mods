@@ -58,6 +58,8 @@ def check(mod, meta):
         problems.append("min_os must be like 15.0")
     if meta.get("remove_extensions", "encrypted") not in ("encrypted", "all"):
         problems.append("remove_extensions must be encrypted or all")
+    if "branding" in meta and not isinstance(meta["branding"], bool):
+        problems.append("branding must be true or false (false: the menu has no Accretion link, mark or wording)")
     if meta.get("icon_url") and not https(meta["icon_url"]):
         problems.append("icon_url must be an https link")
     base = meta.get("base") or {}

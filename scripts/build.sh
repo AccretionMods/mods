@@ -37,7 +37,14 @@ fi
 
 rm -rf "$dir/.theos" "$dir/packages"
 # hidden visibility: the .dylib exports nothing (nothing links against it; the game only loads it)
-make -C "$dir" FINALPACKAGE=1 ADDITIONAL_CFLAGS=-fvisibility=hidden "${files_override[@]}" >&2
+cflags="-fvisibility=hidden"
+# mod.json "branding": false: the menu is built without Accretion's branding: the "getaccretion.app ›" link, the
+# mark by the title and "Made by Accretion." (menu/AMMenu.m); Cloud saves stay
+if python3 -c 'import json, sys; sys.exit(0 if json.load(open(sys.argv[1])).get("branding", True) is False else 1)' \
+        "$dir/mod.json"; then
+    cflags="$cflags -DAM_NO_BRANDING=1"
+fi
+make -C "$dir" FINALPACKAGE=1 ADDITIONAL_CFLAGS="$cflags" "${files_override[@]}" >&2
 
 dylib="$(find "$dir/.theos/obj" -maxdepth 2 -name '*.dylib' -print -quit)"
 [ -n "$dylib" ] || { echo "build made no .dylib" >&2; exit 1; }
