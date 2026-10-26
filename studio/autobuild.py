@@ -51,7 +51,7 @@ ONLINE = re.compile(r"network|photon|mirror|online|multiplayer|pvp|lobby|matchma
                     re.IGNORECASE)
 # batches asked at once: the paid plans take more; the free tiers allow about 20 requests a minute (OpenRouter)
 # or a day per model (Gemini), so they get two
-WORKERS = {"claude": 3, "codex": 3, "aider": 2, "gemini": 2}
+WORKERS = {"claude": 3, "claude-api": 3, "codex": 3, "aider": 2, "gemini": 2}
 RATE_LIMITED = re.compile(r"rate.?limit|RESOURCE_EXHAUSTED|\b429\b|quota|overloaded|high demand|\b503\b",
                           re.IGNORECASE)
 # a subscription out of its weekly or monthly allowance: asking again only wastes the batch
@@ -144,10 +144,15 @@ def prompt_for(mod, meta, rows):
     )
 
 
+ACCOUNT = [""]  # claude-api: the account this run uses (--account)
+
+
 def ask(engine, prompt, effort=""):
     """The model's whole answer as lines, and whether the run went well (nothing printed: batches run at once)."""
     if engine == "aider":
         cmd, parse = server.aider_command(prompt, None, effort), None
+    elif engine == "claude-api":
+        cmd, parse = server.claude_api_command(prompt, ACCOUNT[0], effort), None
     elif engine == "gemini":
         cmd, parse = server.gemini_command(prompt, None, effort), None
     elif engine == "codex":
@@ -310,6 +315,7 @@ def main(argv=None):
     p.add_argument("mod")
     p.add_argument("--engine", choices=server.ENGINES, default="claude")
     p.add_argument("--effort", choices=[e for e in server.EFFORTS if e], help="how hard the model thinks")
+    p.add_argument("--account", default="", help="claude-api: which saved account (default: the first)")
     p.add_argument("--limit", type=int, default=0, help="at most this many switches (0: every usable one)")
     p.add_argument("--workers", type=int, default=0, help="batches asked at once (default: per engine)")
     p.add_argument("--no-install", action="store_true", help="stop after the build")
@@ -360,7 +366,8 @@ def main(argv=None):
         say(f"    note: {other} of {len(rows)} are in no gameplay area (names only): check the scan's assemblies "
             "(mod.json scan_assemblies) if the picks look like effects or UI")
 
-    who = {"aider": "aider (free model)", "codex": "Codex (GPT)",
+    ACCOUNT[0] = args.account
+    who = {"aider": "aider (free model)", "codex": "Codex (GPT)", "claude-api": f"Claude API ({args.account or 'first account'})",
            "gemini": f"Gemini ({server.GEMINI_MODEL})"}.get(args.engine, "Claude Code")
     if args.effort:
         who += f", {args.effort} effort"

@@ -480,7 +480,7 @@ def claude_lines(raw):
 # no commits, no repo map, no shell commands. Read only: ask mode, only the prompt leaves this PC. Changing files:
 # it edits the selected mod's own files (tweaks.json, hooks.json, mod.json, Tweak.x), which are sent with the
 # prompt; a snapshot is taken first (Files tab restores it). The am commands it proposes become buttons in Jobs.
-ENGINES = ("claude", "aider", "codex", "gemini")
+ENGINES = ("claude", "claude-api", "aider", "codex", "gemini")
 # how hard the model thinks; "" keeps each engine's own default (Claude Code's, ~/.codex/config.toml's, the model's)
 EFFORTS = ("", "low", "medium", "high")
 # Gemini: aider with Google's free API tier, key GEMINI_API_KEY in the Windows user environment (gcloud key
@@ -552,6 +552,26 @@ def gemini_key():
         except OSError:
             key = ""
     return key
+
+
+def claude_api_command(prompt, account="", effort=""):
+    """studio/claude_api.py: Claude through the Anthropic API with one of the saved accounts (the first when
+    none is named). Answers only, like aider in ask mode. The prompt goes in a one-off file (no length limit)."""
+    import claude_api
+
+    names = [a["name"] for a in claude_api.accounts()]
+    if not names:
+        raise dev.DevError("no Claude API account yet: python studio/claude_api.py add <name> (hidden key input)")
+    account = account or names[0]
+    if account not in names:
+        raise dev.DevError(f"no Claude API account {account!r}")
+    folder = dev.am_root() / "work" / "prompts"
+    folder.mkdir(parents=True, exist_ok=True)
+    fd, path = tempfile.mkstemp(suffix=".txt", dir=folder)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(prompt)
+    return [sys.executable, str(Path(__file__).with_name("claude_api.py")), "ask", "--account", account,
+            "--prompt-file", path, *(["--effort", effort] if effort else [])]
 
 
 def gemini_command(prompt, mod=None, effort=""):
@@ -634,7 +654,7 @@ def run_searches(mod, lines, budget):
     return text if len(text) <= budget else text[:budget] + "\n... (cut to fit the prompt)"
 
 
-def start_autobuild(mod, engine, limit, effort=""):
+def start_autobuild(mod, engine, limit, effort="", account=""):
     """studio/autobuild.py as a job: the model picks switches from the scan, Studio adds them and builds."""
     if engine not in ENGINES:
         raise dev.DevError(f"unknown model engine {engine!r}")
@@ -646,6 +666,7 @@ def start_autobuild(mod, engine, limit, effort=""):
         if RESTARTING.is_set():
             raise dev.DevError("Studio is restarting; reconnect before starting jobs")
         job = Job("autobuild", [mod, engine], cmd=[sys.executable, str(HERE / "autobuild.py"), mod, "--engine", engine,
+                                                   *(["--account", account] if account and engine == "claude-api" else []),
                                                    "--limit", str(max(0, int(limit))),  # 0: every usable switch
                                                    *(["--effort", effort] if effort else [])])
         JOBS[job.id] = job
@@ -691,7 +712,7 @@ def start_followup(job, mod):
     return start_claude(prompt, job.read_only, job.engine, mod if not job.read_only else "", job.effort)
 
 
-def start_claude(prompt, read_only, engine="claude", mod="", effort=""):
+def start_claude(prompt, read_only, engine="claude", mod="", effort="", account=""):
     if engine not in ENGINES:
         raise dev.DevError(f"unknown model engine {engine!r}; use one of: {', '.join(ENGINES)}")
     if effort not in EFFORTS:
@@ -707,7 +728,9 @@ def start_claude(prompt, read_only, engine="claude", mod="", effort=""):
     with SESSION_LOCK:
         if RESTARTING.is_set():
             raise dev.DevError("Studio is restarting; reconnect before starting jobs")
-        if engine == "codex":
+        if engine == "claude-api":  # answers only: suggested am commands become buttons, nothing is edited
+            job = Job("claude-api", ["(answer only)"], cmd=claude_api_command(prompt + AIDER_NOTE, account, effort))
+        elif engine == "codex":
             job = Job("codex", ["(read only)" if read_only else "(may change files)"],
                       cmd=codex_command(prompt, read_only, effort))
         elif engine in ("aider", "gemini"):
@@ -1275,6 +1298,11 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         q = {k: v[-1] for k, v in parse_qs(url.query).items()}
         parts = [p for p in url.path.split("/") if p]
+        if parts == ["api", "ai", "accounts"]:  # names and models only: keys stay in Credential Manager
+            import claude_api
+
+            return self.send_json({"accounts": [{"name": a["name"], "model": a.get("model", "")}
+                                                for a in claude_api.accounts()]})
         if len(parts) == 4 and parts[:2] == ["api", "mods"] and parts[3] == "install-check":
             # before Build and run in original-ID mode: is the original game (an app Studio did not install) there?
             if not (MOD_NAME.fullmatch(parts[2]) and (ROOT / "mods" / parts[2] / "mod.json").is_file()):
@@ -1492,6 +1520,7 @@ class Handler(BaseHTTPRequestHandler):
                     str(body.get("engine", "claude")),
                     str(body.get("mod", "")),
                     str(body.get("effort", "")),
+                    str(body.get("account", "")),
                 ).view()
             )
         if parts == ["api", "console"]:
@@ -1555,7 +1584,8 @@ class Handler(BaseHTTPRequestHandler):
         if len(parts) == 4 and parts[:2] == ["api", "mods"] and parts[3] == "autobuild":
             self.local_only()
             return self.send_json(start_autobuild(self.mod_name(parts[2]), str(body.get("engine", "claude")),
-                                                  int(body.get("limit", 10)), str(body.get("effort", ""))).view())
+                                                  int(body.get("limit", 10)), str(body.get("effort", "")),
+                                                  str(body.get("account", ""))).view())
         if len(parts) == 4 and parts[:2] == ["api", "jobs"] and parts[3] == "followup":
             self.local_only()
             job = JOBS.get(parts[2])
