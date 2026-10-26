@@ -369,7 +369,7 @@ const App = {
     search.value = this.modsPref("q", "");
     search.addEventListener("input", () => { this.modsSave("q", search.value); this.drawMods(); });
     const sort = this.el("select", { id: "modsSort", title: "Order of the list" },
-      [["built", "Last built"], ["name", "Name"], ["game", "By game"], ["switches", "Most switches"]].map(o => this.el("option", { value: o[0], text: o[1] })));
+      [["built", "Last built"], ["name", "Name"], ["letter", "Name, grouped A–Z"], ["game", "By game"], ["switches", "Most switches"]].map(o => this.el("option", { value: o[0], text: o[1] })));
     sort.value = this.modsPref("sort", "built");
     sort.addEventListener("change", () => { this.modsSave("sort", sort.value); this.drawMods(); });
     const compact = this.el("input", { type: "checkbox", id: "modsCompact" });
@@ -399,6 +399,7 @@ const App = {
     shown.sort({
       built: (a, b) => (b.built || 0) - (a.built || 0) || byName(a, b),  // latest build first, never built last
       name: byName,
+      letter: byName,
       game: (a, b) => a.target.localeCompare(b.target) || byName(a, b),
       switches: (a, b) => (b.tweaks || 0) - (a.tweaks || 0) || byName(a, b),
     }[sort] || byName);
@@ -406,8 +407,14 @@ const App = {
     const when = t => { const d = new Date(t * 1000), today = new Date().toDateString() === d.toDateString();
       return "built " + (today ? "today " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
                                : d.toLocaleDateString([], { month: "short", day: "numeric", year: d.getFullYear() === new Date().getFullYear() ? undefined : "numeric" })); };
-    let game = null;
+    let game = null, letter = null;
+    // "Name, grouped A–Z": a letter header over the mods whose name starts with it (digits and signs under #)
+    const initial = m => { const c = (String(m.title).match(/[A-Za-z0-9]/) || ["#"])[0].toUpperCase(); return /[A-Z]/.test(c) ? c : "#"; };
     for (const m of shown) {
+      if (sort === "letter" && initial(m) !== letter) {
+        letter = initial(m);
+        box.append(this.el("div", { class: "label", style: "margin:10px 2px 2px;font-size:11px", text: letter }));
+      }
       if (sort === "game" && m.target !== game) {  // one header per game: its mods together (Wanderer Dev beside The Wanderer+)
         game = m.target;
         box.append(this.el("div", { class: "label", style: "margin:10px 2px 2px;font-size:11px", text: `${m.target} ${m.app_version}`.trim() }));
