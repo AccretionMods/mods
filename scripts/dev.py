@@ -900,7 +900,8 @@ def pin_problems_in_dump(mod):
     folder = mod_dir(mod)
     meta = read_json(folder / "mod.json")
     tweaks = load_tweaks(folder, meta)
-    dump_scan.scan(dump_path(mod), tweaks, assemblies=meta.get("scan_assemblies"))  # refreshes scan.json (read below)
+    dump_scan.scan(dump_path(mod), tweaks, assemblies=meta.get("scan_assemblies"),
+                   bundle_id=meta.get("target_bundle_id"))  # refreshes scan.json (read below)
     data = json.loads((dump_path(mod).with_name("scan.json")).read_text(encoding="utf-8"))["data"]
     methods = {}
     for m in dump_methods(mod):
@@ -2266,7 +2267,7 @@ def scan_rows(mod, area=None, find=None, flagged=False):
     game = meta.get("target_bundle_id")
     result = dump_scan.scan(dump_path(mod), load_tweaks(folder, meta),
                             learned=lambda name, ctype, cls: dev_learn.member_boost(store, name, ctype, game, cls),
-                            assemblies=meta.get("scan_assemblies"))
+                            assemblies=meta.get("scan_assemblies"), bundle_id=meta.get("target_bundle_id"))
     rows = (result["flagged"] if flagged else result["rows"]) + result.get("inventory", [])
     if area:
         rows = [r for r in rows if r["area"].lower().startswith(area.lower())]
@@ -2295,7 +2296,8 @@ def report_for(target):
     if mod:
         try:
             meta = read_json(mod_dir(mod) / "mod.json")
-            scan = dump_scan.scan(dump_path(mod), load_tweaks(mod_dir(mod), meta), assemblies=meta.get("scan_assemblies"))
+            scan = dump_scan.scan(dump_path(mod), load_tweaks(mod_dir(mod), meta), assemblies=meta.get("scan_assemblies"),
+                                  bundle_id=meta.get("target_bundle_id"))
         except DevError:
             scan = None
     return facts, scan
@@ -2419,7 +2421,8 @@ def cmd_start(args):
     cmd_new(argparse.Namespace(name=name, ipa=str(ipa), title=args.title or f"{facts['name']}+",
                                category="games", no_dump=False))
     meta_ = read_json(mod_dir(name) / "mod.json")
-    scan = dump_scan.scan(dump_path(name), load_tweaks(mod_dir(name), meta_), assemblies=meta_.get("scan_assemblies"))
+    scan = dump_scan.scan(dump_path(name), load_tweaks(mod_dir(name), meta_), assemblies=meta_.get("scan_assemblies"),
+                          bundle_id=meta_.get("target_bundle_id"))
     level, lines = moddability.verdict(facts, scan)
     print(f"==> verdict with the dump: {level.upper()}")
     for line in lines:

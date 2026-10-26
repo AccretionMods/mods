@@ -19,7 +19,7 @@ from pathlib import Path
 
 from il2cpp_dump import ADDRESS, FLOATS, INTEGERS, SIGNATURE, TYPE, TYPE_INDEX, Method, split_params
 
-VERSION = 13  # hot-update assemblies, Singleton<T> instances, fixed-point FP fields, demo classes left out
+VERSION = 14  # also the assembly named after the game's bundle ID (VampireSurvivors.Runtime)
 
 IMAGE = re.compile(r"^// Image \d+: (.+?)(?:\.dll)? - (\d+)\s*$")
 NAMESPACE = re.compile(r"^\s*// Namespace: ?(\S*)")
@@ -108,14 +108,48 @@ def flag_of(cls, member):
     return None
 
 
-def game_assemblies(images, wanted=None):
+def _compact(text):
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+def game_assemblies(images, wanted=None, bundle_id=None):
     """The assemblies holding the game's own code: mod.json "scan_assemblies", else the hot-update ones when the
-    game has them, else Assembly-CSharp."""
+    game has them, else Assembly-CSharp plus any assembly named after the game (Vampire Survivors keeps its code
+    in VampireSurvivors.Runtime: com.poncle.VampireSurvivors -> "vampiresurvivors")."""
     names = [name for _, name in images]
     if wanted:
-        return set(wanted)
+        return {n.removesuffix(".dll") for n in wanted}
     hot = {n for n in names if HOT_UPDATE.match(n)}
-    return hot or {n for n in names if n.startswith("Assembly-CSharp")}
+    if hot:
+        return hot
+    chosen = {n for n in names if n.startswith("Assembly-CSharp")}
+    game = _compact(bundle_id.rsplit(".", 1)[-1]) if bundle_id else ""
+    if len(game) >= 4:
+        chosen |= {n for n in names if _compact(n).startswith(game)}
+    return chosen
+
+
+# engine, platform and store-bought libraries: never where a game keeps its own code
+LIBRARY = re.compile(r"^(Unity|UnityEngine|System|Mono|mscorlib|Microsoft|netstandard|Newtonsoft|DOTween|DG\.|"
+                     r"Coherence|Photon|PlayFab|Firebase|Google|Facebook|AppsFlyer|Apple|Sirenix|TMPro|Rewired|Zenject|"
+                     r"UniTask|UniRx|Cysharp|MessagePack|Spine|Cinemachine|Doozy|Sentry|Amazon|AWS|Lean|I2|l2local|"
+                     r"ICSharpCode|Assembly-CSharp-firstpass|Mirror|FishNet|Fusion|Steamworks|Dreamteck|ProCamera|"
+                     r"Il2Cpp|__Generated)", re.IGNORECASE)
+
+
+def assembly_sizes(dump):
+    """[(types, assembly)] largest first, from dump.cs's image table (its first lines), libraries left out."""
+    starts = []
+    with open(dump, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            m = IMAGE.match(line)
+            if m:
+                starts.append((int(m.group(2)), m.group(1)))
+            elif starts:
+                break
+    starts.sort()
+    sizes = [(b[0] - a[0], a[1]) for a, b in zip(starts, starts[1:])]
+    return sorted(((n, name) for n, name in sizes if not LIBRARY.match(name)), reverse=True)
 
 
 def scalar(ftype):
@@ -128,7 +162,7 @@ def scalar(ftype):
     return None
 
 
-def parse(path, assemblies=None):
+def parse(path, assemblies=None, bundle_id=None):
     """Classes of the game's own assemblies: {name: {"base", "statics": [field], "fields": {...}, "props": {...}}}.
     A class outside Assembly-CSharp is named with its assembly (HotFix:GameManager), as the runtime finds it."""
     images, classes, generics = [], {}, {}
@@ -148,7 +182,7 @@ def parse(path, assemblies=None):
                 continue
             if "// TypeDefIndex:" in line:
                 if chosen is None:
-                    chosen = game_assemblies(images, assemblies)
+                    chosen = game_assemblies(images, assemblies, bundle_id)
                 current = generic = None
                 g = GENERIC.match(line)
                 if g:  # Singleton<T>: which of its static fields holds the T
@@ -326,13 +360,14 @@ def existing_targets(tweaks):
     return out
 
 
-def scan(dump, tweaks=None, learned=None, assemblies=None):
+def scan(dump, tweaks=None, learned=None, assemblies=None, bundle_id=None):
     """Rows for a dump.cs, cached in scan.json beside it (rebuilt when the dump, VERSION or the chosen assemblies
     change). assemblies: mod.json "scan_assemblies" (default: hot-update assemblies, else Assembly-CSharp)."""
     dump = Path(dump)
     cache = dump.with_name("scan.json")
     st = dump.stat()
-    stamp = {"version": VERSION, "size": st.st_size, "mtime": st.st_mtime_ns, "assemblies": sorted(assemblies or [])}
+    stamp = {"version": VERSION, "size": st.st_size, "mtime": st.st_mtime_ns, "assemblies": sorted(assemblies or []),
+             "bundle_id": bundle_id or ""}
     data = None
     if cache.is_file():
         try:
@@ -340,7 +375,7 @@ def scan(dump, tweaks=None, learned=None, assemblies=None):
         except ValueError:
             data = None
     if not data or data.get("stamp") != stamp:
-        classes = parse(dump, assemblies)
+        classes = parse(dump, assemblies, bundle_id)
         data = {"stamp": stamp, "classes": len(classes), "inventory": purchase_inventory(dump),
                 "data": {k: dict(v, getters=sorted(v["getters"]), holds=sorted(v["holds"])) for k, v in classes.items()}}
         tmp = cache.with_name(cache.name + ".tmp")

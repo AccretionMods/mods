@@ -275,5 +275,49 @@ private sealed class IAPManager.<>c // TypeDefIndex: 31
         self.assertNotIn("Enemy", saved)  # a UI button named Save... holds no save
 
 
+SPLIT = """// Image 0: mscorlib.dll - 0
+// Image 1: Assembly-CSharp.dll - 10
+// Image 2: Engine.Port.dll - 20
+// Image 3: SpaceRaid.Runtime.dll - 30
+
+// Namespace: Engine
+public class Sprite : MonoBehaviour // TypeDefIndex: 21
+{
+	public float alpha; // 0x10
+}
+
+// Namespace: SpaceRaid
+public class Ship : MonoBehaviour // TypeDefIndex: 31
+{
+	public float Shield; // 0x20
+}
+"""
+
+
+class GameAssemblyTests(unittest.TestCase):
+    def setUp(self):
+        fd, self.path = tempfile.mkstemp(suffix=".cs")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(SPLIT)
+
+    def tearDown(self):
+        os.remove(self.path)
+
+    def test_assembly_named_after_bundle_id(self):
+        classes = dump_scan.parse(self.path, bundle_id="com.example.SpaceRaid")
+        self.assertEqual([c for c in classes if c.endswith("Ship")], ["SpaceRaid.Runtime:SpaceRaid.Ship"])
+        self.assertFalse(any(c.endswith("Sprite") for c in classes))  # an engine assembly stays unread
+
+    def test_without_bundle_id_only_assembly_csharp(self):
+        self.assertEqual(dump_scan.parse(self.path), {})
+
+    def test_scan_assemblies_accept_dll_names(self):
+        classes = dump_scan.parse(self.path, assemblies=["SpaceRaid.Runtime.dll"])
+        self.assertIn("SpaceRaid.Runtime:SpaceRaid.Ship", classes)
+
+    def test_assembly_sizes_skip_libraries(self):
+        self.assertEqual(dump_scan.assembly_sizes(self.path)[0], (10, "Engine.Port"))
+
+
 if __name__ == "__main__":
     unittest.main()

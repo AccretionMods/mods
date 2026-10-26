@@ -38,6 +38,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(HERE))
 
 import dev  # noqa: E402
+import dump_scan  # noqa: E402
 import server  # noqa: E402  (the model command lines and the Claude stream parser)
 
 PIN = re.compile(r"^am pin (\S+) (.+)$")  # older answers: whole commands, still taken
@@ -52,6 +53,9 @@ ONLINE = re.compile(r"network|photon|mirror|online|multiplayer|pvp|lobby|matchma
 WORKERS = {"claude": 3, "codex": 3, "aider": 2, "gemini": 2}
 RATE_LIMITED = re.compile(r"rate.?limit|RESOURCE_EXHAUSTED|\b429\b|quota|overloaded|high demand|\b503\b",
                           re.IGNORECASE)
+# a subscription out of its weekly or monthly allowance: asking again only wastes the batch
+OUT_OF_ALLOWANCE = re.compile(r"(weekly|monthly|daily|usage|session) limit|hit your .*limit|limit .*resets",
+                              re.IGNORECASE)
 OUT = threading.Lock()
 
 
@@ -230,6 +234,8 @@ def ask_batch(engine, effort, mod, meta, batch):
             answer, ok = [f"could not start the model: {error}"], False
         found, skipped = picks(mod, batch, answer)
         tries.append(answer)
+        if any(OUT_OF_ALLOWANCE.search(a) for a in answer):
+            return answer, [], ["out of allowance"], attempt
         if ok and (found or not any(RATE_LIMITED.search(a) for a in answer)):
             return answer, found, skipped, attempt
         if attempt == 1:
@@ -288,6 +294,12 @@ def main(argv=None):
         asm = r["class"].split(":", 1)[0] if ":" in r["class"] else "Assembly-CSharp"
         where[asm] = where.get(asm, 0) + 1
     say("    from " + ", ".join(f"{a} {n}" for a, n in sorted(where.items(), key=lambda x: -x[1])))
+    if len(rows) < 100:  # few rows: the game's code may sit in an assembly the scan didn't read
+        read = set(where)
+        big = [f"{name} ({n} types)" for n, name in dump_scan.assembly_sizes(dev.dump_path(mod))[:6] if name not in read]
+        if big:
+            say("    note: only a few candidates. Largest assemblies the scan did not read: " + ", ".join(big)
+                + '. If the game code is in one of them, add it to mod.json "scan_assemblies" and run again')
     other = sum(1 for r in rows if r["area"] == "Other")
     if other > len(rows) * 0.7:
         say(f"    note: {other} of {len(rows)} are in no gameplay area (names only): check the scan's assemblies "
@@ -347,6 +359,10 @@ def main(argv=None):
     if limit:
         pins = pins[:limit]
     if not pins:
+        if results and all("out of allowance" in skipped for _, skipped in results.values()):
+            say(f"{who} is out of its usage allowance (see its message above): nothing added. Run again later or "
+                "with another engine (--engine gemini, codex or aider)")
+            return 1
         say("the model picked nothing usable for this mod: nothing added, nothing built")
         return 1
     area = {f"{r['class']}.{r['member']}": r["area"] for r in rows}  # the scan's area becomes the menu section
