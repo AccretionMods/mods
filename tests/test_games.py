@@ -146,5 +146,49 @@ class Games(unittest.TestCase):
         self.assertIn("Adventure", terms)
 
 
+class Icons(unittest.TestCase):
+    """The Mods list's icons: one lookup for every mod's game, small images kept on disk."""
+
+    def test_one_lookup_for_all_then_from_disk(self):
+        import tempfile
+
+        asked = []
+
+        class Resp(io.BytesIO):
+            def __init__(self, body, ctype="application/json"):
+                super().__init__(body)
+                self.headers = {"Content-Type": ctype}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                self.close()
+
+        def opener(req, timeout=None):
+            url = urlparse(req.full_url)
+            asked.append(url)
+            if url.hostname == "itunes.apple.com":
+                return Resp(json.dumps({"results": [
+                    {"kind": "software", "bundleId": "com.a.game", "artworkUrl100": "https://is1.example/a/100x100bb.jpg"},
+                    {"kind": "software", "bundleId": "com.b.game", "artworkUrl100": "https://is1.example/b/100x100bb.jpg"},
+                ]}).encode())
+            return Resp(b"\xff\xd8jpeg", "image/jpeg")
+
+        games._cache.clear()
+        with tempfile.TemporaryDirectory() as root:
+            a = games.icon_file(root, "com.a.game", ["com.b.game", "com.gone.game"], opener=opener)
+            self.assertEqual(a.read_bytes(), b"\xff\xd8jpeg")
+            lookups = [u for u in asked if u.hostname == "itunes.apple.com"]
+            self.assertEqual(len(lookups), 1)
+            self.assertEqual(parse_qs(lookups[0].query)["bundleId"], ["com.a.game,com.b.game,com.gone.game"])
+            self.assertIn("128x128bb", [u.path for u in asked if u.hostname != "itunes.apple.com"][0])
+            n = len(asked)
+            self.assertTrue(games.icon_file(root, "com.b.game", opener=opener).is_file())  # fetched with the first
+            self.assertIsNone(games.icon_file(root, "com.gone.game", opener=opener))  # not in the store: remembered
+            self.assertEqual(len(asked), n)
+            self.assertIsNone(games.icon_file(root, "../../etc", opener=opener))
+
+
 if __name__ == "__main__":
     unittest.main()

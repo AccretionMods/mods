@@ -788,6 +788,17 @@ def capture(fn, *args):
     return code, out.getvalue()
 
 
+def mod_metas():
+    """Every mod's mod.json (unreadable ones left out)."""
+    out = []
+    for p in sorted((ROOT / "mods").glob("*/mod.json")):
+        try:
+            out.append(dev.read_json(p))
+        except (OSError, ValueError):
+            continue
+    return out
+
+
 def mod_summary(name):
     folder = ROOT / "mods" / name
     meta = dev.read_json(folder / "mod.json")
@@ -1197,12 +1208,12 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def send_file(self, path, ctype):
+    def send_file(self, path, ctype, cache="no-store"):
         data = path.read_bytes()
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", cache)
         self.end_headers()
         self.wfile.write(data)
 
@@ -1260,6 +1271,17 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         q = {k: v[-1] for k, v in parse_qs(url.query).items()}
         parts = [p for p in url.path.split("/") if p]
+        if len(parts) == 3 and parts[:2] == ["api", "icons"]:
+            # a game's App Store icon for the Mods list: looked up once for every mod's game, kept on disk
+            others = [m.get("target_bundle_id") for m in mod_metas()]
+            icon = games.icon_file(dev.am_root(), parts[2], others)
+            if not icon:
+                self.send_response(HTTPStatus.NOT_FOUND)
+                self.send_header("Content-Length", "0")
+                self.send_header("Cache-Control", "max-age=3600")
+                self.end_headers()
+                return None
+            return self.send_file(icon, "image/png" if icon.suffix == ".png" else "image/jpeg", "max-age=86400")
         if parts == ["api", "studio"]:
             current = workspace.source_revision(ROOT)
             return self.send_json(

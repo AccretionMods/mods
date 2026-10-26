@@ -9,9 +9,11 @@ cached for half an hour per URL. Every row has the same fields (see row()).
 import json
 import math
 import re
+import threading
 import time
 import urllib.parse
 import urllib.request
+from pathlib import Path
 
 GAMES = "6014"
 CHARTS = {
@@ -196,3 +198,59 @@ def similar(targets, region="us", limit=40, opener=None):
                     rows[b]["like"].append(mine)
     best = sorted(rows, key=lambda b: scores[b], reverse=True)[:limit]
     return [rows[b] for b in best]
+
+
+ICON_DAYS = 30  # an app's icon is fetched again after this long (a new season's art)
+MISSING_HOURS = 24  # an app the App Store doesn't have is asked about again after this long
+ICON_SIZE = "128x128bb"  # the list shows 40 px icons: 128 px is sharp at 3x and ~10 KB instead of ~60 KB at 512
+ICON_BUNDLE = re.compile(r"^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)+$")
+_icon_lock = threading.Lock()
+
+
+def icon_file(root, bundle, others=(), region="us", opener=None):
+    """The App Store icon of bundle, cached in <root>/cache/icons (index.json + one image per app), or None when
+    the store has no such app. The first miss looks up every bundle in others too, in one iTunes Lookup call,
+    and downloads their small icons, so a list of mods costs one lookup instead of one per mod."""
+    if not ICON_BUNDLE.match(bundle or ""):
+        return None
+    folder = Path(root) / "cache" / "icons"
+    with _icon_lock:
+        try:
+            index = json.loads((folder / "index.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            index = {}
+        now = time.time()
+
+        def fresh(b):
+            e = index.get(b)
+            if not e:
+                return False
+            if e.get("file"):
+                return (folder / e["file"]).is_file() and now - e["at"] < ICON_DAYS * 86400
+            return now - e["at"] < MISSING_HOURS * 3600
+
+        if not fresh(bundle):
+            wanted = [b for b in dict.fromkeys([bundle, *others]) if ICON_BUNDLE.match(b or "") and not fresh(b)][:100]
+            try:
+                found = {r.get("bundleId"): r for r in lookup(bundles=wanted, region=region, opener=opener)}
+            except GamesError:
+                return None  # offline: no icon now, ask again next time
+            folder.mkdir(parents=True, exist_ok=True)
+            for b in wanted:
+                url = (found.get(b) or {}).get("artworkUrl100") or (found.get(b) or {}).get("artworkUrl512")
+                entry = {"file": None, "at": now}
+                if url:
+                    url = re.sub(r"\d+x\d+bb", ICON_SIZE, url)
+                    try:
+                        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+                        with (opener or urllib.request.urlopen)(req, timeout=30) as r:
+                            data, ctype = r.read(), r.headers.get("Content-Type", "image/jpeg")
+                        name = b + (".png" if "png" in ctype else ".jpg")
+                        (folder / name).write_bytes(data)
+                        entry["file"] = name
+                    except OSError:
+                        continue  # not recorded: tried again next time
+                index[b] = entry
+            (folder / "index.json").write_text(json.dumps(index, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+        e = index.get(bundle) or {}
+        return folder / e["file"] if e.get("file") else None

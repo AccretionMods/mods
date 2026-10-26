@@ -216,18 +216,9 @@ h2, h3 { font-family: var(--display); }
 .game .seller { color: var(--muted); font-size: 12.5px; overflow-wrap: anywhere; }
 .game .meta { color: var(--muted); font-size: 12px; font-family: var(--mono); }
 .game .acts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: auto; }
-/* workspace: stage nav | content | phone panel, the mods list in a drawer, jobs docked at the bottom */
-.layout { grid-template-columns: 210px minmax(0, 1fr) 300px; max-width: 1640px; padding-bottom: 76px; align-items: start; }
-.modsbtn { display: inline-flex; align-items: center; gap: 8px; font-family: var(--display); font-weight: 600; }
-.stages { position: sticky; top: 76px; display: flex; flex-direction: column; gap: 2px; padding: 10px; }
-.stages .grp { font: 500 10.5px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); padding: 12px 10px 4px; }
-.stages .grp:first-child { padding-top: 2px; }
-.stages button { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; min-height: 40px; border-color: transparent; background: none; }
-.stages button:hover { background: var(--raised); border-color: transparent; }
-.stages button.active { background: var(--raised); color: var(--accent-text); border-color: var(--line); font-weight: 600; }
-.stages button.tool { min-height: 34px; font-size: 13px; color: var(--muted); }
-.stages button.tool.active { color: var(--accent-text); }
-.stages .n { margin-left: auto; font: 12px var(--mono); color: var(--muted); }
+/* workspace: mods list | tabs and content | phone panel, jobs docked at the bottom */
+.layout { grid-template-columns: 290px minmax(0, 1fr) 300px; max-width: 1640px; padding-bottom: 76px; align-items: start; }
+.tabs .n { margin-left: 6px; font: 12px var(--mono); color: var(--muted); }
 .status { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 0 0 16px; }
 .status .box { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; background: var(--surface); min-width: 0; }
 .status .l { font-size: 12px; color: var(--muted); }
@@ -241,8 +232,11 @@ h2, h3 { font-family: var(--display); }
 .phonepanel .line .r { display: block; font: 12px var(--mono); color: var(--muted); overflow-wrap: anywhere; margin-top: 2px; }
 .phonepanel .acts { display: flex; flex-direction: column; gap: 6px; }
 .phonepanel .acts button { width: 100%; min-height: 40px; }
-#modsDrawer { margin: 0 auto 0 0; height: 100vh; max-height: 100vh; width: min(360px, 92vw); border-radius: 0 18px 18px 0; padding: 18px; overflow: auto; box-sizing: border-box; }
-#modsDrawer .row.top { margin-bottom: 12px; }
+.mod .head { display: flex; gap: 10px; align-items: center; min-width: 0; }
+.mod .head > div { min-width: 0; }
+.mod .head .s { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }  /* beside the icon: one line each */
+.mod .icon { width: 40px; height: 40px; border-radius: 23%; flex: none; background: var(--raised); border: 1px solid var(--line); object-fit: cover; }
+.mod.compact .icon { width: 28px; height: 28px; }
 .dock { position: fixed; left: 0; right: 0; bottom: 0; z-index: 7; background: var(--surface); border-top: 1px solid var(--line); box-shadow: 0 -8px 24px rgba(0,0,0,.25); }
 .dock .bar { padding: 6px 16px; min-height: 44px; flex-wrap: nowrap; }
 .dock .chips { flex-wrap: nowrap; overflow: hidden; margin: 0; flex: 1; min-width: 0; }
@@ -252,16 +246,13 @@ h2, h3 { font-family: var(--display); }
 .dock .jdot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
 .dock .jdot.run { background: var(--accent); } .dock .jdot.ok { background: var(--good); } .dock .jdot.bad { background: var(--bad); }
 @media (max-width: 1180px) {
-  .layout { grid-template-columns: 200px minmax(0, 1fr); }
+  .layout { grid-template-columns: 290px minmax(0, 1fr); }
   .phonepanel { grid-column: 1 / -1; position: static; }
   .phonepanel .lines { max-height: none; }
 }
 @media (max-width: 860px) {
   .layout { grid-template-columns: 1fr; padding: 14px 12px 76px; }
   header { position: static; }  /* several rows tall on a phone: it scrolls away instead of covering the page */
-  .stages { position: static; flex-direction: row; overflow-x: auto; padding: 6px; }
-  .stages .grp { display: none; }
-  .stages button { width: auto; flex: none; white-space: nowrap; }
   .status { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 </style>
@@ -270,7 +261,6 @@ h2, h3 { font-family: var(--display); }
 <div class="light a"></div><div class="light b"></div>
 <header>
   <div class="brand"><span class="live"></span><b>ACCRETION</b>/ mod studio</div>
-  <button id="modsBtn" class="modsbtn" aria-haspopup="dialog" title="Choose a mod"><span id="modsBtnText">Choose a mod</span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg></button>
   <div class="sel" id="sel">no mod selected</div>
   <button id="runPhone" class="primary" title="build the .ipa, sign it, install it, open the game and read its log" disabled>Build and run on the phone</button>
   <button id="getBtn">Get .ipa</button>
@@ -279,27 +269,24 @@ h2, h3 { font-family: var(--display); }
   <span id="studioVersion" class="small muted"></span>
   <button id="restartStudio" class="hidden">Load update</button>
 </header>
-<dialog id="modsDrawer" aria-label="Mods">
-  <div class="row top"><span class="label grow">Mods</span><button class="small ghost" id="reloadMods">Reload</button><button class="small ghost" id="modsClose" aria-label="Close the mods list">Close</button></div>
-  <div class="mods" id="mods"></div>
-  <p class="hint" id="amRoot"></p>
-</dialog>
 <div class="layout">
-  <nav class="card stages" id="tabs" aria-label="Stages">
-    <span class="grp">Make</span>
-    <button data-tab="switches" class="active">Switches<span class="n" id="navCount"></span></button>
-    <button data-tab="find">Find</button>
-    <button data-tab="suggest">Suggest</button>
-    <button data-tab="scan">Scan</button>
-    <span class="grp">Ship</span>
-    <button data-tab="phone">Build &amp; Phone</button>
-    <button data-tab="store">Store</button>
-    <span class="grp">Tools</span>
-    <button data-tab="files" class="tool">Files</button>
-    <button data-tab="games" class="tool">Games</button>
-    <button data-tab="console" class="tool">Console</button>
-  </nav>
+  <aside class="card">
+    <div class="row" style="margin-bottom:12px"><span class="label grow">Mods</span><button class="small ghost" id="reloadMods">Reload</button></div>
+    <div class="mods" id="mods"></div>
+    <p class="hint" id="amRoot"></p>
+  </aside>
   <main class="card">
+    <div class="tabs" id="tabs">
+      <button data-tab="switches" class="active">Switches<span class="n" id="navCount"></span></button>
+      <button data-tab="find">Find</button>
+      <button data-tab="suggest">Suggest</button>
+      <button data-tab="scan">Scan</button>
+      <button data-tab="phone">Build &amp; Phone</button>
+      <button data-tab="files">Files</button>
+      <button data-tab="games">Games</button>
+      <button data-tab="store">Store</button>
+      <button data-tab="console">Console</button>
+    </div>
     <div class="status hidden" id="statusStrip" aria-label="This mod's state"></div>
     <section id="tab-switches"></section>
     <section id="tab-find" class="hidden"></section>
@@ -433,9 +420,14 @@ const App = {
       ];
       box.append(this.el("div", { class: "mod" + (m.name === this.mod ? " active" : "") + (compact ? " compact" : ""), "data-name": m.name, onclick: () => this.select(m.name),
                                   title: compact ? `${m.target} ${m.app_version} · ${m.built ? when(m.built) : "never built"}` : null },
-        this.el("div", { class: "t", text: `${m.title} ${m.version}` }),
-        compact ? null : this.el("div", { class: "s", text: `${m.target} ${m.app_version}` }),
-        compact ? null : this.el("div", { class: "s", text: m.built ? when(m.built) : "never built" }),
+        // the game's App Store icon, cached by Studio (/api/icons: one lookup for every mod, kept on disk a month)
+        this.el("div", { class: "head" },
+          this.el("img", { class: "icon", src: `/api/icons/${encodeURIComponent(m.target)}`, alt: "", loading: "lazy", decoding: "async",
+                           onerror: ev => { ev.target.style.visibility = "hidden"; } }),
+          this.el("div", {},
+            this.el("div", { class: "t", text: `${m.title} ${m.version}` }),
+            compact ? null : this.el("div", { class: "s", text: `${m.target} ${m.app_version}` }),
+            compact ? null : this.el("div", { class: "s", text: m.built ? when(m.built) : "never built" }))),
         this.el("div", { class: "badges" }, badges)));
     }
     if (!shown.length) box.append(this.el("p", { class: "hint", text: "No mod matches. Clear the filter or pick All." }));
@@ -444,7 +436,6 @@ const App = {
     if (!this.mods.some(m => m.name === name)) name = this.mods[0] && this.mods[0].name;
     if (!name) return;
     this.mod = name; localStorage.setItem("studio.mod", name);
-    const drawer = this.byId("modsDrawer"); if (drawer.open) drawer.close();
     await this.refresh();
     document.querySelectorAll(".mod[data-name]").forEach(e => e.classList.toggle("active", e.dataset.name === name));
   },
@@ -463,7 +454,6 @@ const App = {
     });
     this.byId("sel").replaceChildren(this.el("b", { text: `${d.title} ${d.version}` }), ` · ${d.target} ${d.app_version}`,
       this.el("label", { class: "muted small", style: "margin:0 0 0 12px;display:inline-flex;gap:6px;align-items:center", title: "The mod menu's \"More at getaccretion.app ›\" link, the Accretion mark by the title and \"Made by Accretion.\" Off: this mod's next build has none of them (mod.json branding: false); Cloud saves stay." }, branding, "Accretion branding in the menu"));
-    this.byId("modsBtnText").textContent = d.title;
     this.byId("runPhone").disabled = false;
     const tweaks = (d.tweaks_json || {}).tweaks || [];
     this.byId("navCount").textContent = tweaks.length ? String(tweaks.length) : "";
@@ -1783,11 +1773,7 @@ const App = {
     this.byId("getBtn").addEventListener("click", () => this.getIpaDialog());
     this.byId("reloadMods").addEventListener("click", () => this.loadMods());
     this.byId("clearJobs").addEventListener("click", () => { this.byId("jobs").replaceChildren(); this.drawJobChips(); });
-    // workspace: mods drawer, header Build and run, phone panel, jobs dock
-    const drawer = this.byId("modsDrawer");
-    this.byId("modsBtn").addEventListener("click", () => drawer.showModal());
-    this.byId("modsClose").addEventListener("click", () => drawer.close());
-    drawer.addEventListener("click", ev => { if (ev.target === drawer) drawer.close(); });  // a click on the backdrop
+    // workspace: header Build and run, phone panel, jobs dock
     this.byId("runPhone").addEventListener("click", () => this.mod && this.job("run", ["--seconds", "75"]));
     this.byId("phoneWatch").addEventListener("click", async () => { if (!this.mod) return; await this.job("log", ["--seconds", "300"]); setTimeout(() => this.refreshLive(), 3000); });
     this.byId("phonePush").addEventListener("click", () => this.mod && this.job("push", []));
@@ -1797,7 +1783,7 @@ const App = {
     try { jobsOpen = localStorage.getItem("studio.jobs.open") === "1"; } catch (e) { /* private window */ }
     this.openJobs(jobsOpen);
     this.renderPhonePanel();
-    this.loadMods().then(() => { if (!this.mod) drawer.showModal(); }).catch(e => this.toast(e.message, "bad"));
+    this.loadMods().catch(e => this.toast(e.message, "bad"));
   },
 };
 App.init();
