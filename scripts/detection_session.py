@@ -74,7 +74,7 @@ def command(dev, args):
         result = transfer(["pull", bundle, "Documents/am_detection.json", str(local)])
         if result.returncode or not local.exists() or local.stat().st_size > 512 * 1024:
             raise dev.DevError(
-                "bounded local diagnostic report unavailable; keep the game open"
+                "bounded local diagnostic report unavailable; enable diagnostics in the profile, rebuild and keep the game open"
             )
         try:
             report = json.loads(local.read_text(encoding="utf-8"))
