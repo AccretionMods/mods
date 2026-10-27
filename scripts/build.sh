@@ -45,6 +45,13 @@ if python3 -c 'import json, sys; sys.exit(0 if json.load(open(sys.argv[1])).get(
         "$dir/mod.json"; then
     cflags="$cflags -DAM_NO_BRANDING=1"
 fi
+# AM_HOOKS=off (dev.py build/run --no-hooks): a build that hooks nothing: no game-method hooks, no sideload
+# compatibility rebinding, no Objective-C method swaps (runtime/AMIl2cpp.m, runtime/SideloadCompat.m); the menu,
+# pins and pushed switches stay
+if [ "${AM_HOOKS:-on}" = off ]; then
+    cflags="$cflags -DAM_NO_HOOKS=1"
+    echo "==> without hooks (AM_HOOKS=off)" >&2
+fi
 make -C "$dir" FINALPACKAGE=1 ADDITIONAL_CFLAGS="$cflags" "${files_override[@]}" >&2
 
 dylib="$(find "$dir/.theos/obj" -maxdepth 2 -name '*.dylib' -print -quit)"

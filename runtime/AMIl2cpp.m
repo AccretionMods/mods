@@ -105,6 +105,12 @@ static void attempt(int triesLeft) {
     }
     if (loaded && am_il2cpp_ready(&api)) {
         api.read_memory = readMemory;
+#if AM_NO_HOOKS
+        // built with --no-hooks: the game's methods stay as they are; pins and the menu work on its data
+        logLine("built without hooks: no game methods hooked");
+        finish();
+        return;
+#endif
         AMHookMode mode = hookMode();
         logLine(mode == AM_HOOK_CODE ? "JIT is on: code hooks" : "no JIT: pointer hooks (virtual methods and Unity callbacks)");
         am_hook_specs_reveal();

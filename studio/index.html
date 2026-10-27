@@ -617,19 +617,23 @@ const App = {
       box.append(this.el("p", { class: "hint", text: "This mod has a hand-written Tweak.x and no tweaks.json. Adding a switch here creates one; the Makefile must then list AMTweaks.gen.m and Tweak.x must call AMTweaksRegister() (see README \"Dev loop\")." }));
     }
     const bump = this.el("input", { type: "checkbox" });
+    // unchecked: the build hooks nothing in the game (dev.py --no-hooks): the menu and pins stay
+    const hooks = this.el("input", { type: "checkbox" }); hooks.checked = true;
+    const noHooks = () => (hooks.checked ? [] : ["--no-hooks"]);
     const more = (text, title, fn) => this.el("button", { title, onclick: ev => { ev.target.closest("details").open = false; fn(); } }, text);
     // one primary action; the rest one click away under More
     box.append(this.el("div", { class: "panel" },
-      this.el("div", { class: "panel-h" }, this.el("span", { text: "Try it on the phone" }), this.el("span", { class: "fig", text: d.last_ipa ? d.last_ipa.split(/[\\/]/).pop() : "no build yet" })),
+      this.el("div", { class: "panel-h" }, this.el("span", { text: "Try it on the phone" }), this.el("span", { class: "fig", text: d.last_ipa ? d.last_ipa.split(/[\\/]/).pop() + (d.last_hooks === false ? " (no hooks)" : "") : "no build yet" })),
       this.el("div", { class: "bar", style: "padding-top:0" },
-        this.el("button", { class: "primary", title: "build the .ipa, sign it, install it, open the game and read its log", onclick: () => this.runOnPhone([...(bump.checked ? ["--bump"] : []), "--seconds", "75"]) }, "Build and run on the phone"),
+        this.el("button", { class: "primary", title: "build the .ipa, sign it, install it, open the game and read its log", onclick: () => this.runOnPhone([...(bump.checked ? ["--bump"] : []), ...noHooks(), "--seconds", "75"]) }, "Build and run on the phone"),
         this.el("button", { title: "sends this mod's switches to the installed game: they apply within 2 s, no build (needs a build that has live pins)", onclick: () => this.job("push", []) }, "Push switches"),
         this.el("button", { title: "turns the switches on from the PC one category at a time, reads which reach the game, turns them off again (am test)", onclick: () => this.job("test", []) }, "Test switches"),
         this.el("label", { style: "margin:0 6px;display:inline-flex;gap:6px;align-items:center" }, bump, "bump version"),
+        this.el("label", { style: "margin:0 6px;display:inline-flex;gap:6px;align-items:center", title: "unchecked: the build hooks nothing in the game (no method hooks, no sideload compatibility); the menu and pins still work. A game that waits on iCloud or Game Center may stall loading without them" }, hooks, "with hooks"),
         this.el("span", { class: "grow" }),
         this.el("details", { class: "more" }, this.el("summary", { text: "More ▾" }),
           this.el("div", { class: "menu" },
-            more("Build .ipa only", "build without signing or installing", () => this.job("build", ["--ipa", ...(bump.checked ? ["--bump"] : [])])),
+            more("Build .ipa only", "build without signing or installing", () => this.job("build", ["--ipa", ...(bump.checked ? ["--bump"] : []), ...noHooks()])),
             more("Sign + install the last .ipa", this.detail.last_ipa || "no .ipa built yet", () => this.detail.last_ipa ? this.job("sign", [this.detail.last_ipa, "--install"]) : this.toast("No .ipa built yet: Build .ipa only first", "bad")),
             more("Watch the phone (5 min)", "reads the phone's log: each switch shows its state here", async () => { await this.job("log", ["--seconds", "300"]); setTimeout(() => this.refreshLive(), 3000); }),
             more("Private download link (6 months)", "uploads the newest build to private storage and makes a dl.getaccretion.app/s/ link; renew or revoke it with am share", () => this.job("share", ["--months", "6"])),
@@ -936,13 +940,15 @@ const App = {
     if (box.dataset.mod !== this.mod || !box.childElementCount) {
       box.dataset.mod = this.mod; box.replaceChildren();
       const bump = this.el("input", { type: "checkbox", id: "bump" });
+      const hooks = this.el("input", { type: "checkbox", id: "hooks" }); hooks.checked = true;
       const launch = this.el("input", { type: "checkbox", id: "launch" }); launch.checked = true;
       const secs = this.el("input", { type: "number", value: "75", style: "width:80px", id: "secs" });
-      const extra = () => (bump.checked ? ["--bump"] : []);
+      const extra = () => [...(bump.checked ? ["--bump"] : []), ...(hooks.checked ? [] : ["--no-hooks"])];
       const btn = (text, cmd, args, cls) => this.el("button", { class: cls || "", onclick: () => this.job(cmd, typeof args === "function" ? args() : args) }, text);
       box.append(
         this.el("div", { class: "sec" }, this.el("h3", { text: "Game" }), this.el("div", { class: "row" }, btn("Dump", "dump", []), btn("Dump again", "dump", ["--force"]), btn("Check hooks against the dump", "check", []))),
-        this.el("div", { class: "sec" }, this.el("h3", { text: "Build" }), this.el("div", { class: "row" }, btn("Build .dylib", "build", extra), btn("Build .ipa", "build", () => ["--ipa", ...extra()]), this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center" }, bump, "bump the mod version")),
+        this.el("div", { class: "sec" }, this.el("h3", { text: "Build" }), this.el("div", { class: "row" }, btn("Build .dylib", "build", extra), btn("Build .ipa", "build", () => ["--ipa", ...extra()]), this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center" }, bump, "bump the mod version"),
+            this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center", title: "unchecked: hook nothing in the game (no method hooks, no sideload compatibility); the menu and pins still work" }, hooks, "with hooks")),
           this.el("p", { class: "hint", id: "buildInfo" })),
         this.el("div", { class: "sec" }, this.el("h3", { text: "Phone (USB)" }), this.el("div", { class: "row" },
           btn("Sign + install last .ipa", "sign", () => [d.last_ipa, "--install"], "primary"),

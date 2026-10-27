@@ -23,6 +23,19 @@
 #include <mach-o/nlist.h>
 #include <string.h>
 
+// A build with no hooks (dev.py build/run --no-hooks, -DAM_NO_HOOKS=1) leaves every part below out: no import
+// rebinding, no method swaps. A game that waits on iCloud, Game Center or the age service may then stall on its
+// loading screen, as the re-signed copy would without this file.
+#ifndef AM_NO_HOOKS
+#define AM_NO_HOOKS 0
+#endif
+#if AM_NO_HOOKS
+#define AM_COMPAT_KEYCHAIN 0
+#define AM_COMPAT_ICLOUD 0
+#define AM_COMPAT_GAME_CENTER 0
+#define AM_COMPAT_AGE 0
+#endif
+
 // Each part can be left out at build time (-DAM_COMPAT_KEYCHAIN=0 and so on) to find which one a
 // game doesn't get along with. All are on by default.
 #ifndef AM_COMPAT_KEYCHAIN
@@ -272,6 +285,7 @@ __attribute__((constructor)) static void am_sideload_compat_init(void) {
                               (IMP)am_authenticate_with_completion);
             am_replace_method(player, NSSelectorFromString(@"isAuthenticated"), (IMP)am_not_authenticated);
         }
+        if (AM_NO_HOOKS) NSLog(@"[Accretion] Built without hooks: sideload compatibility off");
         NSLog(@"[Accretion] Sideload compatibility active: keychain group %s, iCloud %s, Game Center %s, age range %s",
               AM_COMPAT_KEYCHAIN ? "on" : "off", AM_COMPAT_ICLOUD ? "on" : "off",
               !AM_COMPAT_GAME_CENTER ? "off" : player ? "on" : "off (GameKit not loaded)", AM_COMPAT_AGE ? "on" : "off");

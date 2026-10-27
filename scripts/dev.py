@@ -22,12 +22,12 @@ plumesign (--apple-id, Windows); installs and device logs need the phone on USB 
   dev.py remove <mod> <key or Class.method>                      drop a tweak (and hooks nothing else uses)
   dev.py gen <mod>                                               regenerate AMTweaks.gen.m from tweaks.json
   dev.py check <mod>                                             hooks.json against the current dump
-  dev.py build <mod> [--ipa] [--bump] [--base file.ipa]          .dylib (and .ipa) in C:\\AccretionMods\\builds
+  dev.py build <mod> [--ipa] [--bump] [--base file.ipa] [--no-hooks]  .dylib (and .ipa) in C:\\AccretionMods\\builds
   dev.py sign <file.ipa> [--install] [--mod M] [--apple-id]      certificate signing (zsign, keeps the ID); --apple-id: plumesign
   dev.py install <signed.ipa>                                    pymobiledevice3 apps install (USB)
   dev.py log <mod> [--seconds 60]                                device log lines of the mod and the runtime
   dev.py status <mod>                                            base, dump, tweaks, hooks, last build
-  dev.py run <mod> [--bump] [--seconds 60]                       build .ipa + sign + install + open + log, in one go
+  dev.py run <mod> [--bump] [--seconds 60] [--no-hooks]          build .ipa + sign + install + open + log, in one go
   dev.py update <mod> [new.ipa]                                  newer game version: re-dump, hooks ok/changed/missing,
                                                                  mod.json base + tested version refreshed
   dev.py pick <mod> <regex>                                      numbered find; type a number, answer 2-3 questions
@@ -1396,13 +1396,16 @@ def cmd_build(args):
     if m:
         tweak = m.group(1)
     t0 = time.time()
-    print(f"==> Building {args.mod} {meta['version']} in WSL (Theos)")
-    code, out = run_in_wsl(f'cd "{repo}" && scripts/build.sh {args.mod}')
+    # --no-hooks: nothing in the game is hooked (scripts/build.sh AM_HOOKS=off); the menu and pins stay
+    no_hooks = getattr(args, "no_hooks", False)
+    hooks_env = "AM_HOOKS=off " if no_hooks else ""
+    print(f"==> Building {args.mod} {meta['version']} in WSL (Theos){' without hooks' if no_hooks else ''}")
+    code, out = run_in_wsl(f'cd "{repo}" && {hooks_env}scripts/build.sh {args.mod}')
     if code != 0:
         raise DevError("build failed (Theos output above)")
     dylib_wsl = out.strip().splitlines()[-1]
     dylib_src = Path(win_path(dylib_wsl)) if WINDOWS else Path(dylib_wsl)
-    dylib = builds / f"{tweak}-{meta['version']}.dylib"
+    dylib = builds / f"{tweak}-{meta['version']}{'-nohooks' if no_hooks else ''}.dylib"
     shutil.copyfile(dylib_src, dylib)
     print(f"==> {dylib} ({dylib.stat().st_size // 1024} KB, {time.time() - t0:.0f} s)")
     state = load_state(args.mod)
@@ -1420,7 +1423,7 @@ def cmd_build(args):
             raise DevError(f"{bundle!r} is not a bundle ID")
         print(f"==> Install ID: {bundle} ({INSTALL_MODES[install_mode(args.mod)]})")
         code, out = run_in_wsl(
-            f'cd "{repo}" && AM_INSTALL_BUNDLE={bundle} scripts/local_ipa.sh {args.mod} "{wsl_path(base)}" "{wsl_path(builds)}"'
+            f'cd "{repo}" && {hooks_env}AM_INSTALL_BUNDLE={bundle} scripts/local_ipa.sh {args.mod} "{wsl_path(base)}" "{wsl_path(builds)}"'
         )
         if code != 0:
             raise DevError("local_ipa.sh failed")
@@ -1437,6 +1440,7 @@ def cmd_build(args):
         if ipa:
             print(f"==> {ipa} ({ipa.stat().st_size / 1e6:.1f} MB, unsigned)")
             state["last_ipa"] = str(ipa)
+            state["last_hooks"] = not no_hooks  # Studio marks a last .ipa built with --no-hooks
             print(f'    Next: dev.py sign "{ipa}" --install')
     save_state(args.mod, state)
     return 0
@@ -1771,7 +1775,8 @@ def cmd_run(args):
     """The whole loop: build the .ipa, sign and install it, open it, read the log."""
     mod_dir(args.mod)  # fails early on an unknown mod
     code = cmd_build(
-        argparse.Namespace(mod=args.mod, ipa=True, bump=args.bump, base=args.base)
+        argparse.Namespace(mod=args.mod, ipa=True, bump=args.bump, base=args.base,
+                           no_hooks=getattr(args, "no_hooks", False))
     )
     if code:
         return code
@@ -3253,6 +3258,8 @@ def build_parser():
     s.add_argument("--bump", action="store_true")
     s.add_argument("--base")
     s.add_argument("--no-check", action="store_true", help="build even when a pin fails the dump check")
+    s.add_argument("--no-hooks", action="store_true",
+                   help="hook nothing in the game (no method hooks, no sideload compatibility): menu and pins only")
     s.set_defaults(fn=cmd_build)
 
     s = sub.add_parser("sign")
@@ -3295,6 +3302,8 @@ def build_parser():
     s.add_argument("--replace-original", action="store_true",
                    help="replace the original game on the phone when it has the same ID (asked for when it is there)")
     s.add_argument("--apple-id", action="store_true", help="sign with the Apple ID instead (team-suffixed ID, JIT)")
+    s.add_argument("--no-hooks", action="store_true",
+                   help="hook nothing in the game (no method hooks, no sideload compatibility): menu and pins only")
     s.set_defaults(fn=cmd_run)
 
     s = sub.add_parser("install-mode", help="how the mod installs: original (the game's ID) or separate (its own)")

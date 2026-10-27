@@ -876,6 +876,7 @@ def mod_summary(name):
         "dump": bool(dump_dir and (Path(dump_dir) / "out" / "dump.cs").is_file()),
         "last_dylib": state.get("last_dylib"),
         "last_ipa": state.get("last_ipa"),
+        "last_hooks": state.get("last_hooks", True),  # False: the last build was made with --no-hooks
         "built": last_built(state),
     }
 
