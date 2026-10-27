@@ -556,6 +556,9 @@ to the app's `Documents/am_detection.json` after 30 seconds, then refreshes it e
 while the app runs. It contains a profile hash and elapsed time, with no raw query arguments,
 environment values, credentials, device identifiers or network data. It stays local; check its elapsed time and
 profile identity before treating an old file as a new observation.
+`am detection report` validates the file against a per-schema field allowlist (shape and
+bounds at every nesting level) and refuses it, naming only the field path, if it holds any
+field the runtime is not known to emit. Raw report files remain private.
 Image/class concealment, kernel helpers, executable patches, attestation and server acceptance
 are unsupported. A local filter test does not prove that a game accepts modified gameplay.
 

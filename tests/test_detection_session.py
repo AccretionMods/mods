@@ -12,6 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class DetectionSession(unittest.TestCase):
+    SENTINEL = "FICTIONAL_REVIEW_SENTINEL"
+
     @classmethod
     def setUpClass(cls):
         spec = importlib.util.spec_from_file_location(
@@ -20,17 +22,150 @@ class DetectionSession(unittest.TestCase):
         cls.module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.module)
 
+    def schema4_report(self):
+        entry = {"entry_id": 9, "name": "stat", "module": "foundation", "state": "unsupported",
+                 "reason": "fingerprint_mismatch", "calls": 3, "matched": 1, "filtered": 0,
+                 "aggregate": False, "attribution_unit": 1,
+                 "evidence": {"implemented": True, "statically_supported": "not_recorded",
+                              "host_contract_tested": "not_recorded", "arm64_built": True,
+                              "device_compatible": False, "positive_artifact_filtering": "not_verified"}}
+        row = {"entry_id": 9, "module": "foundation", "image_id": "@executable", "phase": "menu",
+               "api": "stat", "rule_id": None, "calls": 3, "matched": 1, "filtered": 0}
+        return {"schema_version": 4, "profile_mode": 1, "profile_id": "0" * 16,
+                "callsite_id_algorithm": "fnv1a64-uuid-return-offset-le-v1",
+                "callsites": [dict(row, build_uuid="unavailable", caller_id="0123456789abcdef",
+                                   results={"unknown": 0, "success": 1, "negative": 0, "error": 0,
+                                            "original_not_called": 0})],
+                "callsite_capacity": 4096, "callsites_dropped": 0, "session_id": "a" * 32,
+                "phase": "menu", "phase_request_id": "", "attribution": [row],
+                "attribution_capacity": 4096, "attribution_dropped": 0, "elapsed_ms": 31000.5,
+                "version_match": True, "fingerprints_status": "not_requested",
+                "image_layout_failures": 0, "image_layout_failure_reasons": {"chained_fixups": 0},
+                "loaded_image_count": 400, "entries": [entry],
+                "coverage": {"incomplete": False, "saturated": False, "allocation_failures": 0,
+                             "operational_gaps": 0},
+                "adapters": {"stat": entry, "image_concealment": {"state": "unsupported"}}}
+
+    def schema3_report(self, version=3):
+        report = self.schema4_report()
+        for key in ("entries", "coverage", "fingerprints_status"):
+            del report[key]
+        for row in report["attribution"] + report["callsites"]:
+            del row["entry_id"], row["module"]
+        report["adapters"] = {"stat": {"state": "observation-only", "calls": 3, "matched": 1, "filtered": 0}}
+        return dict(report, schema_version=version)
+
     def test_schema4_supports_phase_and_preserves_capability_evidence(self):
-        report = {"schema_version": 4, "session_id": "a" * 32, "profile_mode": 1,
-                  "entries": [{"entry_id": 9, "module": "foundation", "state": "unsupported",
-                               "reason": "fingerprint_mismatch", "evidence": {"arm64_built": True,
-                                                                            "device_compatible": False}}]}
+        report = self.schema4_report()
         self.assertEqual(self.module.phase_request(report, "fight")["phase"], "fight")
-        self.assertEqual(self.module.validate_report(report), report)
+        projection = self.module.validate_report(report)
+        self.assertEqual(projection, report)
+        self.assertIsNot(projection, report)
+        self.assertIsNot(projection["entries"][0]["evidence"], report["entries"][0]["evidence"])
         for version in (2, 3):
-            self.assertEqual(self.module.validate_report(dict(report, schema_version=version))["schema_version"], version)
+            self.assertEqual(self.module.validate_report(self.schema3_report(version))["schema_version"], version)
         with self.assertRaisesRegex(ValueError, "schema"):
             self.module.validate_report(dict(report, schema_version=5))
+        with self.assertRaisesRegex(ValueError, "not allowed"):
+            self.module.validate_report(dict(report, schema_version=3))
+
+    def test_validation_rejects_unexpected_fields_at_every_level(self):
+        clean = self.schema4_report()
+        planted = []
+        for place in (
+            lambda r: r,
+            lambda r: r["entries"][0],
+            lambda r: r["entries"][0]["evidence"],
+            lambda r: r["adapters"]["stat"],
+            lambda r: r["adapters"]["image_concealment"],
+            lambda r: r["attribution"][0],
+            lambda r: r["callsites"][0],
+            lambda r: r["callsites"][0]["results"],
+            lambda r: r["coverage"],
+        ):
+            report = json.loads(json.dumps(clean))
+            place(report)["private_note"] = self.SENTINEL
+            planted.append(report)
+        report = json.loads(json.dumps(clean))
+        report["image_layout_failure_reasons"][self.SENTINEL] = 1
+        planted.append(report)
+        report = json.loads(json.dumps(clean))
+        report["adapters"]["device name"] = {"state": "failed"}
+        planted.append(report)
+        for report in planted:
+            with self.assertRaises(ValueError) as caught:
+                self.module.validate_report(report)
+            self.assertNotIn(self.SENTINEL, str(caught.exception))
+            self.assertNotIn("device name", str(caught.exception))
+
+    def test_validation_bounds_values(self):
+        clean = self.schema4_report()
+        for change in (
+            {"session_id": "device-serial"},
+            {"phase": "guessed"},
+            {"profile_mode": 7},
+            {"profile_id": self.SENTINEL * 20},
+            {"profile_id": "line\nbreak"},
+            {"elapsed_ms": -1},
+            {"version_match": "yes"},
+            {"loaded_image_count": True},
+            {"attribution": [{"calls": -1}]},
+            {"attribution": [{"rule_id": 5}]},
+            {"entries": [{"state": "hidden"}]},
+            {"entries": [{"evidence": {"implemented": "maybe"}}]},
+            {"callsites": [{"results": {"success": 1.5}}]},
+            {"adapters": []},
+            {"coverage": [True]},
+            {"callsites": [{}] * 4097},
+        ):
+            with self.assertRaises(ValueError, msg=str(list(change))) as caught:
+                self.module.validate_report(dict(clean, **change))
+            self.assertNotIn(self.SENTINEL, str(caught.exception))
+
+    def report_command(self, report):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dev = SimpleNamespace(
+                Path=Path,
+                mod_dir=lambda _: root,
+                read_json=lambda _: {"bundle_id": "io.example.game"},
+                installed_bundles=lambda _: ["io.example.game"],
+                pymobiledevice3_cli=lambda: "phone-tool",
+                am_root=lambda: root,
+                DevError=RuntimeError,
+            )
+
+            def transfer(arguments, **_):
+                Path(arguments[-1]).write_text(json.dumps(report))
+                return SimpleNamespace(returncode=0)
+
+            with (
+                mock.patch.object(self.module.subprocess, "run", side_effect=transfer),
+                contextlib.redirect_stdout(io.StringIO()) as output,
+            ):
+                try:
+                    code = self.module.command(dev, SimpleNamespace(action="report", target="example"))
+                except RuntimeError as error:
+                    return error, output.getvalue()
+            return code, output.getvalue()
+
+    def test_report_output_contains_only_allowed_fields(self):
+        clean = self.schema4_report()
+        code, printed = self.report_command(clean)
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(printed), clean)
+        for plant in (
+            lambda r: r.__setitem__("account", self.SENTINEL),
+            lambda r: r["entries"][0]["evidence"].__setitem__("device", self.SENTINEL),
+            lambda r: r["callsites"][0].__setitem__("path", self.SENTINEL),
+        ):
+            report = json.loads(json.dumps(clean))
+            plant(report)
+            outcome, printed = self.report_command(report)
+            self.assertIsInstance(outcome, RuntimeError)
+            self.assertNotIn(self.SENTINEL, printed)
+            self.assertNotIn(self.SENTINEL, str(outcome))
+            self.assertEqual(printed, "")
 
     def test_phase_requires_current_session_and_active_observation(self):
         report = {"schema_version": 3, "session_id": "a" * 32, "profile_mode": 1}

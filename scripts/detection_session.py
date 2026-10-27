@@ -9,12 +9,183 @@ import uuid
 
 PHASES = ("startup", "login", "menu", "fight", "results")
 MAX_REPORT_BYTES = 8 * 1024 * 1024
+MAX_TEXT = 256
+MAX_ROWS = 4096
+MAX_COUNT = 2**63 - 1
+STATES = ("disabled", "observing", "observation-only", "filtering", "unsupported", "failed")
+# Keys of the two dynamic maps. These mirror runtime/AMDetectionRegistry.c entry
+# names plus the two concealment markers, and AMImportFailureName in
+# runtime/AMImportBindings.c; a new registry entry must be added here too.
+ADAPTER_NAMES = (
+    "access", "stat", "lstat", "open", "fopen", "getenv", "foundation", "urls",
+    "foundation_exists", "foundation_attributes", "can_open_url", "readlink", "fstatat",
+    "opendir", "readdir", "closedir", "foundation_directory_paths", "foundation_directory_urls",
+    "foundation_enumerator_paths", "foundation_enumerator_urls", "posix_spawn",
+    "foundation_string_write_path", "foundation_string_write_url", "foundation_data_write_path",
+    "foundation_data_write_url", "sysctl", "image_concealment", "class_concealment",
+)
+FAILURE_REASONS = (
+    "architecture", "chained_fixups", "authenticated_segments", "classic_tables_missing",
+    "malformed_layout", "unknown",
+)
+
+_HEX32 = re.compile(r"[0-9a-f]{32}")
+_TEXT = re.compile(r"[ -~]*")
+
+# Field allowlists for each report schema. Every key the runtime emits is listed
+# with its shape; anything else is rejected before the report is printed or
+# used, so an unexpected field can never reach standard output. Schema 4 is
+# `AMDetectionReport` in runtime/AMDetection.m; schema 3 is the layout that
+# commit 713448d replaced. No schema 2 emitter exists in this repository's
+# history, so schema 2 reuses the schema 3 allowlist.
+
+_COUNTS = {"calls": "count", "matched": "count", "filtered": "count"}
+_EVIDENCE = {
+    "implemented": "bool",
+    "statically_supported": "flag",
+    "host_contract_tested": "flag",
+    "arm64_built": "flag",
+    "device_compatible": "flag",
+    "positive_artifact_filtering": "flag",
+}
+_ENTRY = {
+    "entry_id": "count",
+    "name": "text",
+    "module": "text",
+    "state": ("enum", STATES),
+    "reason": "text",
+    "aggregate": "bool",
+    "attribution_unit": "count",
+    "evidence": ("dict", _EVIDENCE),
+    **_COUNTS,
+}
+_ADAPTER_V3 = {"state": ("enum", STATES), **_COUNTS}
+_ATTRIBUTION = {
+    "entry_id": "count",
+    "module": "text",
+    "image_id": "text",
+    "phase": ("enum", PHASES),
+    "api": "text",
+    "rule_id": ("optional", "text"),
+    **_COUNTS,
+}
+_RESULTS = {key: "count" for key in ("unknown", "success", "negative", "error", "original_not_called")}
+_CALLSITE = {
+    **_ATTRIBUTION,
+    "build_uuid": "text",
+    "caller_id": "text",
+    "results": ("dict", _RESULTS),
+}
+_COVERAGE = {
+    "incomplete": "bool",
+    "saturated": "bool",
+    "allocation_failures": "count",
+    "operational_gaps": "count",
+}
+_ROOT_V3 = {
+    "schema_version": ("enum", (2, 3, 4)),
+    "profile_mode": ("enum", (0, 1, 2)),
+    "profile_id": "text",
+    "callsite_id_algorithm": "text",
+    "callsites": ("list", ("dict", _CALLSITE)),
+    "callsite_capacity": "count",
+    "callsites_dropped": "count",
+    "session_id": "hex32_or_empty",
+    "phase": ("enum", PHASES),
+    "phase_request_id": "hex32_or_empty",
+    "attribution": ("list", ("dict", _ATTRIBUTION)),
+    "attribution_capacity": "count",
+    "attribution_dropped": "count",
+    "elapsed_ms": "number",
+    "version_match": "bool",
+    "image_layout_failures": "count",
+    "image_layout_failure_reasons": ("map", (FAILURE_REASONS, "count")),
+    "loaded_image_count": "count",
+    "adapters": ("map", (ADAPTER_NAMES, ("dict", _ADAPTER_V3))),
+}
+_ROOT_V4 = {
+    **_ROOT_V3,
+    "adapters": ("map", (ADAPTER_NAMES, ("dict", _ENTRY))),
+    "entries": ("list", ("dict", _ENTRY)),
+    "coverage": ("dict", _COVERAGE),
+    "fingerprints_status": "text",
+}
+REPORT_SCHEMAS = {2: _ROOT_V3, 3: _ROOT_V3, 4: _ROOT_V4}
+
+
+def _reject(path, why):
+    raise ValueError("diagnostic report field " + path + " " + why + "; rebuild the runtime and local client together")
+
+
+def _project(value, spec, path):
+    """Return a copy of `value` holding only the fields `spec` allows."""
+    if isinstance(spec, tuple):
+        kind, detail = spec
+    else:
+        kind, detail = spec, None
+    if kind == "optional":
+        return None if value is None else _project(value, detail, path)
+    if kind == "dict" or kind == "map":
+        if not isinstance(value, dict):
+            _reject(path, "is not an object")
+        if len(value) > MAX_ROWS:
+            _reject(path, "has too many fields")
+        out = {}
+        names, item_spec = detail if kind == "map" else (detail, None)
+        for key, item in value.items():
+            # An unknown key is unvalidated content: name the parent, not the key.
+            if not isinstance(key, str) or key not in names:
+                _reject(path, "holds a field that is not allowed")
+            child = path + "." + key
+            out[key] = _project(item, item_spec if kind == "map" else detail[key], child)
+        return out
+    if kind == "list":
+        if not isinstance(value, list):
+            _reject(path, "is not a list")
+        if len(value) > MAX_ROWS:
+            _reject(path, "has too many rows")
+        return [_project(item, detail, path + "[" + str(i) + "]") for i, item in enumerate(value)]
+    if kind == "enum":
+        if isinstance(value, bool) or value not in detail:
+            _reject(path, "has an unsupported value")
+        return value
+    if kind == "bool":
+        if not isinstance(value, bool):
+            _reject(path, "is not a boolean")
+        return value
+    if kind == "count":
+        if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= MAX_COUNT:
+            _reject(path, "is not a bounded count")
+        return value
+    if kind == "number":
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= MAX_COUNT:
+            _reject(path, "is not a bounded number")
+        return value
+    if kind == "flag":
+        if isinstance(value, bool):
+            return value
+        kind = "text"
+    if kind == "text":
+        if not isinstance(value, str) or len(value) > MAX_TEXT or not _TEXT.fullmatch(value):
+            _reject(path, "is not bounded printable text")
+        return value
+    if kind == "hex32_or_empty":
+        if not isinstance(value, str) or (value and not _HEX32.fullmatch(value)):
+            _reject(path, "is not a session token")
+        return value
+    raise AssertionError("unknown field spec " + str(kind))
 
 
 def validate_report(report):
-    if not isinstance(report, dict) or report.get("schema_version") not in (2, 3, 4):
+    """Return an export projection of `report`, or raise ValueError.
+
+    Only fields on the schema's allowlist survive, each checked for shape and
+    bounds at every nesting level. Error text names the field path and never
+    repeats the offending value.
+    """
+    if not isinstance(report, dict) or report.get("schema_version") not in REPORT_SCHEMAS:
         raise ValueError("unsupported diagnostic report schema; update the local client/runtime")
-    return report
+    return _project(report, ("dict", REPORT_SCHEMAS[report["schema_version"]]), "report")
 
 
 def phase_request(report, phase):
