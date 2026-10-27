@@ -455,17 +455,17 @@ const App = {
     this.detail = detail || await this.api(`/api/mods/${this.mod}`);
     const d = this.detail;
     // Accretion's branding in the mod menu (the getaccretion.app link, the mark by the title, "Made by Accretion."):
-    // mod.json "branding", used by this mod's next build; Cloud saves stay either way
+    // and the Accretion account (Log in, Cloud saves): mod.json "branding", used by this mod's next build
     const branding = this.el("input", { type: "checkbox" });
     branding.checked = d.branding !== false;
     branding.addEventListener("change", async () => {
       try {
         await this.api(`/api/mods/${this.mod}/branding`, { on: branding.checked });
-        this.toast(branding.checked ? "Next build: Accretion's link, mark and wording are back in the menu" : "Next build: no Accretion link, mark or wording in the menu (Cloud saves stay)", "ok");
+        this.toast(branding.checked ? "Next build: Accretion's link, mark and wording are back in the menu" : "Next build: no Accretion link, mark, wording, Log in or Cloud saves in the menu: only the switches and Display", "ok");
       } catch (e) { branding.checked = !branding.checked; this.toast(e.message, "bad"); }
     });
     this.byId("sel").replaceChildren(this.el("b", { text: `${d.title} ${d.version}` }), ` · ${d.target} ${d.app_version}`,
-      this.el("label", { class: "muted small", style: "margin:0 0 0 12px;display:inline-flex;gap:6px;align-items:center", title: "The mod menu's \"More at getaccretion.app ›\" link, the Accretion mark by the title and \"Made by Accretion.\" Off: this mod's next build has none of them (mod.json branding: false); Cloud saves stay." }, branding, "Accretion branding in the menu"));
+      this.el("label", { class: "muted small", style: "margin:0 0 0 12px;display:inline-flex;gap:6px;align-items:center", title: "The mod menu's \"More at getaccretion.app ›\" link, the Accretion mark by the title and \"Made by Accretion.\" Off: this mod's next build has none of them and no Accretion account either: no Log in, no Cloud saves (mod.json branding: false). The switches and Display stay." }, branding, "Accretion branding in the menu"));
     // how this mod installs on the phone: the game's own ID (recommended) or a separate copy beside it. Local
     // builds only (dev state): store entries and releases keep mod.json's bundle_id
     const mode = this.el("select", { title: `Install ID for local builds: ${d.install_bundle}`, "aria-label": "Install as" },

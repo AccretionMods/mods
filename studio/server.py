@@ -1702,7 +1702,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(job.view(len(job.lines)))
         if len(parts) == 4 and parts[:2] == ["api", "mods"] and parts[3] == "branding":
             # mod.json "branding": the menu's getaccretion.app link, mark by the title and "Made by Accretion." in this
-            # mod's next build (scripts/build.sh); Cloud saves stay either way
+            # mod's next build (scripts/build.sh), and with them the Accretion account (Log in, Cloud saves)
             self.local_only()
             if not (MOD_NAME.fullmatch(parts[2]) and (ROOT / "mods" / parts[2] / "mod.json").is_file()):
                 return self.send_json({"error": "no such mod"}, HTTPStatus.NOT_FOUND)
