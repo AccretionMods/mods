@@ -21,7 +21,7 @@ from pathlib import Path
 
 from il2cpp_dump import ADDRESS, FLOATS, INTEGERS, SIGNATURE, TYPE, TYPE_INDEX, Method, split_params
 
-VERSION = 15  # presentation, counter and bookkeeping rows ranked lower; the game's own assembly from its bundle ID
+VERSION = 16  # assemblies chosen by content too, bought packages ranked low; presentation, counter and bookkeeping rows ranked lower; the game's own assembly from its bundle ID
 
 IMAGE = re.compile(r"^// Image \d+: (.+?)(?:\.dll)? - (\d+)\s*$")
 NAMESPACE = re.compile(r"^\s*// Namespace: ?(\S*)")
@@ -127,10 +127,86 @@ def _compact(text):
     return re.sub(r"[^a-z0-9]", "", text.lower())
 
 
-def game_assemblies(images, wanted=None, bundle_id=None):
+PROFILE_VERSION = 1
+# value fields whose names say gameplay: what the content score counts (not the scan's ranking)
+GAMEPLAY_FIELD = re.compile(r"health|\bhp\b|damage|attack|armou?r|speed|gold|coin|gem|\bxp\b|\bexp\b|level|ammo|"
+                            r"stamina|hunger|thirst|energy|inventory|craft|resource|wood|stone|food|water|weapon|"
+                            r"skill|cooldown|reward|score|durab", re.IGNORECASE)
+BEHAVIOUR_BASE = re.compile(r":\s*[\w.]*(?:MonoBehaviour|Behaviour|Controller|Manager|Singleton<)")
+TYPE_NAME = re.compile(r"\b(?:class|struct|interface)\s+([A-Za-z_]\w*)")  # its own: CLASS groups differ by version
+
+
+def assembly_profile(path):
+    """Per assembly of a dump.cs, what makes it game code: {name: {types, behaviours, singletons, gameplay, score}}.
+    One pass of substring tests (about a second for 100 MB), cached beside dump.cs as assemblies.json."""
+    path = Path(path)
+    cache = path.with_name("assemblies.json")
+    st = path.stat()
+    stamp = [PROFILE_VERSION, st.st_size, st.st_mtime_ns]
+    try:
+        data = json.loads(cache.read_text(encoding="utf-8"))
+        if data.get("stamp") == stamp:
+            return data["assemblies"]
+    except (OSError, ValueError):
+        pass
+    images, starts, out = [], [], {}
+    current = None  # (assembly, short class name)
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            if line.startswith("// Image "):
+                m = IMAGE.match(line)
+                if m:
+                    images.append((int(m.group(2)), m.group(1)))
+                continue
+            if "// TypeDefIndex:" in line:
+                if not starts:
+                    images.sort()
+                    starts = [s for s, _ in images]
+                m = TYPE_INDEX.search(line)
+                i = bisect.bisect_right(starts, int(m.group(1))) - 1 if m else -1
+                name = images[i][1] if i >= 0 else ""
+                e = out.setdefault(name, {"types": 0, "behaviours": 0, "singletons": 0, "gameplay": 0})
+                e["types"] += 1
+                if BEHAVIOUR_BASE.search(line):
+                    e["behaviours"] += 1
+                c = TYPE_NAME.search(line)
+                current = (name, c.group(1)) if c else None
+                continue
+            if current and "; // 0x" in line:
+                e = out[current[0]]
+                if " static " in line and f" {current[1]} " in line:
+                    e["singletons"] += 1
+                elif not line.lstrip().startswith(("public static", "private static")):
+                    m = FIELD.match(line)
+                    if m and scalar(m.group(2).strip()) and GAMEPLAY_FIELD.search(_split_words(m.group(3))):
+                        e["gameplay"] += 1
+    for e in out.values():
+        e["score"] = e["behaviours"] * 2 + e["singletons"] * 5 + e["gameplay"]
+    try:
+        cache.write_text(json.dumps({"stamp": stamp, "assemblies": out}), encoding="utf-8")
+    except OSError:
+        pass
+    return out
+
+
+def auto_assemblies(profile, already=()):
+    """The assemblies whose content scores as game code, beyond the ones chosen by name: every non-library one
+    scoring at least an eighth of the best (and 20), six at most (a game's data models beside its client). Last Day on Earth's Client, beside the bought
+    animation package in its Assembly-CSharp."""
+    rows = {n: e for n, e in (profile or {}).items() if n and not LIBRARY.match(n) and not PACKAGE.match(n)}
+    if not rows:
+        return set()
+    best = max(e["score"] for e in rows.values())
+    picked = sorted((n for n, e in rows.items() if e["score"] >= max(20, best / 8) and n not in already),
+                    key=lambda n: -rows[n]["score"])
+    return set(picked[:6])
+
+
+def game_assemblies(images, wanted=None, bundle_id=None, profile=None):
     """The assemblies holding the game's own code: mod.json "scan_assemblies", else the hot-update ones when the
     game has them, else Assembly-CSharp plus any assembly named after the game (Vampire Survivors keeps its code
-    in VampireSurvivors.Runtime: com.poncle.VampireSurvivors -> "vampiresurvivors")."""
+    in VampireSurvivors.Runtime: com.poncle.VampireSurvivors -> "vampiresurvivors"), plus the ones whose content
+    scores as game code (auto_assemblies; profile from assembly_profile)."""
     names = [name for _, name in images]
     if wanted:
         return {n.removesuffix(".dll") for n in wanted}
@@ -141,7 +217,7 @@ def game_assemblies(images, wanted=None, bundle_id=None):
     game = _compact(bundle_id.rsplit(".", 1)[-1]) if bundle_id else ""
     if len(game) >= 4:
         chosen |= {n for n in names if _compact(n).startswith(game)}
-    return chosen
+    return chosen | auto_assemblies(profile, chosen)
 
 
 # engine, platform and store-bought libraries: never where a game keeps its own code
@@ -149,7 +225,13 @@ LIBRARY = re.compile(r"^(Unity|UnityEngine|System|Mono|mscorlib|Microsoft|netsta
                      r"Coherence|Photon|PlayFab|Firebase|Google|Facebook|AppsFlyer|Apple|Sirenix|TMPro|Rewired|Zenject|"
                      r"UniTask|UniRx|Cysharp|MessagePack|Spine|Cinemachine|Doozy|Sentry|Amazon|AWS|Lean|I2|l2local|"
                      r"ICSharpCode|Assembly-CSharp-firstpass|Mirror|FishNet|Fusion|Steamworks|Dreamteck|ProCamera|"
-                     r"Il2Cpp|__Generated)", re.IGNORECASE)
+                     r"Il2Cpp|__Generated|BestHTTP|VoxelBusters|AdinmoPlugin|IngameDebugConsole|Gametoolkit|glTFast)", re.IGNORECASE)
+# store-bought packages that games compile into their own assemblies (or ship as their own): animation, tweening,
+# text, meshes, cameras, editors. Their classes rank low and Auto-build leaves them out with the presentation rows
+PACKAGE = re.compile(r"^(?:RootMotion|DG\.Tweening|TMPro|DigitalOpus|MeshBaker|Sirenix|Spine|Cinemachine|"
+                     r"UnityStandardAssets|Lean|Obi|Opsive|PathologicalGames|Febucci|I2|Rewired|Doozy|Dreamteck|"
+                     r"ProCamera2D|Com\.LuisPedroFonseca|Kino|AmplifyShaderEditor|BeautifyEffect|EasyMobile|"
+                     r"Pathfinding|Polyperfect|Invector|MoreMountains|Coffee\.UIExtensions|SA\.)", re.IGNORECASE)
 
 
 def assembly_sizes(dump):
@@ -184,6 +266,7 @@ def parse(path, assemblies=None, bundle_id=None):
     current = generic = None
     namespace = ""
     chosen = None
+    profile = None if assemblies else assembly_profile(path)  # which assemblies hold game code, by content
     with open(path, encoding="utf-8", errors="replace") as f:
         for line in f:
             if line.startswith("// Image "):
@@ -197,7 +280,7 @@ def parse(path, assemblies=None, bundle_id=None):
                 continue
             if "// TypeDefIndex:" in line:
                 if chosen is None:
-                    chosen = game_assemblies(images, assemblies, bundle_id)
+                    chosen = game_assemblies(images, assemblies, bundle_id, profile)
                 current = generic = None
                 g = GENERIC.match(line)
                 if g:  # Singleton<T>: which of its static fields holds the T
@@ -311,6 +394,7 @@ def build(classes, existing=frozenset(), learned=None):
             continue
         local = cls.rpartition(":")[2]
         presentation = bool(PRESENTATION.search(local.rsplit(".", 1)[-1]) or UI_NAMESPACE.search(local.rpartition(".")[0]))
+        package = bool(PACKAGE.match(local.rpartition(".")[0] or local))
         members = []
         for prop, ctype in info["props"].items():
             members.append((f"set_{prop}", prop, ctype, "setter", None, prop in info["getters"], False))
@@ -344,6 +428,9 @@ def build(classes, existing=frozenset(), learned=None):
             if presentation:
                 score -= 3
                 row["presentation"] = True
+            elif package:
+                score -= 3
+                row["package"] = True  # a bought package (animation, tweening, text...): Auto-build leaves it out
             words = _split_words(name)
             if COUNTER.search(words):
                 score -= 2
@@ -419,7 +506,16 @@ def scan(dump, tweaks=None, learned=None, assemblies=None, bundle_id=None):
     pins = {(r["class"], r["member"]) for r in rows}
     inventory = [dict(r, has=f"{r['class']}.{r['member']}" in existing)
                  for r in data["inventory"] if (r["class"], r["member"]) not in pins]
-    return {"rows": rows, "flagged": flagged, "inventory": inventory, "classes": data["classes"]}
+    # where the rows come from, and the big assemblies left unread: so nothing large is skipped silently
+    profile = assembly_profile(dump)
+    read = {r["class"].split(":", 1)[0] if ":" in r["class"] else "Assembly-CSharp" for r in rows}
+    unread = sorted(((e["score"], n) for n, e in profile.items()
+                     if n and n not in read and not LIBRARY.match(n) and not PACKAGE.match(n) and e["score"] >= 20),
+                    reverse=True)[:6]
+    packaged = sum(1 for r in rows if r.get("package"))
+    return {"rows": rows, "flagged": flagged, "inventory": inventory, "classes": data["classes"],
+            "coverage": {"read": sorted(read), "unread": [{"assembly": n, "score": s} for s, n in unread],
+                         "package_rows": packaged}}
 
 
 def purchase_inventory(path):

@@ -335,9 +335,14 @@ def main(argv=None):
     rows = candidates(mod)
     if not args.with_presentation:  # options, UI widgets, cameras, effects: the scan ranks them low, the model skips them
         before = len(rows)
-        rows = [r for r in rows if not r.get("presentation")]
+        package = sum(1 for r in rows if r.get("package"))
+        if package > len(rows) * 0.6:
+            say(f"    note: {package} of {len(rows)} candidates are a bought package (animation, tweening...): the game's "
+                "own code is probably in an assembly the scan did not read (dev.py scan shows the unread ones)")
+        rows = [r for r in rows if not r.get("presentation") and not r.get("package")]
         if before - len(rows):
-            say(f"    {before - len(rows)} presentation rows (options, UI, camera, effects) left out (--with-presentation asks)")
+            say(f"    {before - len(rows)} presentation and package rows (options, UI, camera, effects, bought packages) "
+                "left out (--with-presentation asks)")
     reviewed = load_reviewed(mod)
     if reviewed and not args.again:  # a new game version or a second run: only what no model has looked at yet
         before = len(rows)

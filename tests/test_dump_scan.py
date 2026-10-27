@@ -321,5 +321,59 @@ class GameAssemblyTests(unittest.TestCase):
         self.assertEqual(dump_scan.assembly_sizes(self.path)[0], (10, "Engine.Port"))
 
 
+CONTENT = """// Image 0: mscorlib.dll - 0
+// Image 1: Assembly-CSharp.dll - 10
+// Image 2: Client.dll - 20
+
+// Namespace: RootMotion.FinalIK
+public class AimIK : MonoBehaviour // TypeDefIndex: 11
+{
+\tpublic float clampWeight; // 0x10
+}
+
+// Namespace: Game
+public class PlayerController : MonoBehaviour // TypeDefIndex: 21
+{
+\tpublic static PlayerController instance; // 0x0
+\tpublic float health; // 0x10
+\tpublic int gold; // 0x14
+\tpublic float speed; // 0x18
+}
+"""
+
+
+class ContentChoice(unittest.TestCase):
+    def setUp(self):
+        fd, self.path = tempfile.mkstemp(suffix=".cs")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            more = "".join(f"\tpublic int ammo{i}; // 0x{0x20 + 4 * i:X}\n" for i in range(12))  # above the minimum
+            f.write(CONTENT.replace("\tpublic float speed; // 0x18\n", "\tpublic float speed; // 0x18\n" + more))
+
+    def tearDown(self):
+        for p in (self.path, str(Path(self.path).with_name("assemblies.json"))):
+            if os.path.exists(p):
+                os.remove(p)
+
+    def test_an_assembly_whose_content_is_game_code_is_read_without_any_setting(self):
+        profile = dump_scan.assembly_profile(self.path)
+        self.assertGreater(profile["Client"]["score"], profile["Assembly-CSharp"]["score"])
+        self.assertEqual(dump_scan.auto_assemblies(profile, {"Assembly-CSharp"}), {"Client"})
+        classes = dump_scan.parse(self.path)
+        self.assertIn("Client:Game.PlayerController", classes)
+
+    def test_bought_package_rows_rank_low_and_are_marked(self):
+        rows, _ = dump_scan.build(dump_scan.parse(self.path))
+        aim = next(r for r in rows if r["member"] == "clampWeight")
+        hp = next(r for r in rows if r["member"] == "health")
+        self.assertTrue(aim.get("package"))
+        self.assertFalse(hp.get("package"))
+        self.assertLess(aim["score"], hp["score"])
+
+    def test_the_scan_reports_what_it_read(self):
+        cov = dump_scan.scan(self.path)["coverage"]
+        self.assertIn("Client", cov["read"])
+        self.assertEqual(cov["package_rows"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2600,6 +2600,13 @@ def cmd_scan(args):
         print(dump_scan.as_text(rows, args.limit))
         return 0
     print(f"{len(result['rows'])} candidates in {result['classes']} game classes; {len(result['flagged'])} flagged")
+    cov = result.get("coverage") or {}
+    if cov:
+        print(f"  read: {', '.join(cov['read'])}" + (f"; {cov['package_rows']} rows from bought packages (ranked low)"
+                                                     if cov.get("package_rows") else ""))
+        if cov.get("unread"):
+            print("  not read (game-code score): " + ", ".join(f"{u['assembly']} ({u['score']})" for u in cov["unread"])
+                  + '; add one to mod.json "scan_assemblies" if it holds game values')
     for r in rows:
         tag = f"FLAG: {r['flag']}" if r.get("flag") else ("in the mod" if r["has"] else f"score {r['score']}")
         hints = [h for h, on in (("lower is better", r.get("direction") == "lower"), ("kept in the save", r.get("saved"))) if on]
