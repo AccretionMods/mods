@@ -2,3 +2,13 @@ title = "Accretion mods gitleaks config"
 
 [extend]
 useDefault = true
+
+# A mod's switch names ("key": "weakGen1Synths") read as API keys to the generic rule. Only that rule, only a mod's
+# tweaks.json, and only a camelCase name made of words and short numbers (weakGen1Synths, disable2DAmbience).
+[[rules]]
+id = "generic-api-key"
+[[rules.allowlists]]
+description = "Switch names in a mod's tweaks.json"
+condition = "AND"
+paths = ['''(^|[\\/])mods[\\/][^\\/]+[\\/]tweaks\.json$''']
+regexes = ['''^[a-z]{2,}(?:[A-Z][a-z]{2,}|[0-9]{1,2}[A-Z]?)*$''']
