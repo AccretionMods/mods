@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 typedef enum { AM_DETECTION_OFF, AM_DETECTION_OBSERVE, AM_DETECTION_FILTER } AMDetectionMode;
+AMDetectionMode AMDetectionEffectiveMode(AMDetectionMode global,AMDetectionMode module);
 typedef enum { AM_DETECTION_DISABLED, AM_DETECTION_OBSERVING, AM_DETECTION_FILTERING,
     AM_DETECTION_UNSUPPORTED, AM_DETECTION_FAILED } AMDetectionState;
 AMDetectionState AMDetectionAdapterState(AMDetectionMode mode, bool selected, size_t installed,

@@ -89,6 +89,17 @@ int main(int argc,char **argv) {
         assert(!AMDetectionConfigureRegistry(&id,1,64,AM_DETECTION_FILTER));
         assert(!AMDetectionPrepareModule(AM_DETECTION_MODULE_FILES));
         assert(!prepared && !published);
+    } else if (!strcmp(argv[1],"reduced") || !strcmp(argv[1],"escalation")) {
+        AMDetectionEntryID id=1;install(id);
+        bool reduced=!strcmp(argv[1],"reduced");
+        assert(AMDetectionSetModuleMode(AM_DETECTION_MODULE_FILES,reduced ? AM_DETECTION_OBSERVE : AM_DETECTION_FILTER));
+        assert(AMDetectionConfigureRegistry(&id,1,4,reduced ? AM_DETECTION_FILTER : AM_DETECTION_OBSERVE)==reduced);
+        if (!reduced) {assert(!prepared && !published);return 0;}
+        assert(!AMDetectionSetModuleMode(AM_DETECTION_MODULE_FILES,AM_DETECTION_FILTER));
+        assert(AMDetectionPrepareModule(AM_DETECTION_MODULE_FILES));
+        assert(AMDetectionPublishModule(AM_DETECTION_MODULE_FILES));
+        assert(!AMDetectionModuleActive(AM_DETECTION_MODULE_FILES));
+        assert(AMDetectionModuleStatus(AM_DETECTION_MODULE_FILES).state==AM_DETECTION_OBSERVING);
     } else if (!strcmp(argv[1],"gate")) {
         AMDetectionEntryID id=1; install(id);
         const char *paths[]={"/exact/probe"};

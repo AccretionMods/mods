@@ -27,10 +27,11 @@ enum {
 };
 typedef enum { AM_DETECTION_ABI_NATIVE, AM_DETECTION_ABI_OBJC, AM_DETECTION_ABI_AGGREGATE } AMDetectionABI;
 enum { AM_DETECTION_REQUIRE_IMPORT=1, AM_DETECTION_REQUIRE_OBJC=2,
-    AM_DETECTION_REQUIRE_ORIGINAL_VIEW=4 };
+    AM_DETECTION_REQUIRE_ORIGINAL_VIEW=4, AM_DETECTION_REQUIRE_FINGERPRINT=8 };
 typedef enum { AM_DETECTION_REASON_NONE, AM_DETECTION_REASON_NOT_SELECTED,
     AM_DETECTION_REASON_NOT_PREPARED, AM_DETECTION_REASON_PREPARE_FAILED,
-    AM_DETECTION_REASON_PUBLISH_FAILED } AMDetectionSupportReason;
+    AM_DETECTION_REASON_PUBLISH_FAILED, AM_DETECTION_REASON_FINGERPRINT_MISMATCH,
+    AM_DETECTION_REASON_MODE_OFF, AM_DETECTION_REASON_FINGERPRINT_UNAVAILABLE } AMDetectionSupportReason;
 typedef struct AMDetectionEntry AMDetectionEntry;
 typedef bool (*AMDetectionInstall)(const AMDetectionEntry *,void *);
 struct AMDetectionEntry {
@@ -53,11 +54,13 @@ size_t AMDetectionEntryCount(void);
 bool AMDetectionValidateSelection(const AMDetectionEntryID *,size_t,size_t compatibility_bindings);
 /* Startup-only registration/configuration, before any adapter is published. */
 bool AMDetectionSetInstaller(AMDetectionEntryID,AMDetectionInstall,AMDetectionInstall,void *);
+bool AMDetectionSetModuleMode(AMDetectionModuleID,AMDetectionMode);
 bool AMDetectionConfigureRegistry(const AMDetectionEntryID *,size_t,size_t,AMDetectionMode);
 bool AMDetectionEntrySelected(AMDetectionEntryID);
 bool AMDetectionPrepareModule(AMDetectionModuleID);
 bool AMDetectionPublishModule(AMDetectionModuleID);
 void AMDetectionInvalidateModule(AMDetectionModuleID);
+void AMDetectionSetModuleUnsupported(AMDetectionModuleID,AMDetectionSupportReason);
 bool AMDetectionModuleActive(AMDetectionModuleID);
 AMDetectionModuleResult AMDetectionModuleStatus(AMDetectionModuleID);
 const char *AMDetectionModuleName(AMDetectionModuleID);

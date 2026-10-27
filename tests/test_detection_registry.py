@@ -52,3 +52,7 @@ class DetectionRegistry(unittest.TestCase):
 
     def test_installed_file_wrapper_forwards_until_module_published(self):
         subprocess.run([self.exe, "gate"], check=True)
+
+    def test_module_observe_reduces_filter_and_cannot_escalate_observing_parent(self):
+        subprocess.run([self.exe, "reduced"], check=True)
+        subprocess.run([self.exe, "escalation"], check=True)

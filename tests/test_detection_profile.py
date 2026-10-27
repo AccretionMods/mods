@@ -11,6 +11,37 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class DetectionProfile(unittest.TestCase):
+    def test_schema2_modes_only_reduce_global_mode_and_observation_requires_diagnostics(self):
+        p = dict(self.profile, schema_version=2, diagnostics=True,
+                 module_modes={"filesystem": "observe"})
+        self.assertEqual(self.module.problems(p), [])
+        self.assertIn("am_detection_module_modes", self.module.render(p))
+        for update in ({"mode": "observe", "module_modes": {"filesystem": "filter"}},
+                       {"diagnostics": False}, {"module_modes": {"unknown": "off"}}):
+            with self.subTest(update=update): self.assertTrue(self.module.problems(dict(p, **update)))
+
+    def test_schema2_fingerprint_is_strict_and_selected_image_bound(self):
+        identity = {"algorithm": "sha256-executable-sections-v1", "uuid": "a" * 32,
+                    "sha256": "b" * 64, "ranges": [{"offset": 512, "size": 64}]}
+        p = dict(self.profile, schema_version=2,
+                 image_fingerprints={self.profile["images"][0]: identity})
+        self.assertEqual(self.module.problems(p), [])
+        self.assertIn("am_detection_image_fingerprints", self.module.render(p))
+        for changed in (dict(identity, uuid="bad"), dict(identity, unexpected=True),
+                        dict(identity, ranges=[{"offset": 512, "size": -1}]),
+                        dict(identity, ranges=[{"offset": 512, "size": 64}, {"offset": 520, "size": 8}])):
+            with self.subTest(changed=changed):
+                self.assertTrue(self.module.problems(dict(p, image_fingerprints={p["images"][0]: changed})))
+        self.assertTrue(self.module.problems(dict(p, image_fingerprints={"Frameworks/Other.dylib": identity})))
+
+    def test_schema2_rejects_aggregate_fingerprint_read_budget_over_one_gib(self):
+        images = ["@executable", "Frameworks/A.dylib", "Frameworks/B.dylib"]
+        identity = {"algorithm": "sha256-executable-sections-v1", "uuid": "a" * 32,
+                    "sha256": "b" * 64, "ranges": [{"offset": 512, "size": 512 * 1024 * 1024 - 512}]}
+        p = dict(self.profile, schema_version=2, images=images,
+                 image_fingerprints={name: identity for name in images})
+        self.assertTrue(self.module.problems(p))
+
     def test_shared_default_disables_diagnostics_and_explicit_profiles_keep_them(self):
         default = self.module.default_profile({"tested_app_version": "1.7.5"})
         self.assertFalse(default["diagnostics"])

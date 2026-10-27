@@ -1,6 +1,11 @@
 #include "AMDetectionPolicy.h"
 #include <string.h>
 
+AMDetectionMode AMDetectionEffectiveMode(AMDetectionMode global,AMDetectionMode module) {
+    if ((unsigned)global>AM_DETECTION_FILTER || (unsigned)module>AM_DETECTION_FILTER) return AM_DETECTION_OFF;
+    return global<module ? global : module;
+}
+
 AMDetectionState AMDetectionAdapterState(AMDetectionMode mode, bool selected, size_t installed,
     size_t failures, bool supported) {
     if (!selected || mode==AM_DETECTION_OFF) return AM_DETECTION_DISABLED;

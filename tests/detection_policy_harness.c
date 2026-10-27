@@ -18,6 +18,10 @@ static FILE *fake_fopen(const char *path,const char *mode) {
 
 int main(int argc, char **argv) {
     assert(argc == 2);
+    assert(AMDetectionEffectiveMode(AM_DETECTION_FILTER,AM_DETECTION_OBSERVE)==AM_DETECTION_OBSERVE);
+    assert(AMDetectionEffectiveMode(AM_DETECTION_OFF,AM_DETECTION_FILTER)==AM_DETECTION_OFF);
+    assert(AMDetectionEffectiveMode(AM_DETECTION_OBSERVE,AM_DETECTION_FILTER)==AM_DETECTION_OBSERVE);
+    assert(AMDetectionEffectiveMode((AMDetectionMode)99,AM_DETECTION_FILTER)==AM_DETECTION_OFF);
     assert(AMDetectionAdapterState(AM_DETECTION_FILTER,true,0,0,false)==AM_DETECTION_UNSUPPORTED);
     assert(AMDetectionAdapterState(AM_DETECTION_FILTER,true,1,1,true)==AM_DETECTION_FAILED);
     assert(AMDetectionAdapterState(AM_DETECTION_FILTER,true,1,0,true)==AM_DETECTION_FILTERING);

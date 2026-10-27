@@ -23,7 +23,8 @@ static bool am_registry_configured;
 static AMDetectionMode am_registry_mode;
 static bool am_registry_selected[AM_DETECTION_REGISTRY_ID_LIMIT];
 /* Installation is serialized by the coordinator. Readers only access atomics. */
-static struct { atomic_bool active; bool prepared; atomic_uint state,reason; } am_registry_modules[AM_DETECTION_MODULE_COUNT];
+static struct { atomic_bool active; bool prepared,mode_set; AMDetectionMode mode;
+    atomic_uint state,reason; } am_registry_modules[AM_DETECTION_MODULE_COUNT];
 
 size_t AMDetectionEntryCount(void) { return sizeof am_registry_entries/sizeof *am_registry_entries; }
 const char *AMDetectionModuleName(AMDetectionModuleID module) {
@@ -32,7 +33,7 @@ const char *AMDetectionModuleName(AMDetectionModuleID module) {
     return module<AM_DETECTION_MODULE_COUNT ? names[module] : "unknown";
 }
 const char *AMDetectionSupportReasonName(AMDetectionSupportReason reason) {
-    static const char *const names[]={"none","not_selected","not_prepared","prepare_failed","publish_failed"};
+    static const char *const names[]={"none","not_selected","not_prepared","prepare_failed","publish_failed","fingerprint_mismatch","mode_off","fingerprint_unavailable"};
     return (unsigned)reason<sizeof names/sizeof *names ? names[reason] : "unknown";
 }
 const AMDetectionEntry *AMDetectionEntryAt(size_t index) {
@@ -65,11 +66,19 @@ bool AMDetectionSetInstaller(AMDetectionEntryID id,AMDetectionInstall prepare,AM
 bool AMDetectionEntrySelected(AMDetectionEntryID id) {
     return am_registry_configured && id<AM_DETECTION_REGISTRY_ID_LIMIT && am_registry_selected[id];
 }
+bool AMDetectionSetModuleMode(AMDetectionModuleID module,AMDetectionMode mode) {
+    if (am_registry_configured || module>=AM_DETECTION_MODULE_COUNT || (unsigned)mode>AM_DETECTION_FILTER) return false;
+    am_registry_modules[module].mode=mode;am_registry_modules[module].mode_set=true;return true;
+}
 bool AMDetectionConfigureRegistry(const AMDetectionEntryID *ids,size_t count,size_t compat,AMDetectionMode mode) {
     if (am_registry_configured || (unsigned)mode>AM_DETECTION_FILTER || !AMDetectionValidateSelection(ids,count,compat)) return false;
+    for (unsigned m=0;m<AM_DETECTION_MODULE_COUNT;m++)
+        if (am_registry_modules[m].mode_set && am_registry_modules[m].mode>mode) return false;
     for (size_t i=0;i<count;i++) am_registry_selected[ids[i]]=true;
     am_registry_mode=mode;
     for (unsigned m=0;m<AM_DETECTION_MODULE_COUNT;m++) {
+        if (!am_registry_modules[m].mode_set) am_registry_modules[m].mode=mode;
+        am_registry_modules[m].mode=AMDetectionEffectiveMode(mode,am_registry_modules[m].mode);
         atomic_store(&am_registry_modules[m].state,AM_DETECTION_DISABLED);
         atomic_store(&am_registry_modules[m].reason,AM_DETECTION_REASON_NOT_SELECTED);
     }
@@ -79,13 +88,23 @@ void AMDetectionInvalidateModule(AMDetectionModuleID module) {
     if (module>=AM_DETECTION_MODULE_COUNT) return;
     atomic_store_explicit(&am_registry_modules[module].active,false,memory_order_release);
     am_registry_modules[module].prepared=false;
-    if (am_registry_configured && am_registry_mode!=AM_DETECTION_OFF) {
+    if (am_registry_configured && am_registry_modules[module].mode!=AM_DETECTION_OFF) {
         atomic_store(&am_registry_modules[module].state,AM_DETECTION_UNSUPPORTED);
         atomic_store(&am_registry_modules[module].reason,AM_DETECTION_REASON_NOT_PREPARED);
     }
 }
+void AMDetectionSetModuleUnsupported(AMDetectionModuleID module,AMDetectionSupportReason reason) {
+    if (module>=AM_DETECTION_MODULE_COUNT || !am_registry_configured || am_registry_modules[module].mode==AM_DETECTION_OFF) return;
+    AMDetectionInvalidateModule(module);
+    atomic_store(&am_registry_modules[module].state,AM_DETECTION_UNSUPPORTED);
+    atomic_store(&am_registry_modules[module].reason,(unsigned)reason<=AM_DETECTION_REASON_FINGERPRINT_UNAVAILABLE ? reason : AM_DETECTION_REASON_PREPARE_FAILED);
+}
 bool AMDetectionPrepareModule(AMDetectionModuleID module) {
     if (module>=AM_DETECTION_MODULE_COUNT || !am_registry_configured || am_registry_mode==AM_DETECTION_OFF) return false;
+    if (am_registry_modules[module].mode==AM_DETECTION_OFF) {
+        atomic_store(&am_registry_modules[module].state,AM_DETECTION_DISABLED);
+        atomic_store(&am_registry_modules[module].reason,AM_DETECTION_REASON_MODE_OFF);return false;
+    }
     AMDetectionInvalidateModule(module);
     bool any=false;
     for (size_t i=0;i<AMDetectionEntryCount();i++) {
@@ -116,8 +135,8 @@ bool AMDetectionPublishModule(AMDetectionModuleID module) {
         }
     }
     atomic_store(&am_registry_modules[module].reason,AM_DETECTION_REASON_NONE);
-    atomic_store(&am_registry_modules[module].state,am_registry_mode==AM_DETECTION_FILTER ? AM_DETECTION_FILTERING : AM_DETECTION_OBSERVING);
-    atomic_store_explicit(&am_registry_modules[module].active,am_registry_mode==AM_DETECTION_FILTER,memory_order_release);
+    atomic_store(&am_registry_modules[module].state,am_registry_modules[module].mode==AM_DETECTION_FILTER ? AM_DETECTION_FILTERING : AM_DETECTION_OBSERVING);
+    atomic_store_explicit(&am_registry_modules[module].active,am_registry_modules[module].mode==AM_DETECTION_FILTER,memory_order_release);
     return true;
 }
 bool AMDetectionModuleActive(AMDetectionModuleID module) {

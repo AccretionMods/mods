@@ -10,11 +10,16 @@
 #include "AMDetectionPolicy.c"
 #include "AMDetectionHooks.c"
 #include "AMDetectionRegistry.c"
+#if AM_DETECTION_FINGERPRINT_COUNT > 0
+#include "AMDetectionIdentity.c"
+#endif
 
 static AMImportBinding am_detection_bindings[AM_DETECTION_MAX_NATIVE_BINDINGS];
 static AMImportBindResult am_detection_results[AM_DETECTION_REGISTRY_ID_LIMIT];
 static size_t am_detection_binding_count;
 static bool am_detection_started,am_detection_version_ok;
+static bool am_detection_fingerprints_ok=true;
+static AMDetectionSupportReason am_detection_fingerprint_reason=AM_DETECTION_REASON_NONE;
 static NSTimeInterval am_detection_started_at;
 static dispatch_source_t am_detection_report_timer;
 static dispatch_source_t am_detection_phase_timer;
@@ -173,6 +178,8 @@ static bool am_detection_objc_target(AMDetectionEntryID id,Class *cls,SEL *sel,I
 }
 static bool am_detection_prepare_entry(const AMDetectionEntry *entry,void *context) {
     (void)context;
+    if (!am_detection_fingerprints_ok || ((entry->requirements&AM_DETECTION_REQUIRE_FINGERPRINT) &&
+        AM_DETECTION_FINGERPRINT_COUNT!=AM_DETECTION_IMAGES_COUNT)) return false;
     if (entry->abi==AM_DETECTION_ABI_NATIVE) {
         if (!*entry->original) *entry->original=dlsym(RTLD_DEFAULT,entry->name);
         return *entry->original && am_detection_native_replacement(entry->id);
@@ -228,6 +235,40 @@ static void am_detection_read_phase(void) {
         AMDetectionSetPhase((AMDetectionPhase)i); am_detection_phase_request=[request copy]; AMDetectionWriteReport(); return;
     }
 }
+#if AM_DETECTION_FINGERPRINT_COUNT > 0
+static size_t am_detection_identity_budget;
+static size_t (*am_detection_identity_original_read)(void *,size_t,size_t,FILE *);
+static size_t am_detection_identity_read(void *out,size_t size,size_t count,FILE *file) {
+    if (!size || count>am_detection_identity_budget/size) return 0;
+    size_t result=am_detection_identity_original_read(out,size,count,file);
+    if (result>count) return 0;
+    am_detection_identity_budget-=size*result;return result;
+}
+#endif
+static bool am_detection_verify_fingerprints(void) {
+#if AM_DETECTION_FINGERPRINT_COUNT > 0
+    am_detection_fingerprint_reason=AM_DETECTION_REASON_FINGERPRINT_UNAVAILABLE;
+    am_detection_identity_budget=1024u*1024u*1024u;
+    am_detection_identity_original_read=dlsym(RTLD_DEFAULT,"fread");
+    if (!am_detection_identity_original_read) return false;
+    const AMDetectionIdentityIO io={dlsym(RTLD_DEFAULT,"fopen"),am_detection_identity_read,
+        dlsym(RTLD_DEFAULT,"fseek"),dlsym(RTLD_DEFAULT,"ftell"),dlsym(RTLD_DEFAULT,"fclose")};
+    for (unsigned i=0;i<AM_DETECTION_IMAGES_COUNT;i++) {
+        const AMDetectionImageIdentity *expected=&am_detection_image_fingerprints[i];
+        if (!expected->range_count) continue;
+        char path[4096];
+        int n=!strcmp(am_detection_images[i],"@executable") ? snprintf(path,sizeof path,"%s",am_detection_executable) :
+            snprintf(path,sizeof path,"%s/%s",am_detection_app_path,am_detection_images[i]);
+        AMDetectionImageIdentity actual;
+        if (n<0 || (size_t)n>=sizeof path || !AMDetectionIdentityReadFile(path,&io,&actual)) return false;
+        if (!AMDetectionIdentityMatches(expected,&actual)) {
+            am_detection_fingerprint_reason=AM_DETECTION_REASON_FINGERPRINT_MISMATCH;return false;
+        }
+    }
+#endif
+    am_detection_fingerprint_reason=AM_DETECTION_REASON_NONE;
+    return true;
+}
 void AMDetectionStart(size_t compatibility_bindings) {
     if (am_detection_started) return;
     am_detection_started=true;
@@ -253,11 +294,18 @@ void AMDetectionStart(size_t compatibility_bindings) {
         }
         selected[selected_count++]=entry->id;
     }
+    for (unsigned m=0;m<AM_DETECTION_MODULE_COUNT;m++) if (!AMDetectionSetModuleMode((AMDetectionModuleID)m,am_detection_module_modes[m])) {
+        am_detection_version_ok=false;return;
+    }
     if (AM_DETECTION_IMAGES_COUNT>AM_DETECTION_MAX_CALLER_IMAGES ||
         !AMDetectionConfigureRegistry(selected,selected_count,compatibility_bindings,am_detection_profile.mode)) {
         am_detection_version_ok=false; return;
     }
-    for (unsigned m=0;m<AM_DETECTION_MODULE_COUNT;m++) AMDetectionPrepareModule((AMDetectionModuleID)m);
+    am_detection_fingerprints_ok=am_detection_verify_fingerprints();
+    for (unsigned m=0;m<AM_DETECTION_MODULE_COUNT;m++) {
+        if (!am_detection_fingerprints_ok) AMDetectionSetModuleUnsupported((AMDetectionModuleID)m,am_detection_fingerprint_reason);
+        else AMDetectionPrepareModule((AMDetectionModuleID)m);
+    }
     AMDetectionOriginals o={
         .access_fn=*AMDetectionEntryByID(AM_DETECTION_ENTRY_ACCESS)->original,
         .stat_fn=*AMDetectionEntryByID(AM_DETECTION_ENTRY_STAT)->original,
@@ -293,7 +341,7 @@ AMImportBindResult AMDetectionBindImage(const void *header,size_t bytes,intptr_t
     AMImportBinding combined[AM_DETECTION_MAX_NATIVE_BINDINGS];
     if (count>AM_DETECTION_MAX_NATIVE_BINDINGS || (!compat && count)) return (AMImportBindResult){.malformed=true};
     Dl_info image;
-    bool selected=am_detection_version_ok && am_detection_profile.mode!=AM_DETECTION_OFF &&
+    bool selected=am_detection_version_ok && am_detection_fingerprints_ok && am_detection_profile.mode!=AM_DETECTION_OFF &&
         dladdr(header,&image) && am_detection_image_selected(image.dli_fname);
     if (selected && am_detection_binding_count>AM_DETECTION_MAX_NATIVE_BINDINGS-count) return (AMImportBindResult){.malformed=true};
     if (count) memcpy(combined,compat,count*sizeof *combined);
@@ -401,6 +449,8 @@ NSDictionary *AMDetectionReport(void) {
         @"phase_request_id":am_detection_phase_request ?: @"",@"attribution":attributed,
         @"attribution_capacity":@AM_DETECTION_ATTRIBUTION_CAPACITY,@"attribution_dropped":@(coverage.attribution_dropped),
         @"elapsed_ms":@((NSProcessInfo.processInfo.systemUptime-am_detection_started_at)*1000.0),@"version_match":@(am_detection_version_ok),
+        @"fingerprints_status":!AM_DETECTION_FINGERPRINT_COUNT ? @"not_requested" :
+            am_detection_fingerprints_ok ? @"matched" : @(AMDetectionSupportReasonName(am_detection_fingerprint_reason)),
         @"image_layout_failures":@(failures),@"image_layout_failure_reasons":failureReasons,
         @"loaded_image_count":@(_dyld_image_count()),@"adapters":adapters};
 }

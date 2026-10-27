@@ -14,6 +14,10 @@ LISTS = (
     "image_basenames",
 )
 FEATURES = ("filesystem", "foundation", "urls", "environment", "images")
+MODULES = ("filesystem", "environment", "foundation", "urls", "directories", "writes",
+           "preferences", "loader", "objc", "process", "sdk")
+ADVANCED_FIELDS = {"image_fingerprints", "module_modes", "write_probes", "preference_domains",
+                   "spawn_rules", "hidden_components", "sdk_adapters"}
 APIS = {
     "access": "filesystem",
     "stat": "filesystem",
@@ -126,10 +130,11 @@ def problems(data, app_version=None):
     if not isinstance(data, dict):
         return ["profile must be an object"]
     errors = []
-    if set(data) - FIELDS:
+    schema = data.get("schema_version")
+    if set(data) - (FIELDS | (ADVANCED_FIELDS if schema == 2 else set())):
         errors.append("unknown profile fields")
-    if type(data.get("schema_version")) is not int or data["schema_version"] != 1:
-        errors.append("schema_version must be 1")
+    if type(schema) is not int or schema not in (1, 2):
+        errors.append("schema_version must be 1 or 2")
     version = data.get("game_version")
     if not isinstance(version, str) or not re.fullmatch(
         r"[0-9]+(?:\.[0-9]+){1,3}", version
@@ -143,7 +148,7 @@ def problems(data, app_version=None):
         errors.append("diagnostics must be true or false")
     if "apis" in data:
         apis = data["apis"]
-        if not isinstance(apis, list) or len(apis) > len(APIS):
+        if not isinstance(apis, list) or len(apis) > min(64, len(APIS)):
             errors.append("apis must be a list of supported entry points")
         else:
             seen_apis = set()
@@ -236,6 +241,47 @@ def problems(data, app_version=None):
             errors.append("an active profile needs explicit images")
     if data.get("mode") == "filter" and data.get("image_basenames"):
         errors.append("image concealment is unavailable; use observe mode")
+    if schema == 2:
+        errors.extend(advanced_problems(data))
+    return errors
+
+
+def advanced_problems(data):
+    from detection_identity import identity_problems
+
+    errors = []
+    rank = {"off": 0, "observe": 1, "filter": 2}
+    modes = data.get("module_modes", {})
+    if not isinstance(modes, dict) or set(modes) - set(MODULES):
+        errors.append("unknown or invalid module_modes")
+    else:
+        global_rank = rank.get(data.get("mode"), -1) if isinstance(data.get("mode"), str) else -1
+        for mode in modes.values():
+            if not isinstance(mode, str) or mode not in rank or rank[mode] > global_rank:
+                errors.append("module modes can only reduce global mode")
+        if (data.get("mode") == "observe" or "observe" in modes.values()) and not data.get("diagnostics", True):
+            errors.append("observation modules require diagnostics enabled")
+    fingerprints = data.get("image_fingerprints", {})
+    if not isinstance(fingerprints, dict) or len(fingerprints) > 64:
+        errors.append("image_fingerprints must be an object of at most 64 images")
+    else:
+        images = data.get("images", [])
+        total = 0
+        for image, identity in fingerprints.items():
+            if not isinstance(images, list) or image not in images:
+                errors.append("fingerprint image must be selected")
+            invalid = identity_problems(identity)
+            errors.extend(invalid)
+            if not invalid:
+                total += sum(r["size"] for r in identity["ranges"])
+        if total > 1024 * 1024 * 1024:
+            errors.append("aggregate fingerprint read budget exceeds 1 GiB")
+    # Reserve advanced fields without silently accepting unimplemented policy.
+    # Their owning adapter task replaces this rejection with its exact contract.
+    for name in ("write_probes", "preference_domains", "spawn_rules", "hidden_components", "sdk_adapters"):
+        value = data.get(name, [])
+        if not isinstance(value, list) or value:
+            errors.append(f"{name} requires its supported adapter; currently unavailable")
     return errors
 
 
@@ -271,6 +317,8 @@ def render(data):
     out = [
         "/* Compiled from detection.json. Restart required after profile changes. */",
         '#include "AMDetectionPolicy.h"',
+        '#include "AMDetectionIdentity.h"',
+        '#include "AMDetectionRegistry.h"',
         f"#define AM_DETECTION_PROFILE_ID {c_string(profile_identity(data))}",
         f"#define AM_DETECTION_GAME_VERSION {c_string(data['game_version'])}",
         f"#define AM_DETECTION_PROFILE_MODE AM_DETECTION_{data['mode'].upper()}",
@@ -286,6 +334,25 @@ def render(data):
     )
     for api in APIS:
         out.append(f"#define AM_DETECTION_API_{api.upper()} {int(api in selected)}")
+    modes = data.get("module_modes", {})
+    out.append("static const AMDetectionMode am_detection_module_modes[AM_DETECTION_MODULE_COUNT] = {"
+               + ",".join("AM_DETECTION_" + modes.get(m, data["mode"]).upper() for m in MODULES) + "};")
+    fingerprints = data.get("image_fingerprints", {})
+    out.append(f"#define AM_DETECTION_FINGERPRINT_COUNT {len(fingerprints)}")
+    out.append("static const AMDetectionImageIdentity am_detection_image_fingerprints[] = {")
+    for image in data["images"]:
+        identity = fingerprints.get(image)
+        if not identity:
+            out.append("    {.range_count=0},")
+            continue
+        def byte_array(value):
+            return "{" + ",".join(str(b) for b in bytes.fromhex(value)) + "}"
+        ranges = ",".join("{" + str(r["offset"]) + "," + str(r["size"]) + "}" for r in identity["ranges"])
+        out.append("    {.uuid=" + byte_array(identity["uuid"]) + ",.sha256=" + byte_array(identity["sha256"])
+                   + ",.range_count=" + str(len(identity["ranges"])) + ",.ranges={" + ranges + "}},")
+    if not data["images"]:
+        out.append("    {.range_count=0},")
+    out.append("};")
     for key in ("images", *LISTS):
         values = data.get(key, [])
         out.append(

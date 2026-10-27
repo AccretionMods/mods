@@ -68,6 +68,17 @@ def image(chained=True, format_=6):
 
 
 class DetectionPreflight(unittest.TestCase):
+    def test_schema2_fingerprint_mismatch_is_rejected_independently_of_import_support(self):
+        identity = {"algorithm": "sha256-executable-sections-v1", "uuid": "a" * 32,
+                    "sha256": "b" * 64, "ranges": [{"offset": 512, "size": 64}]}
+        report = {"app_version": "1.2.0", "complete": True,
+                  "images": [{"image": "@executable", "state": "supported", "identity": identity}]}
+        profile = {"schema_version": 2, "game_version": "1.2.0", "mode": "filter",
+                   "images": ["@executable"], "adapters": ["filesystem"], "apis": ["stat"],
+                   "image_fingerprints": {"@executable": identity}}
+        self.assertEqual(self.module.profile_problems(report, profile), [])
+        changed = dict(identity, sha256="c" * 64)
+        self.assertTrue(self.module.profile_problems(report, dict(profile, image_fingerprints={"@executable": changed})))
     @classmethod
     def setUpClass(cls):
         sys.path.insert(0, str(ROOT / "scripts"))

@@ -362,7 +362,14 @@ def inspect_ipa(path):
                 )
                 continue
             total += size
-            result = inspect_macho(archive.read(name))
+            raw = archive.read(name)
+            result = inspect_macho(raw)
+            from detection_identity import executable_identity
+
+            try:
+                result["identity"] = executable_identity(raw)
+            except ValueError:
+                result["identity_reason"] = "executable_identity_unavailable"
             complete &= result["reason"] != "inspection_budget"
             images.append(
                 {
@@ -434,6 +441,9 @@ def profile_problems(report, profile):
             errors.append(
                 "selected image has no verified static import coverage: " + name
             )
+        expected = profile.get("image_fingerprints", {}).get(name)
+        if expected is not None and images.get(name, {}).get("identity") != expected:
+            errors.append("selected image fingerprint does not match preflight: " + name)
     if not report["complete"]:
         errors.append("inspection budget exceeded")
     return errors
