@@ -2077,6 +2077,13 @@ def cmd_test(args):
     rounds = test_rounds(tweaks, args.section, args.keys)
     titles = {t["key"]: t["title"] for t in tweaks["tweaks"]}
     results = {}
+    # switches the owner pushed before the test (am push) go back afterwards; none: the file is removed
+    prior = am_root() / "work" / f"live_tweaks-{args.mod}.before-test.json"
+    prior.parent.mkdir(parents=True, exist_ok=True)
+    prior.unlink(missing_ok=True)
+    pulled = subprocess.run([pymobiledevice3_cli(), "apps", "pull", found[0], "Documents/live_tweaks.json", str(prior)],
+                            capture_output=True, text=True, check=False)
+    prior = prior if pulled.returncode == 0 and prior.is_file() else None
     print(f"==> {sum(len(k) for _, k in rounds)} switches in {len(rounds)} round(s) of {args.seconds} s. Keep the game "
           "open in a save (or in a fight, for combat switches); every switch goes off again after its round.")
     try:
@@ -2094,6 +2101,16 @@ def cmd_test(args):
                     print(f"      {k} ({titles.get(k, k)}): {got[k]}")
     finally:
         push_live(args.mod, found[0])  # no test block: the app turns the test switches off and restores values
+        # then the phone goes back to how the test found it: the owner's own pushed switches, or the build's own
+        # (a left-behind file keeps running every pinned switch live, removed ones included)
+        time.sleep(4)  # the app reads the file within 2 s
+        cli = pymobiledevice3_cli()
+        if prior is not None:
+            subprocess.run([cli, "apps", "push", found[0], str(prior), "Documents/live_tweaks.json"],
+                           capture_output=True, text=True, check=False)
+        else:
+            subprocess.run([cli, "apps", "rm", found[0], "Documents/live_tweaks.json"],
+                           capture_output=True, text=True, check=False)
     ok = sum(1 for v in results.values() if v == "reached")
     print(f"==> {ok} of {len(results)} reached the game; all test switches are off again")
     store = dev_learn.load(patterns_path())

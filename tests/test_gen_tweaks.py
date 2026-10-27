@@ -764,11 +764,29 @@ class ObjectPaths(unittest.TestCase):
         self.assertIn('"get_Players"', "\n".join(lines))
         self.assertGreater(len(closers), 1)
 
-    def test_collection_path_cannot_use_single_object_state(self):
+    def test_collection_path_keeps_a_base_per_object_for_a_multiply_only(self):
         pin = self.pin()
-        self.assertFalse(gen_tweaks.restorable(pin))
-        pin["op"] = "multiply"
-        self.assertTrue(gen_tweaks.pin_problems(pin, "switch"))
+        self.assertFalse(gen_tweaks.restorable(pin))  # a plain write on many objects keeps what the game has
+        pin["op"], pin["value"] = "multiply", 2
+        self.assertEqual(gen_tweaks.pin_problems(pin, "switch"), [])
+        self.assertTrue(gen_tweaks.per_object_multiply(pin) and gen_tweaks.restorable(pin))
+        setter = {k: v for k, v in pin.items() if k != "field"} | {"setter": "set_Health"}
+        self.assertTrue(gen_tweaks.pin_problems(setter, "switch"))  # no field to track each base on
+
+    def test_list_multiply_tracks_each_objects_base_and_restores_each(self):
+        pin = {"object": "Enemy[]", "field": "speed", "ctype": "float", "op": "multiply", "value": 0.5}
+        state = "s_slow_0"
+        body = "\n".join(gen_tweaks.render_pin(pin, "am_slow", "switch", "slow", 0))
+        self.assertIn(f"{state}_objs[slot] = obj; {state}_bases[slot] = {state}_sets[slot] = *p;", body)
+        self.assertIn(f"if (*p != {state}_sets[slot]) {state}_bases[slot] = *p;", body)
+        self.assertIn(f"({state}_bases[slot] * 0.5f)", body)
+        self.assertIn(f"if (slot == {gen_tweaks.MULTIPLY_SLOTS}) goto {state}_next;", body)  # full: left as it is
+        self.assertIn("if (any_seen) {", body)  # gone objects free their slots, but not on a tick that found none
+        self.assertIn(f"static void *{state}_objs[{gen_tweaks.MULTIPLY_SLOTS}];", "\n".join(gen_tweaks.pin_globals(pin, "slow", 0)))
+        restore = "\n".join(gen_tweaks.render_restore(pin, "slow", 0))
+        self.assertIn(f"if (p && *p == {state}_sets[slot]) {{ *p = {state}_bases[slot]; restored = true; }}", restore)
+        self.assertIn(f"{state}_used = 0;", restore)
+        self.assertNotIn(f"{state}_obj)", body + restore)  # none of the single-object state
 
     def test_invalid_paths_are_rejected_before_codegen(self):
         for path in ("logic", [{}], [{"field": "x", "getter": "get_X", "class": "Hero"}],

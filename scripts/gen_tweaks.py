@@ -299,8 +299,6 @@ def problems(tweaks, hooks):
                 out += [f"{where} pin {j}: {p}" for p in found]
                 continue
             found = pin_problems(pin, kind)
-            if t.get("live_only"):  # pushed switches only (AMLivePins.h): a list's multiply keeps a base per object
-                found = [p for p in found if "needs a single object" not in p]
             out += [f"{where} pin {j}: {p}" for p in found]
     if "watch" in tweaks:
         out += watch_problems(tweaks["watch"], tweaks.get("watch_every", 10))
@@ -349,6 +347,14 @@ def multiple_objects(pin):
     return pin.get("object", "").endswith("[]") or any(
         isinstance(s, dict) and s.get("each") for s in pin.get("path", [])
     )
+
+
+MULTIPLY_SLOTS = 512  # objects one list multiply tracks at once; more stay as the game has them
+
+
+def per_object_multiply(pin):
+    """A multiply over every object of a list (Enemy[]): each object keeps its own base value."""
+    return pin.get("op") == "multiply" and bool(pin.get("field")) and multiple_objects(pin)
 
 
 def path_problems(pin):
@@ -483,8 +489,6 @@ def pin_problems(pin, kind):
         out.append('"op" must be set or multiply')
     if op == "multiply" and (target != "field" or ctype_ not in NUMERIC):
         out.append('"op": "multiply" works on a numeric field')
-    if op == "multiply" and multiple_objects(pin):
-        out.append('"op": "multiply" tracks one base value, so it needs a single object (not Class[])')
     return out
 
 
@@ -571,7 +575,7 @@ def restorable(pin):
     since wins)."""
     if "attr" in pin:
         return pin.get("restore") is not False  # AMAttrPins.h keeps each object's own value
-    if multiple_objects(pin) or pin.get("call") or pin.get("value") == "peak":
+    if (multiple_objects(pin) and not per_object_multiply(pin)) or pin.get("call") or pin.get("value") == "peak":
         return False
     if pin.get("restore") is False or isinstance(pin.get("value"), dict):  # opted out, or a refill (health = max)
         return False
@@ -587,6 +591,11 @@ def pin_globals(pin, key, index):
     out = []
     if "attr" in pin:
         return out  # its state lives in AMAttrPins.h, per object
+    if per_object_multiply(pin):  # each object's own base and what the pin last wrote, by object
+        n = MULTIPLY_SLOTS
+        out.append(f"static void *{state}_objs[{n}]; static {ctype_} {state}_bases[{n}], {state}_sets[{n}];"
+                   f" static bool {state}_seen[{n}]; static int32_t {state}_used;")
+        return out
     if pin.get("op") == "multiply":
         out.append(f"static {ctype_} {state}_base, {state}_set;")
         if restorable(pin):
@@ -610,6 +619,15 @@ def render_restore(pin, key, index):
                 + [f"            AMAttrForget({c_string(f'{key}/{index}')});", "        }"])
     ctype_ = pin["ctype"]
     objects, closers, cls = pin_objects(pin)
+    if per_object_multiply(pin):  # every object gets its own base back, while it still holds what the pin wrote
+        lines = [f"        {{  // restore pin {index}: each object's own base"] + ["    " + line for line in objects]
+        lines.append(f"                int32_t slot = 0; while (slot < {state}_used && {state}_objs[slot] != obj) slot++;")
+        lines.append(f"                {ctype_} *p = slot < {state}_used ? AMIl2cppField(obj, {hidden(cls)}, {hidden(pin['field'])}) : NULL;")
+        lines.append(f"                if (p && *p == {state}_sets[slot]) {{ *p = {state}_bases[slot]; restored = true; }}")
+        lines += ["    " + c for c in closers]
+        lines.append(f"            {state}_used = 0;")
+        lines.append("        }")
+        return lines
     lines = [f"        {{  // restore pin {index}"] + ["    " + line for line in objects]
     lines.append(f"                if (obj == {state}_obj) {{")
     if pin.get("op") == "multiply":
@@ -726,6 +744,10 @@ def render_pin(pin, var, kind, key, index, waiting=None):
         lines.append("    }")
         return lines
     lines.append(status_start)
+    per_object = per_object_multiply(pin)
+    if per_object:  # which tracked objects are still in the list this tick
+        lines.append(f"        for (int32_t slot = 0; slot < {state}_used; slot++) {state}_seen[slot] = false;")
+        lines.append("        bool any_seen = false;")
     lines += objects
     lines.append(status_found)
     ctype_ = pin["ctype"]
@@ -743,7 +765,17 @@ def render_pin(pin, var, kind, key, index, waiting=None):
         )
         lines.append(f"            if (!p) goto {state}_next;")
         lines.append("            reached = true;")
-        if pin.get("op") == "multiply":
+        if per_object:
+            # this object's slot; a new one starts from the game's value (a full table leaves it as the game has it)
+            lines.append(f"            int32_t slot = 0; while (slot < {state}_used && {state}_objs[slot] != obj) slot++;")
+            lines.append(f"            if (slot == {state}_used) {{ if (slot == {MULTIPLY_SLOTS}) goto {state}_next;"
+                         f" {state}_objs[slot] = obj; {state}_bases[slot] = {state}_sets[slot] = *p; {state}_used++; }}")
+            lines.append(f"            {state}_seen[slot] = any_seen = true;")
+            lines.append(f"            if (*p != {state}_sets[slot]) {state}_bases[slot] = *p;  // the game recalculated it: a new base")
+            lines.append(
+                f"            {ctype_} want = ({ctype_})({state}_bases[slot] * {value}); if (want > 0 && *p != want) {{ *p = want; applied = true; }} {state}_sets[slot] = *p;"
+            )
+        elif pin.get("op") == "multiply":
             lines.append(
                 f"            if (*p != {state}_set) {state}_base = *p; {state}_obj = obj;"
             )
@@ -806,6 +838,12 @@ def render_pin(pin, var, kind, key, index, waiting=None):
     if any(f"goto {state}_next" in line for line in lines):
         lines.append(f"            {state}_next:;")
     lines += closers
+    if pin.get("field") and per_object_multiply(pin):
+        # objects gone from the list free their slots; a tick that found none (a scene loading) keeps them all, so a
+        # unit that comes back doesn't take what the pin wrote as its new base
+        lines.append(f"        if (any_seen) {{ int32_t kept = 0; for (int32_t slot = 0; slot < {state}_used; slot++) if ({state}_seen[slot]) {{"
+                     f" {state}_objs[kept] = {state}_objs[slot]; {state}_bases[kept] = {state}_bases[slot]; {state}_sets[kept] = {state}_sets[slot]; kept++; }}"
+                     f" {state}_used = kept; }}")
     lines.append("    }")
     return lines
 

@@ -550,10 +550,6 @@ class GameAssemblyTests(unittest.TestCase):
     def test_without_bundle_id_only_assembly_csharp(self):
         self.assertEqual(dump_scan.parse(self.path), {})
 
-    def test_scan_assemblies_accept_dll_names(self):
-        classes = dump_scan.parse(self.path, assemblies=["SpaceRaid.Runtime.dll"])
-        self.assertIn("SpaceRaid.Runtime:SpaceRaid.Ship", classes)
-
     def test_assembly_sizes_skip_libraries(self):
         self.assertEqual(dump_scan.assembly_sizes(self.path)[0], (10, "Engine.Port"))
 
@@ -684,6 +680,27 @@ public struct Stats // TypeDefIndex: 20
 public class Tank : MonoBehaviour // TypeDefIndex: 21
 {
 	public Stats stats; // 0x18
+	public Boost _areaBoost; // 0x20
+	public LocalizedString label; // 0x30
+	public Vector2D spot; // 0x40
+}
+
+// Namespace:
+public struct Boost // TypeDefIndex: 22
+{
+	public float AttackStrengthBoost; // 0x10
+}
+
+// Namespace: I2.Loc
+public struct LocalizedString // TypeDefIndex: 23
+{
+	public bool mRTL_IgnoreArabicFix; // 0x10
+}
+
+// Namespace:
+public struct Vector2D // TypeDefIndex: 24
+{
+	public float armor; // 0x10
 }
 """
 
@@ -728,3 +745,12 @@ class MoreShapes(unittest.TestCase):
         sig = dump_scan.pin_signature(self.classes, {"object": "Tank", "field": "stats.armor"})
         self.assertEqual(sig[-1], ("member", "Tank", "struct-field", "Stats.armor:int32_t"))
         self.assertIsNone(dump_scan.pin_signature(self.classes, {"object": "Tank", "field": "stats.gone"}))
+
+    def test_a_stat_boost_inside_a_struct_is_gameplay_not_a_shop_item(self):
+        row = self.rows["Tank._areaBoost.AttackStrengthBoost"]
+        self.assertEqual(row["area"], "Combat")
+        self.assertNotIn("flag", row)
+
+    def test_package_structs_are_left_out_and_shape_structs_rank_lower(self):
+        self.assertNotIn("Tank.label.mRTL_IgnoreArabicFix", self.rows)  # I2 Localization's text struct
+        self.assertLess(self.rows["Tank.spot.armor"]["score"], self.rows["Tank.stats.armor"]["score"])

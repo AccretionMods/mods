@@ -299,7 +299,8 @@ static void AMLiveRunTweak(NSDictionary *tweak) {
         BOOL keep = AMLiveRestorable(tweak, pin);
         NSString *objKey = [stateKey stringByAppendingString:@"/obj"], *origKey = [stateKey stringByAppendingString:@"/orig"];
         NSString *wroteKey = [stateKey stringByAppendingString:@"/wrote"];
-        if (AMLiveMultiple(pin) && [pin[@"op"] isEqual:@"multiply"]) { why = @"A multiplier needs one object"; continue; }
+        // a list's field multiply keeps each object's own base (below); a setter has no field to track it on
+        if (AMLiveMultiple(pin) && [pin[@"op"] isEqual:@"multiply"] && !pin[@"field"]) { why = @"A multiplier on a list needs a field"; continue; }
         for (NSValue *box in AMLivePinObjects(pin)) {
             void *obj = box.pointerValue;
             NSString *tcls = AMLiveFinalClass(pin, cls);

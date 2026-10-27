@@ -22,7 +22,7 @@ from pathlib import Path
 
 from il2cpp_dump import ADDRESS, FLOATS, INTEGERS, SIGNATURE, TYPE, TYPE_INDEX, Method, split_params
 
-VERSION = 23  # values inside struct fields ("outer.inner"); sibling families grouped; generic base members specialized per subclass; ScriptableObject data assets as roots; get-only properties through their backing fields; assemblies chosen by content too, bought packages ranked low; object routes cached; presentation, counter and bookkeeping rows ranked lower; the game's own assembly from its bundle ID
+VERSION = 24  # struct values labelled by their own name, package structs skipped, shape structs lower; values inside struct fields ("outer.inner"); sibling families grouped; generic base members specialized per subclass; ScriptableObject data assets as roots; get-only properties through their backing fields; assemblies chosen by content too, bought packages ranked low; object routes cached; presentation, counter and bookkeeping rows ranked lower; the game's own assembly from its bundle ID
 
 IMAGE = re.compile(r"^// Image \d+: (.+?)(?:\.dll)? - (\d+)\s*$")
 NAMESPACE = re.compile(r"^\s*// Namespace: ?(\S*)")
@@ -228,7 +228,10 @@ LIBRARY = re.compile(r"^(Unity|UnityEngine|System|Mono|mscorlib|Microsoft|netsta
                      r"Coherence|Photon|PlayFab|Firebase|Google|Facebook|AppsFlyer|Apple|Sirenix|TMPro|Rewired|Zenject|"
                      r"UniTask|UniRx|Cysharp|MessagePack|Spine|Cinemachine|Doozy|Sentry|Amazon|AWS|Lean|I2|l2local|"
                      r"ICSharpCode|Assembly-CSharp-firstpass|Mirror|FishNet|Fusion|Steamworks|Dreamteck|ProCamera|"
-                     r"Il2Cpp|__Generated|BestHTTP|VoxelBusters|AdinmoPlugin|IngameDebugConsole|Gametoolkit|glTFast)", re.IGNORECASE)
+                     r"Il2Cpp|__Generated|BestHTTP|VoxelBusters|AdinmoPlugin|IngameDebugConsole|Gametoolkit|glTFast|"
+                     r"SwrveUnity)", re.IGNORECASE)
+# a struct that holds a position, size, curve or range rather than a stat: its values rank lower
+STRUCT_SHAPE = re.compile(r"vector|int[23]$|point|rect|coord|bounds|size|curve|colou?r|quaternion|range", re.IGNORECASE)
 # store-bought packages that games compile into their own assemblies (or ship as their own): animation, tweening,
 # text, meshes, cameras, editors. Their classes rank low and Auto-build leaves them out with the presentation rows
 PACKAGE = re.compile(r"^(?:RootMotion|DG\.Tweening|TMPro|DigitalOpus|MeshBaker|Sirenix|Spine|Cinemachine|"
@@ -880,14 +883,18 @@ def build(classes, existing=frozenset(), learned=None, paths=None):
                 members.append((fname, prop, f["ctype"], "field", f["offset"], prop in info["getters"], True))
                 continue
             members.append((fname, fname, f["ctype"], "field", f["offset"], False, f["private"]))
+        struct_of = {}  # "outer.inner" -> the struct's short name, for its label and rank
         for outer, ftype in info.get("object_fields", {}).items():  # values inside a struct it holds: "outer.inner"
             inner_cls = resolve(ftype, cls) if not ftype.endswith("]") and "<" not in ftype else None
             inner = classes.get(inner_cls) if inner_cls else None
-            if inner and inner.get("type_kind") == "struct" and not outer.startswith("<"):
+            struct_ns = (inner_cls or "").rpartition(":")[2].rpartition(".")[0]
+            if inner and inner.get("type_kind") == "struct" and not outer.startswith("<") and not (
+                    struct_ns and (PACKAGE.match(struct_ns) or LIBRARY.match(struct_ns))):  # text, tween, SDK types
                 for fname, f in inner.get("fields", {}).items():
                     if not fname.startswith("<") and not f.get("readonly"):
                         members.append((f"{outer}.{fname}", f"{outer} {fname}", f["ctype"], "field", None, False,
                                         f["private"]))
+                        struct_of[f"{outer}.{fname}"] = inner_cls.rpartition(":")[2].rsplit(".", 1)[-1]
         own = {m[0] for m in members}
         for owner in _lineage(cls, classes, resolve):  # value fields a generic base declares (EntityBase<T>.Hp)
             g = classes[owner]
@@ -898,7 +905,10 @@ def build(classes, existing=frozenset(), learned=None, paths=None):
                     own.add(fname)
                     members.append((fname, fname, f["ctype"], "field", f["offset"], fname in g["getters"], f["private"]))
         for target, name, ctype, kind, offset, getter, private in members:
-            area, by_member = area_of(cls.rpartition(":")[2], name)
+            # a struct value is labelled by its own name; in a struct of stat modifiers (Boost.AttackStrengthBoost)
+            # "boost" says modifier, not a shop item, so it doesn't make the value an in-app purchase
+            label = re.sub(r"(?i)boost", "", target.rpartition(".")[2]) or target if target in struct_of else name
+            area, by_member = area_of(cls.rpartition(":")[2], label)
             row = {
                 "class": cls, "object": obj, "member": target, "name": name, "kind": kind, "ctype": ctype,
                 "offset": offset, "area": area, "has": f"{cls}.{target}" in existing,
@@ -908,7 +918,7 @@ def build(classes, existing=frozenset(), learned=None, paths=None):
             scale = info["fields"].get(name, {}).get("scale") if kind == "field" else None
             if scale:
                 row["scale"] = scale  # fixed point: the value is written as value * scale
-            reason = flag_of(cls, name)
+            reason = flag_of(cls, label)
             if reason:
                 row["flag"] = reason
                 flagged.append(row)
@@ -918,6 +928,8 @@ def build(classes, existing=frozenset(), learned=None, paths=None):
                 score += 2  # "Accuracy" next to "AccuracyDefault": a skill value the game reads
             if NOISE.search(name):
                 score -= 4
+            if target in struct_of and STRUCT_SHAPE.search(struct_of[target]):
+                score -= 2  # a position, size or curve, not a stat
             if private:
                 score -= 1
             if obj.endswith("[]") and area == "Other":

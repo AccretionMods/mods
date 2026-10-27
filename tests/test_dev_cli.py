@@ -6,7 +6,7 @@ import os
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
@@ -98,7 +98,8 @@ class Cli(unittest.TestCase):
         }))
         dump_dir = root / "am" / "work" / "dump-game-plus-1.0" / "out"
         dump_dir.mkdir(parents=True)
-        (dump_dir / "dump.cs").write_text(DUMP)
+        self.dump_file = dump_dir / "dump.cs"
+        self.dump_file.write_text(DUMP)
         (root / "am" / "dev").mkdir(parents=True)
         (root / "am" / "dev" / "game-plus.json").write_text(json.dumps({"dump_dir": str(dump_dir.parent)}))
         self.old_root, self.old_env = dev.ROOT, os.environ.get("AM_ROOT")
@@ -139,6 +140,26 @@ class Cli(unittest.TestCase):
         code, _ = run(["add", "game-plus", "StatHandler.Update", "--action", "custom", "--as", "tick", "--title", "Tick"])
         self.assertEqual(code, 0)
         self.assertFalse(self.hooks()[1]["needs_jit"])
+
+    def test_pin_takes_a_value_inside_a_struct_field_as_auto_build_writes_it(self):
+        self.dump_file.write_text(DUMP + "\n// Namespace:\npublic struct Stats // TypeDefIndex: 104\n{\n\tpublic int armor; // 0x10\n}\n"
+                                  "\n// Namespace:\npublic class Tank : MonoBehaviour // TypeDefIndex: 105\n{\n\tpublic Stats stats; // 0x18\n}\n")
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "studio"))
+        import autobuild
+
+        row = {"class": "Tank", "member": "stats.armor", "object": "Tank[]", "name": "stats armor", "ctype": "int32_t",
+               "kind": "field", "area": "Combat"}
+        argv, why = autobuild.pin_argv("game-plus", row, {"value": 50, "title": "Armor"}, set())
+        self.assertIsNone(why)
+        code, out = run(argv)
+        self.assertEqual(code, 0, out)
+        pin = self.tweaks()["tweaks"][0]["pins"][0]
+        self.assertEqual((pin["object"], pin["field"], pin["ctype"], pin["value"]), ("Tank[]", "stats.armor", "int32_t", 50))
+        err = io.StringIO()
+        with redirect_stderr(err):
+            code, _ = run(["pin", "game-plus", "Tank.stats.gone", "--object", "Tank[]", "--value", "1", "--as", "x", "--title", "X"])
+        self.assertEqual(code, 1)
+        self.assertIn("not a struct field", err.getvalue())
 
     def test_pin_setter_default_object_and_field_types(self):
         code, out = run(["pin", "game-plus", "StatHandler.set_Hunger", "--value", "100", "--when", "lower", "--as", "keep", "--title", "Keep"])
