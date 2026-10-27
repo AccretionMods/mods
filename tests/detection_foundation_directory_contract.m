@@ -1,0 +1,115 @@
+/* Host contract executable. Not an installed app or a device/game bypass test. */
+#import <Foundation/Foundation.h>
+#include "AMDetectionHooks.h"
+#include <assert.h>
+#include <fcntl.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#ifdef NDEBUG
+#error Contract assertions must remain enabled
+#endif
+
+static AMDetectionProfile am_detection_profile;
+static _Thread_local unsigned am_detection_objc_depth;
+static bool fixture_selected=true;
+static NSArray *last_original,*last_keys;
+static NSError *last_error;
+static NSDirectoryEnumerationOptions last_options;
+static bool last_error_was_null;
+static unsigned original_calls;
+static bool am_detection_caller_selected(const void *caller) {(void)caller;return fixture_selected;}
+#include "AMDetectionDirectories.m"
+
+static id original_paths(id manager,SEL selector,NSString *path,NSError **error) {
+    (void)selector;original_calls++;
+    last_original=[manager contentsOfDirectoryAtPath:path error:error];
+    last_error=error ? *error : nil;last_error_was_null=error==NULL;return last_original;
+}
+static id original_urls(id manager,SEL selector,NSURL *url,NSArray *keys,NSDirectoryEnumerationOptions options,NSError **error) {
+    (void)selector;original_calls++;last_keys=keys;last_options=options;
+    last_original=[manager contentsOfDirectoryAtURL:url includingPropertiesForKeys:keys options:options error:error];
+    last_error=error ? *error : nil;last_error_was_null=error==NULL;return last_original;
+}
+static bool prepare(const AMDetectionEntry *entry,void *context) {(void)context;return *entry->original!=NULL;}
+static bool publish(const AMDetectionEntry *entry,void *context) {(void)entry;(void)context;return true;}
+
+int AMDirectoryContractFixtureRun(const char *directory,bool observing) {
+    @autoreleasepool {
+        NSFileManager *manager=NSFileManager.defaultManager;
+        NSString *root=[NSURL fileURLWithPath:@(directory)].URLByResolvingSymlinksInPath.path;
+        NSError *error=nil;
+        assert([manager createDirectoryAtPath:root withIntermediateDirectories:YES attributes:nil error:&error]);
+        NSString *hidden=[root stringByAppendingPathComponent:@"hidden"],*visible=[root stringByAppendingPathComponent:@"visible"];
+        assert([[@"hidden" dataUsingEncoding:NSUTF8StringEncoding] writeToFile:hidden options:0 error:&error]);
+        assert([[@"visible" dataUsingEncoding:NSUTF8StringEncoding] writeToFile:visible options:0 error:&error]);
+        char *owned_path=strdup(hidden.fileSystemRepresentation);assert(owned_path);
+        const char *paths[]={owned_path};
+        am_detection_profile=(AMDetectionProfile){.mode=observing ? AM_DETECTION_OBSERVE : AM_DETECTION_FILTER,
+            .rules={.paths=paths,.path_count=1}};
+        const AMDetectionOriginals originals={.getcwd_fn=getcwd};
+        assert(AMDetectionConfigure(&am_detection_profile,&originals));
+        AMDetectionEntryID ids[]={AM_DETECTION_ENTRY_DIRECTORY_PATHS,AM_DETECTION_ENTRY_DIRECTORY_URLS};
+        *AMDetectionEntryByID(ids[0])->original=(void *)original_paths;
+        *AMDetectionEntryByID(ids[1])->original=(void *)original_urls;
+        for (unsigned i=0;i<2;i++) assert(AMDetectionSetInstaller(ids[i],prepare,publish,NULL));
+        assert(AMDetectionConfigureRegistry(ids,2,0,am_detection_profile.mode));
+        assert(AMDetectionPrepareModule(AM_DETECTION_MODULE_DIRECTORIES));
+        assert(AMDetectionPublishModule(AM_DETECTION_MODULE_DIRECTORIES));
+
+        error=[NSError errorWithDomain:@"fixture" code:1 userInfo:nil];
+        unsigned before=original_calls;
+        NSArray *names=am_detection_directory_paths(manager,@selector(contentsOfDirectoryAtPath:error:),root,&error);
+        assert(original_calls==before+1 && error==last_error);
+        assert([names containsObject:@"visible"] && [names containsObject:@"hidden"]==observing);
+        assert(names.count==(observing ? 2u : 1u));
+        for (id item in names) assert([last_original indexOfObjectIdenticalTo:item]!=NSNotFound);
+        if (observing) assert(names==last_original);
+        assert(am_detection_directory_paths(manager,@selector(contentsOfDirectoryAtPath:error:),root,NULL));
+        assert(last_error_was_null);
+
+        NSArray *keys=@[NSURLFileSizeKey,NSURLIsRegularFileKey];
+        NSDirectoryEnumerationOptions options=NSDirectoryEnumerationSkipsSubdirectoryDescendants;
+        NSArray *urls=am_detection_directory_urls(manager,
+            @selector(contentsOfDirectoryAtURL:includingPropertiesForKeys:options:error:),
+            [NSURL fileURLWithPath:root],keys,options,NULL);
+        assert(last_keys==keys && last_options==options && last_error_was_null);
+        assert(urls.count==(observing ? 2u : 1u));
+        for (NSURL *item in urls) {
+            assert([last_original indexOfObjectIdenticalTo:item]!=NSNotFound);
+            NSNumber *size=nil;assert([item getResourceValue:&size forKey:NSURLFileSizeKey error:NULL]);
+            assert(size.unsignedIntegerValue==([item.lastPathComponent isEqualToString:@"visible"] ? 7u : 6u));
+        }
+
+        NSString *missing=[root stringByAppendingPathComponent:@"missing"];
+        NSError *control=nil,*actual=nil;
+        assert(![manager contentsOfDirectoryAtPath:missing error:&control]);
+        assert(!am_detection_directory_paths(manager,@selector(contentsOfDirectoryAtPath:error:),missing,&actual));
+        assert([actual.domain isEqualToString:control.domain] && actual.code==control.code);
+        assert(!am_detection_directory_paths(manager,@selector(contentsOfDirectoryAtPath:error:),missing,NULL));
+
+        char cwd[4096];assert(getcwd(cwd,sizeof cwd));assert(!chdir(root.fileSystemRepresentation));
+        NSArray *relative=am_detection_directory_paths(manager,@selector(contentsOfDirectoryAtPath:error:),@".",NULL);
+        assert(relative==last_original && [relative containsObject:@"hidden"]);
+        assert(!chdir(cwd));
+
+        fixture_selected=false;before=original_calls;
+        AMDetectionCounters counters=AMDetectionReadEntryCounters(AM_DETECTION_ENTRY_DIRECTORY_PATHS);
+        NSArray *unselected=am_detection_directory_paths(manager,@selector(contentsOfDirectoryAtPath:error:),root,NULL);
+        assert(unselected==last_original && [unselected containsObject:@"hidden"] && original_calls==before+1);
+        assert(AMDetectionReadEntryCounters(AM_DETECTION_ENTRY_DIRECTORY_PATHS).calls==counters.calls);
+        /* Enumerators remain unsupported; this fixture never substitutes a proxy. */
+        assert(!AMDetectionEntryByID(AM_DETECTION_ENTRY_ENUMERATOR_PATHS)->implemented);
+        assert(!AMDetectionEntryByID(AM_DETECTION_ENTRY_ENUMERATOR_URLS)->implemented);
+        free(owned_path);
+    }
+    return 0;
+}
+#ifndef AM_DIRECTORY_CONTRACT_NO_MAIN
+int main(int argc,char **argv) {
+    assert(argc==3 && (!strcmp(argv[1],"filter") || !strcmp(argv[1],"observe")));
+    int result=AMDirectoryContractFixtureRun(argv[2],!strcmp(argv[1],"observe"));
+    if (!result) puts("PASS foundation-directory-contract-v1");
+    return result;
+}
+#endif

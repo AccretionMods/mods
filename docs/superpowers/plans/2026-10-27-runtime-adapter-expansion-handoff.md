@@ -17,9 +17,10 @@ Base: `d9878b4`; draft PR #85 remains separate and unchanged.
 
 The subsequent directory checkpoints add a bounded 256-stream map, per-stream locking,
 handle retirement/reuse, original-result reporting after filtering and explicit coverage gaps.
-It is a partial implementation of Task 5, not its completion marker.
+Task 5 now includes a runnable host Foundation fixture. Apple execution is still pending,
+so Foundation filtering remains unsupported and disabled.
 
-Latest verification: 280 tests ran without failures, with two skips. The native
+Latest verification: 283 tests ran without failures, with two skips. The native
 directory cases passed ASan/UBSan. Quiet-default and expanded arm64 builds succeeded.
 Apple Foundation execution and device behavior were not verified by these builds.
 
@@ -42,8 +43,14 @@ no account was touched, and no branch or IPA was published during these changes.
   Slot generations are revalidated after acquiring their locks, and open never waits on
   a slot while holding the map. Unimplemented contracts also fail registry preparation
   without executing installers, even when callbacks have been registered.
-- Provide a runnable Apple fixture to finish Task 5. The current skipped Foundation test is an availability marker,
-  not an executed fixture or evidence of compatibility.
+- `scripts/detection_apple_contracts.py --output <private-report.json>` runs the actual
+  Foundation listing fixture on macOS. It compiles an isolated source snapshot and binds
+  the result to LF-normalized source hashes. Windows/Linux return explicit unavailable
+  evidence and exit 2. Compiler failures and execution timeouts cannot produce passed evidence.
+  The fixture covers path/URL listings, returned-object identity, resource keys/options,
+  optional errors, original error results, observation and unselected-call forwarding.
+  It compiles for arm64 here but has not executed on an Apple runtime. A host pass never
+  enables a profile or claims device/positive-artifact verification. No test app is installed.
 - Directory entry counters count wrapper calls. Attribution rows count rule observations,
   which may exceed calls; the registry/report labels this unit. Filtered entries retain
   their actual original positive result instead of claiming the original was never called.
@@ -52,7 +59,7 @@ no account was touched, and no branch or IPA was published during these changes.
 
 ## Remaining plan
 
-After finishing Task 5, execute Tasks 6–11: Foundation write probes/process boundaries;
+Next implement Tasks 6–11: Foundation write probes/process boundaries;
 URL/environment/preferences; loader/class views; component manifests; SDK/ownership checks;
 then isolated verification, capability documentation and a fresh whole-branch review.
 Do not restart the completed implementation milestones or touch the dirty primary checkout.

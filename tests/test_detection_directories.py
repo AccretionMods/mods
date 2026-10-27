@@ -56,7 +56,3 @@ class DetectionDirectories(unittest.TestCase):
 
     def test_ambiguous_parent_normalization_forwards_without_guessing(self):
         self.run_case("normalization")
-
-    @unittest.skip("Apple Foundation execution is unavailable on this POSIX host")
-    def test_foundation_enumerator_contract(self):
-        pass
