@@ -11,6 +11,7 @@ LISTS = (
     "path_prefixes",
     "url_schemes",
     "environment_names",
+    "environment_allowlist",
     "image_basenames",
 )
 FEATURES = ("filesystem", "foundation", "urls", "environment", "images", "directories", "writes", "process")
@@ -222,10 +223,16 @@ def problems(data, app_version=None):
                 r"[A-Za-z][A-Za-z0-9+.-]*", value
             ):
                 errors.append("invalid URL scheme")
-            elif key == "environment_names" and not re.fullmatch(
+            elif key in ("environment_names", "environment_allowlist") and not re.fullmatch(
                 r"[A-Za-z_][A-Za-z0-9_]*", value
             ):
                 errors.append("invalid environment name")
+            elif key == "environment_allowlist" and schema != 2:
+                errors.append("environment_allowlist requires schema 2")
+            elif key == "environment_allowlist" and value in (
+                data.get("environment_names") if isinstance(data.get("environment_names"), list) else []
+            ):
+                errors.append("environment_allowlist entry is also in environment_names")
             elif key == "image_basenames" and (
                 "/" in value or "\\" in value or value in (".", "..")
             ):
@@ -475,7 +482,8 @@ def render(data):
         "        .paths = am_detection_paths, .path_count = AM_DETECTION_PATHS_COUNT,",
         "        .path_prefixes = am_detection_path_prefixes, .prefix_count = AM_DETECTION_PATH_PREFIXES_COUNT,",
         "        .url_schemes = am_detection_url_schemes, .scheme_count = AM_DETECTION_URL_SCHEMES_COUNT,",
-        "        .environment_names = am_detection_environment_names, .environment_count = AM_DETECTION_ENVIRONMENT_NAMES_COUNT",
+        "        .environment_names = am_detection_environment_names, .environment_count = AM_DETECTION_ENVIRONMENT_NAMES_COUNT,",
+        "        .environment_allowlist = am_detection_environment_allowlist, .allowlist_count = AM_DETECTION_ENVIRONMENT_ALLOWLIST_COUNT",
         "    }",
         "};",
         "",

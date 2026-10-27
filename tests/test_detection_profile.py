@@ -256,6 +256,28 @@ class DetectionProfile(unittest.TestCase):
                 )
         self.assertTrue(self.module.problems(self.profile, "1.2.1"))
 
+    def test_environment_allowlist_is_schema2_exact_and_disjoint(self):
+        p = dict(self.profile, schema_version=2, adapters=["filesystem", "environment"],
+                 apis=["stat", "getenv"], environment_names=["AM_PROBE_ENV"],
+                 environment_allowlist=["HOME", "TMPDIR", "UNITY_SETTINGS"])
+        self.assertEqual(self.module.problems(p, "1.2.0"), [])
+        header = self.module.render(p)
+        self.assertIn('am_detection_environment_allowlist[] = {"HOME", "TMPDIR", "UNITY_SETTINGS"}', header)
+        self.assertIn("#define AM_DETECTION_ENVIRONMENT_ALLOWLIST_COUNT 3", header)
+        self.assertIn(".environment_allowlist = am_detection_environment_allowlist, .allowlist_count = AM_DETECTION_ENVIRONMENT_ALLOWLIST_COUNT", header)
+        legacy = self.module.render(self.profile)
+        self.assertIn("#define AM_DETECTION_ENVIRONMENT_ALLOWLIST_COUNT 0", legacy)
+        for change in (
+            {"schema_version": 1},
+            {"environment_allowlist": ["HOME", "AM_PROBE_ENV"]},
+            {"environment_allowlist": ["Unity_*"]},
+            {"environment_allowlist": ["HOME", "HOME"]},
+            {"environment_allowlist": ["X"] * 65},
+            {"environment_allowlist": "HOME"},
+        ):
+            with self.subTest(change=str(change)[:60]):
+                self.assertTrue(self.module.problems(dict(p, **change), "1.2.0"))
+
     def test_broad_and_ambiguous_rules_and_oversized_lists_rejected(self):
         for key, values in [
             ("path_prefixes", ["/private"]),

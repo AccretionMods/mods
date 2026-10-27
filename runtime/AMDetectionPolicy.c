@@ -62,6 +62,13 @@ AMDetectionRuleRef AMDetectionEnvironmentRule(const AMDetectionProfile *p, const
         if (equal_name(s,p->rules.environment_names[i],false)) return (AMDetectionRuleRef){AM_DETECTION_RULE_ENVIRONMENT,(unsigned)i};
     return (AMDetectionRuleRef){0};
 }
+AMDetectionEnvAction AMDetectionEnvironmentAction(const AMDetectionProfile *p, const char *s) {
+    if (!p) return AM_DETECTION_ENV_ACTION_PASSTHROUGH;
+    if (AMDetectionEnvironmentRule(p,s).kind!=AM_DETECTION_RULE_NONE) return AM_DETECTION_ENV_ACTION_BLOCK;
+    for (size_t i=0;p->rules.environment_allowlist && i<p->rules.allowlist_count && i<64;i++)
+        if (equal_name(s,p->rules.environment_allowlist[i],false)) return AM_DETECTION_ENV_ACTION_ALLOW;
+    return AM_DETECTION_ENV_ACTION_PASSTHROUGH;
+}
 AMDetectionRuleRef AMDetectionWriteRule(const AMDetectionProfile *p,const char *s) {
     if (!p || !path_valid(s)) return (AMDetectionRuleRef){0};
     for (size_t i=0;p->rules.write_paths && i<p->rules.write_count && i<64;i++)

@@ -110,9 +110,10 @@ size_t AMDetectionReadCallsites(AMDetectionCallsite *out,size_t capacity) {
 char *AMDetectionGetenv(const char *name) {
     if (!originals.getenv_fn) return NULL;
     if (depth) return originals.getenv_fn(name);
-        AMDetectionRuleRef rule=AMDetectionEnvironmentRule(profile,name);
-        bool match=rule.kind!=AM_DETECTION_RULE_NONE;
-        bool block=profile && profile->mode==AM_DETECTION_FILTER && match && am_detection_api_ready(AM_DETECTION_GETENV);
+    AMDetectionEnvAction action=AMDetectionEnvironmentAction(profile,name);
+    AMDetectionRuleRef rule=action==AM_DETECTION_ENV_ACTION_BLOCK ? AMDetectionEnvironmentRule(profile,name) : (AMDetectionRuleRef){0};
+    bool block=profile && profile->mode==AM_DETECTION_FILTER && action==AM_DETECTION_ENV_ACTION_BLOCK && am_detection_api_ready(AM_DETECTION_GETENV);
+    /* ALLOW and PASSTHROUGH both reach the original getenv. */
     depth++; char *r=block ? NULL : originals.getenv_fn(name);
     AMDetectionRecordOutcome(AM_DETECTION_GETENV,rule,block,__builtin_return_address(0),r ? AM_DETECTION_RESULT_SUCCESS : AM_DETECTION_RESULT_NEGATIVE);
     depth--; return r;

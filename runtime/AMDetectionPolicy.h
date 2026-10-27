@@ -15,6 +15,7 @@ typedef struct {
     const char *const *path_prefixes; size_t prefix_count;
     const char *const *url_schemes; size_t scheme_count;
     const char *const *environment_names; size_t environment_count;
+    const char *const *environment_allowlist; size_t allowlist_count;
     const char *const *write_paths; size_t write_count;
     const char *const *spawn_paths; size_t spawn_count;
 } AMDetectionRules;
@@ -26,6 +27,12 @@ typedef struct { AMDetectionRuleKind kind; unsigned index; } AMDetectionRuleRef;
 AMDetectionRuleRef AMDetectionPathRule(const AMDetectionProfile *,const char *);
 AMDetectionRuleRef AMDetectionSchemeRule(const AMDetectionProfile *,const char *);
 AMDetectionRuleRef AMDetectionEnvironmentRule(const AMDetectionProfile *,const char *);
+typedef enum {
+    AM_DETECTION_ENV_ACTION_BLOCK = 0,       /* name matches an environment rule */
+    AM_DETECTION_ENV_ACTION_ALLOW = 1,       /* name is on environment_allowlist */
+    AM_DETECTION_ENV_ACTION_PASSTHROUGH = 2  /* unknown name: call the original */
+} AMDetectionEnvAction;
+AMDetectionEnvAction AMDetectionEnvironmentAction(const AMDetectionProfile *,const char *);
 AMDetectionRuleRef AMDetectionWriteRule(const AMDetectionProfile *,const char *);
 AMDetectionRuleRef AMDetectionSpawnRule(const AMDetectionProfile *,const char *);
 bool AMDetectionPathValid(const char *);

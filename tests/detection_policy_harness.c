@@ -31,9 +31,11 @@ int main(int argc, char **argv) {
     const char *prefixes[] = {"/opt/test"};
     const char *schemes[] = {"cydia"};
     const char *envs[] = {"AM_PROBE_ENV"};
+    const char *allowed[] = {"AM_ALLOWED_ENV"};
     AMDetectionProfile p = {.mode = AM_DETECTION_FILTER,
         .rules = {.paths = paths, .path_count = 1, .path_prefixes = prefixes, .prefix_count = 1,
-                  .url_schemes = schemes, .scheme_count = 1, .environment_names = envs, .environment_count = 1}};
+                  .url_schemes = schemes, .scheme_count = 1, .environment_names = envs, .environment_count = 1,
+                  .environment_allowlist = allowed, .allowlist_count = 1}};
     if (!strcmp(argv[1],"outcomes")) {
         p.mode=AM_DETECTION_OBSERVE;
         AMDetectionOriginals original={.fopen_fn=fake_fopen};
@@ -86,6 +88,11 @@ int main(int argc, char **argv) {
         assert(AMDetectionMatchEnvironment(&p, "AM_PROBE_ENV"));
         assert(!AMDetectionMatchEnvironment(&p, "AM_PROBE_ENV_EXTRA"));
         assert(!AMDetectionMatchEnvironment(&p, "am_probe_env"));
+        assert(AMDetectionEnvironmentAction(&p, "AM_PROBE_ENV")==AM_DETECTION_ENV_ACTION_BLOCK);
+        assert(AMDetectionEnvironmentAction(&p, "AM_ALLOWED_ENV")==AM_DETECTION_ENV_ACTION_ALLOW);
+        assert(AMDetectionEnvironmentAction(&p, "AM_UNLISTED_ENV")==AM_DETECTION_ENV_ACTION_PASSTHROUGH);
+        assert(AMDetectionEnvironmentAction(&p, "am_allowed_env")==AM_DETECTION_ENV_ACTION_PASSTHROUGH);
+        assert(AMDetectionEnvironmentAction(NULL, "AM_PROBE_ENV")==AM_DETECTION_ENV_ACTION_PASSTHROUGH);
         return 0;
     }
     char filename[] = "/tmp/am-detection-test-XXXXXX";
@@ -108,6 +115,9 @@ int main(int argc, char **argv) {
         errno=0; assert(AMDetectionOpen(filename,O_RDONLY)==-1 && errno==ENOENT);
         errno=0; assert(AMDetectionFopen(filename,"r")==NULL && errno==ENOENT);
         errno=E2BIG; assert(AMDetectionGetenv("AM_PROBE_ENV")==NULL && errno==E2BIG);
+        assert(setenv("AM_ALLOWED_ENV","allowed-value",1)==0 && setenv("AM_UNLISTED_ENV","unlisted-value",1)==0);
+        assert(!strcmp(AMDetectionGetenv("AM_ALLOWED_ENV"),"allowed-value"));
+        assert(!strcmp(AMDetectionGetenv("AM_UNLISTED_ENV"),"unlisted-value"));
     } else {
         errno=E2BIG; assert(AMDetectionAccess(filename,F_OK)==0 && errno==E2BIG);
         assert(AMDetectionStat(filename,&st)==0);
