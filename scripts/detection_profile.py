@@ -29,6 +29,8 @@ APIS = {
     "foundation_attributes": "foundation",
     "urls": "urls",
 }
+LEGACY_APIS = frozenset(APIS)
+APIS.update({"readlink": "filesystem", "fstatat": "filesystem"})
 FIELDS = {
     "schema_version",
     "game_version",
@@ -159,6 +161,8 @@ def problems(data, app_version=None):
                     errors.append("duplicate API entry point")
                 else:
                     seen_apis.add(api)
+                    if api not in LEGACY_APIS and schema != 2:
+                        errors.append("advanced API entry points require schema 2")
                     if (
                         not isinstance(data.get("adapters"), list)
                         or APIS[api] not in data["adapters"]
@@ -276,13 +280,48 @@ def advanced_problems(data):
                 total += sum(r["size"] for r in identity["ranges"])
         if total > 1024 * 1024 * 1024:
             errors.append("aggregate fingerprint read budget exceeds 1 GiB")
-    # Reserve advanced fields without silently accepting unimplemented policy.
+    probes = data.get("write_probes", [])
+    if not isinstance(probes, list) or len(probes) > 64:
+        errors.append("write_probes must be a list of at most 64 exact probes")
+    else:
+        seen = set()
+        for probe in probes:
+            if not isinstance(probe, dict) or set(probe) != {"path"} or not isinstance(probe["path"], str):
+                errors.append("write probe requires an exact path")
+                continue
+            path = probe["path"]
+            if path in seen:
+                errors.append("duplicate write probe")
+            seen.add(path)
+            base = {"schema_version": 1, "game_version": data.get("game_version"), "mode": "off",
+                    "images": [], "adapters": [], "paths": [path]}
+            if problems(base):
+                errors.append("broad, ambiguous or protected write probe")
+    selected = {api for api in selected_apis(data) if isinstance(api, str)}
+    if probes and not selected.intersection(("open", "fopen")):
+        errors.append("write probes require an explicit write-capable entry point")
+    if (selected - LEGACY_APIS or probes) and data.get("mode") != "off":
+        images = data.get("images", [])
+        if (not isinstance(fingerprints, dict) or not isinstance(images, list) or
+                any(not isinstance(image, str) for image in images) or set(fingerprints) != set(images)):
+            errors.append("advanced entry points require fingerprints for all selected images")
+    # Reserve remaining fields without silently accepting unimplemented policy.
     # Their owning adapter task replaces this rejection with its exact contract.
-    for name in ("write_probes", "preference_domains", "spawn_rules", "hidden_components", "sdk_adapters"):
+    for name in ("preference_domains", "spawn_rules", "hidden_components", "sdk_adapters"):
         value = data.get(name, [])
         if not isinstance(value, list) or value:
             errors.append(f"{name} requires its supported adapter; currently unavailable")
     return errors
+
+
+def selected_apis(data):
+    if "apis" in data:
+        return data["apis"] if isinstance(data["apis"], list) else []
+    adapters = data.get("adapters", [])
+    if not isinstance(adapters, list):
+        return []
+    # New entry points are always explicit, including schema-2 profiles.
+    return [api for api, feature in APIS.items() if api in LEGACY_APIS and feature in adapters]
 
 
 def c_string(value):
@@ -328,10 +367,7 @@ def render(data):
         out.append(
             f"#define AM_DETECTION_FEATURE_{feature.upper()} {int(feature in data.get('adapters', []))}"
         )
-    selected = data.get(
-        "apis",
-        [api for api, feature in APIS.items() if feature in data.get("adapters", [])],
-    )
+    selected = selected_apis(data)
     for api in APIS:
         out.append(f"#define AM_DETECTION_API_{api.upper()} {int(api in selected)}")
     modes = data.get("module_modes", {})
@@ -361,6 +397,10 @@ def render(data):
             + "};"
         )
         out.append(f"#define AM_DETECTION_{key.upper()}_COUNT {len(values)}")
+    write_paths = [probe["path"] for probe in data.get("write_probes", [])]
+    out.append("static const char *const am_detection_write_paths[] = {"
+               + (", ".join(c_string(v) for v in write_paths) or "NULL") + "};")
+    out.append(f"#define AM_DETECTION_WRITE_PATHS_COUNT {len(write_paths)}")
     out.append(
         "static const char *const am_detection_image_ids[] = {"
         + (
@@ -369,7 +409,7 @@ def render(data):
         )
         + "};"
     )
-    out.append("static const char *const am_detection_rule_ids[5][64] = {{NULL},")
+    out.append("static const char *const am_detection_rule_ids[AM_DETECTION_RULE_COUNT][64] = {{NULL},")
     for key in ("paths", "path_prefixes", "url_schemes", "environment_names"):
         out.append(
             "    {"
@@ -379,10 +419,12 @@ def render(data):
             )
             + "},"
         )
+    out.append("    {" + (", ".join(c_string(rule_identity("write_probes", v)) for v in write_paths) or "NULL") + "},")
     out.append("};")
     out += [
         "static const AMDetectionProfile am_detection_profile = {",
         "    .mode = AM_DETECTION_PROFILE_MODE, .rules = {",
+        "        .write_paths = am_detection_write_paths, .write_count = AM_DETECTION_WRITE_PATHS_COUNT,",
         "        .paths = am_detection_paths, .path_count = AM_DETECTION_PATHS_COUNT,",
         "        .path_prefixes = am_detection_path_prefixes, .prefix_count = AM_DETECTION_PATH_PREFIXES_COUNT,",
         "        .url_schemes = am_detection_url_schemes, .scheme_count = AM_DETECTION_URL_SCHEMES_COUNT,",

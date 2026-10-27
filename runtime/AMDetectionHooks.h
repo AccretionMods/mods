@@ -1,6 +1,7 @@
 #ifndef AM_DETECTION_HOOKS_H
 #define AM_DETECTION_HOOKS_H
 #include "AMDetectionPolicy.h"
+#include "AMDetectionFiles.h"
 #include <stdio.h>
 #include <sys/stat.h>
 
@@ -25,14 +26,6 @@ void AMDetectionRecordOutcome(AMDetectionAPI,AMDetectionRuleRef,bool,const void 
 void AMDetectionRecordEntryOutcome(AMDetectionEntryID,AMDetectionRuleRef,bool,const void *,AMDetectionResult);
 size_t AMDetectionReadCallsites(AMDetectionCallsite *,size_t);
 unsigned AMDetectionCallsitesDropped(void);
-typedef struct {
-    int (*access_fn)(const char *,int);
-    int (*stat_fn)(const char *,struct stat *);
-    int (*lstat_fn)(const char *,struct stat *);
-    int (*open_fn)(const char *,int,...);
-    FILE *(*fopen_fn)(const char *,const char *);
-    char *(*getenv_fn)(const char *);
-} AMDetectionOriginals;
 /* Startup only, before hooks are published. Profile/original storage must outlive the hooks. */
 bool AMDetectionConfigure(const AMDetectionProfile *, const AMDetectionOriginals *);
 void AMDetectionSetAdapterReady(AMDetectionAPI, bool ready);

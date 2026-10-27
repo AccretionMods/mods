@@ -47,6 +47,8 @@ static bool am_detection_entry_enabled(AMDetectionEntryID id) {
         case AM_DETECTION_ENTRY_FOUNDATION_EXISTS: return AM_DETECTION_API_FOUNDATION_EXISTS;
         case AM_DETECTION_ENTRY_FOUNDATION_ATTRIBUTES: return AM_DETECTION_API_FOUNDATION_ATTRIBUTES;
         case AM_DETECTION_ENTRY_CAN_OPEN_URL: return AM_DETECTION_API_URLS;
+        case AM_DETECTION_ENTRY_READLINK: return AM_DETECTION_API_READLINK;
+        case AM_DETECTION_ENTRY_FSTATAT: return AM_DETECTION_API_FSTATAT;
         default: return false;
     }
 }
@@ -58,6 +60,8 @@ static void *am_detection_native_replacement(AMDetectionEntryID id) {
         case AM_DETECTION_ENTRY_OPEN: return (void *)AMDetectionOpen;
         case AM_DETECTION_ENTRY_FOPEN: return (void *)AMDetectionFopen;
         case AM_DETECTION_ENTRY_GETENV: return (void *)AMDetectionGetenv;
+        case AM_DETECTION_ENTRY_READLINK: return (void *)AMDetectionReadlink;
+        case AM_DETECTION_ENTRY_FSTATAT: return (void *)AMDetectionFstatat;
         default: return NULL;
     }
 }
@@ -269,6 +273,17 @@ static bool am_detection_verify_fingerprints(void) {
     am_detection_fingerprint_reason=AM_DETECTION_REASON_NONE;
     return true;
 }
+#if AM_DETECTION_API_READLINK || AM_DETECTION_API_FSTATAT || AM_DETECTION_WRITE_PATHS_COUNT > 0
+static bool am_detection_directory_path(int fd,char *out,size_t capacity) {
+#ifdef F_GETPATH
+    struct stat info;
+    if (capacity<1024 || fstat(fd,&info) || !S_ISDIR(info.st_mode)) return false;
+    return fcntl(fd,F_GETPATH,out)==0;
+#else
+    (void)fd;(void)out;(void)capacity;return false;
+#endif
+}
+#endif
 void AMDetectionStart(size_t compatibility_bindings) {
     if (am_detection_started) return;
     am_detection_started=true;
@@ -312,7 +327,13 @@ void AMDetectionStart(size_t compatibility_bindings) {
         .lstat_fn=*AMDetectionEntryByID(AM_DETECTION_ENTRY_LSTAT)->original,
         .open_fn=*AMDetectionEntryByID(AM_DETECTION_ENTRY_OPEN)->original,
         .fopen_fn=*AMDetectionEntryByID(AM_DETECTION_ENTRY_FOPEN)->original,
-        .getenv_fn=*AMDetectionEntryByID(AM_DETECTION_ENTRY_GETENV)->original};
+        .getenv_fn=*AMDetectionEntryByID(AM_DETECTION_ENTRY_GETENV)->original,
+        .readlink_fn=*AMDetectionEntryByID(AM_DETECTION_ENTRY_READLINK)->original,
+        .fstatat_fn=*AMDetectionEntryByID(AM_DETECTION_ENTRY_FSTATAT)->original,
+#if AM_DETECTION_API_READLINK || AM_DETECTION_API_FSTATAT || AM_DETECTION_WRITE_PATHS_COUNT > 0
+        .getcwd_fn=dlsym(RTLD_DEFAULT,"getcwd"),.directory_path_fn=am_detection_directory_path,
+#endif
+    };
     if (!AMDetectionConfigure(&am_detection_profile,&o)) { am_detection_version_ok=false; return; }
     AMDetectionSetOriginResolver(am_detection_origin);
     AMDetectionSetCallsiteResolver(am_detection_callsite);
@@ -414,7 +435,7 @@ NSDictionary *AMDetectionReport(void) {
     for (size_t i=0;i<rowCount;i++) {
         AMDetectionEventRow row=rows[i];const AMDetectionEntry *entry=AMDetectionEntryByID(row.key.entry);
         if (!entry) continue;
-        const char *rule=row.key.rule.kind<=AM_DETECTION_RULE_ENVIRONMENT && row.key.rule.index<64 ? am_detection_rule_ids[row.key.rule.kind][row.key.rule.index] : NULL;
+        const char *rule=(unsigned)row.key.rule.kind<AM_DETECTION_RULE_COUNT && row.key.rule.index<64 ? am_detection_rule_ids[row.key.rule.kind][row.key.rule.index] : NULL;
         NSString *image=row.key.image<AM_DETECTION_IMAGES_COUNT ? @(am_detection_image_ids[row.key.image]) : @"unattributed";
         [attributed addObject:@{@"entry_id":@(entry->id),@"module":@(AMDetectionModuleName(entry->module)),
             @"image_id":image,@"phase":am_detection_phases[row.key.phase],@"api":@(entry->name),
@@ -428,7 +449,7 @@ NSDictionary *AMDetectionReport(void) {
     for (size_t i=0;i<siteCount;i++) {
         AMDetectionEventCallsite site=sites[i];AMDetectionEventKey key=site.key;
         const AMDetectionEntry *entry=AMDetectionEntryByID(key.entry);if (!entry) continue;
-        const char *rule=key.rule.kind<=AM_DETECTION_RULE_ENVIRONMENT && key.rule.index<64 ? am_detection_rule_ids[key.rule.kind][key.rule.index] : NULL;
+        const char *rule=(unsigned)key.rule.kind<AM_DETECTION_RULE_COUNT && key.rule.index<64 ? am_detection_rule_ids[key.rule.kind][key.rule.index] : NULL;
         NSString *image=key.image<AM_DETECTION_IMAGES_COUNT ? @(am_detection_image_ids[key.image]) : @"unattributed";
         NSString *token=site.token ? [NSString stringWithFormat:@"%016llx",(unsigned long long)site.token] : @"unavailable";
         [siteRows addObject:@{@"entry_id":@(entry->id),@"module":@(AMDetectionModuleName(entry->module)),

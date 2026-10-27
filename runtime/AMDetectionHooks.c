@@ -1,3 +1,8 @@
+#ifndef __APPLE__
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE 1
+#endif
+#endif
 #include "AMDetectionHooks.h"
 #include <errno.h>
 #include <fcntl.h>
@@ -14,9 +19,11 @@ static atomic_bool ready[AM_DETECTION_API_COUNT];
 static bool (*readiness_resolver)(AMDetectionAPI);
 static unsigned (*origin_resolver)(const void *);
 static uint64_t (*callsite_resolver)(const void *);
+static bool am_detection_api_ready(AMDetectionEntryID);
 
 bool AMDetectionConfigure(const AMDetectionProfile *p,const AMDetectionOriginals *o) {
     if (profile || !p || !o || p->mode>AM_DETECTION_FILTER) return false;
+    if (!AMDetectionConfigureFiles(p,o,am_detection_api_ready)) return false;
     originals=*o;profile=p;
     AMDetectionDiagnosticsConfigure(p->mode!=AM_DETECTION_OFF);
     for (unsigned i=0;i<AM_DETECTION_API_COUNT;i++) atomic_store(&ready[i],true);
@@ -26,8 +33,9 @@ void AMDetectionSetAdapterReady(AMDetectionAPI api,bool value) {
     if ((unsigned)api<AM_DETECTION_API_COUNT) atomic_store(&ready[api],value);
 }
 void AMDetectionSetReadinessResolver(bool (*resolver)(AMDetectionAPI)) { readiness_resolver=resolver; }
-static bool am_detection_api_ready(AMDetectionAPI api) {
-    return atomic_load(&ready[api]) && (!readiness_resolver || readiness_resolver(api));
+static bool am_detection_api_ready(AMDetectionEntryID entry) {
+    if (entry<AM_DETECTION_API_COUNT && !atomic_load(&ready[entry])) return false;
+    return !readiness_resolver || readiness_resolver((AMDetectionAPI)entry);
 }
 void AMDetectionSetOriginResolver(unsigned (*resolver)(const void *)) { origin_resolver=resolver; }
 void AMDetectionSetCallsiteResolver(uint64_t (*resolver)(const void *)) { callsite_resolver=resolver; }
@@ -43,7 +51,7 @@ unsigned AMDetectionAttributionDropped(void) { return AMDetectionReadCoverage().
 void AMDetectionRecordEntryOutcome(AMDetectionEntryID entry,AMDetectionRuleRef rule,bool filtered,const void *caller,AMDetectionResult result) {
     if (!AM_DETECTION_DIAGNOSTICS_ENABLED || !profile || profile->mode==AM_DETECTION_OFF) return;
     int saved=errno;
-    if ((unsigned)rule.kind>AM_DETECTION_RULE_ENVIRONMENT || rule.index>=64) rule=(AMDetectionRuleRef){0};
+    if ((unsigned)rule.kind>=AM_DETECTION_RULE_COUNT || rule.index>=64) rule=(AMDetectionRuleRef){0};
     unsigned image=origin_resolver ? origin_resolver(caller) : AM_DETECTION_UNKNOWN_IMAGE;
     if (image>AM_DETECTION_UNKNOWN_IMAGE) image=AM_DETECTION_UNKNOWN_IMAGE;
     uint64_t token=rule.kind!=AM_DETECTION_RULE_NONE && callsite_resolver ? callsite_resolver(caller) : 0;
@@ -87,57 +95,6 @@ size_t AMDetectionReadCallsites(AMDetectionCallsite *out,size_t capacity) {
     }
     free(rows);return count;
 }
-static bool block_path(AMDetectionAPI api, const char *path) {
-    AMDetectionRuleRef rule=AMDetectionPathRule(profile,path);
-    bool match=rule.kind!=AM_DETECTION_RULE_NONE;
-    bool block=profile && profile->mode==AM_DETECTION_FILTER && match && am_detection_api_ready(api);
-    return block;
-}
-static AMDetectionResult file_result(bool success) {
-    return success ? AM_DETECTION_RESULT_SUCCESS : (errno==ENOENT || errno==ENOTDIR) ? AM_DETECTION_RESULT_NEGATIVE : AM_DETECTION_RESULT_ERROR;
-}
-#define RECORD_PATH(api,p,block,success) AMDetectionRecordOutcome(api,AMDetectionPathRule(profile,p),block,__builtin_return_address(0),file_result(success))
-#define MISSING() do { errno=ENOSYS; return -1; } while (0)
-int AMDetectionAccess(const char *p,int mode) {
-    if (!originals.access_fn) MISSING();
-    if (depth) return originals.access_fn(p,mode);
-    bool block=block_path(AM_DETECTION_ACCESS,p);
-    depth++; int r; if (block) { errno=ENOENT; r=-1; } else r=originals.access_fn(p,mode);
-    RECORD_PATH(AM_DETECTION_ACCESS,p,block,r==0); depth--; return r;
-}
-int AMDetectionStat(const char *p,struct stat *s) {
-    if (!originals.stat_fn) MISSING();
-    if (depth) return originals.stat_fn(p,s);
-    bool block=block_path(AM_DETECTION_STAT,p);
-    depth++; int r; if (block) { errno=ENOENT; r=-1; } else r=originals.stat_fn(p,s);
-    RECORD_PATH(AM_DETECTION_STAT,p,block,r==0); depth--; return r;
-}
-int AMDetectionLstat(const char *p,struct stat *s) {
-    if (!originals.lstat_fn) MISSING();
-    if (depth) return originals.lstat_fn(p,s);
-    bool block=block_path(AM_DETECTION_LSTAT,p);
-    depth++; int r; if (block) { errno=ENOENT; r=-1; } else r=originals.lstat_fn(p,s);
-    RECORD_PATH(AM_DETECTION_LSTAT,p,block,r==0); depth--; return r;
-}
-int AMDetectionOpen(const char *p,int flags,...) {
-    if (!originals.open_fn) MISSING();
-    bool has_mode=(flags&O_CREAT)!=0;
-#ifdef O_TMPFILE
-    has_mode=has_mode || (flags&O_TMPFILE)==O_TMPFILE;
-#endif
-    int mode=0; if (has_mode) { va_list args; va_start(args,flags); mode=va_arg(args,int); va_end(args); }
-    if (depth) return has_mode ? originals.open_fn(p,flags,mode) : originals.open_fn(p,flags);
-    bool block=block_path(AM_DETECTION_OPEN,p);
-    depth++; int r; if (block) { errno=ENOENT; r=-1; } else r=has_mode ? originals.open_fn(p,flags,mode) : originals.open_fn(p,flags);
-    RECORD_PATH(AM_DETECTION_OPEN,p,block,r>=0); depth--; return r;
-}
-FILE *AMDetectionFopen(const char *p,const char *mode) {
-    if (!originals.fopen_fn) { errno=ENOSYS; return NULL; }
-    if (depth) return originals.fopen_fn(p,mode);
-    bool block=block_path(AM_DETECTION_FOPEN,p);
-    depth++; FILE *r; if (block) { errno=ENOENT; r=NULL; } else r=originals.fopen_fn(p,mode);
-    RECORD_PATH(AM_DETECTION_FOPEN,p,block,r!=NULL); depth--; return r;
-}
 char *AMDetectionGetenv(const char *name) {
     if (!originals.getenv_fn) return NULL;
     if (depth) return originals.getenv_fn(name);
@@ -148,3 +105,5 @@ char *AMDetectionGetenv(const char *name) {
     AMDetectionRecordOutcome(AM_DETECTION_GETENV,rule,block,__builtin_return_address(0),r ? AM_DETECTION_RESULT_SUCCESS : AM_DETECTION_RESULT_NEGATIVE);
     depth--; return r;
 }
+
+#include "AMDetectionFiles.c"

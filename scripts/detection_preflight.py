@@ -13,7 +13,7 @@ from xml.parsers.expat import ExpatError
 
 APIS = {
     b"_" + name.encode(): name
-    for name in ("access", "stat", "lstat", "open", "fopen", "getenv")
+    for name in ("access", "stat", "lstat", "open", "fopen", "getenv", "readlink", "fstatat")
 }
 MAX_IMAGE = 512 * 1024 * 1024
 MAX_TOTAL = 1024 * 1024 * 1024

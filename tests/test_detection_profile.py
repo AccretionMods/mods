@@ -11,6 +11,32 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class DetectionProfile(unittest.TestCase):
+    def test_new_file_apis_require_schema2_fingerprints_and_are_never_implicit(self):
+        p = dict(self.profile, schema_version=2, adapters=["filesystem"], apis=["readlink", "fstatat"])
+        self.assertTrue(self.module.problems(p))
+        identity = {"algorithm": "sha256-executable-sections-v1", "uuid": "a" * 32,
+                    "sha256": "b" * 64, "ranges": [{"offset": 512, "size": 64}]}
+        p["image_fingerprints"] = {name: identity for name in p["images"]}
+        self.assertEqual(self.module.problems(p), [])
+        self.assertTrue(self.module.problems(dict(p, schema_version=1)))
+        legacy = dict(self.profile, adapters=["filesystem"]);legacy.pop("apis", None)
+        header = self.module.render(legacy)
+        self.assertIn("#define AM_DETECTION_API_READLINK 0", header)
+        self.assertIn("#define AM_DETECTION_API_FSTATAT 0", header)
+
+    def test_write_probe_validation_protects_game_storage_and_requires_write_entrypoint(self):
+        identity = {"algorithm": "sha256-executable-sections-v1", "uuid": "a" * 32,
+                    "sha256": "b" * 64, "ranges": [{"offset": 512, "size": 64}]}
+        p = dict(self.profile, schema_version=2, adapters=["filesystem"], apis=["open"],
+                 write_probes=[{"path": "/private/exact-probe"}],
+                 image_fingerprints={name: identity for name in self.profile["images"]})
+        self.assertEqual(self.module.problems(p), [])
+        self.assertIn(".write_paths = am_detection_write_paths", self.module.render(p))
+        for probes in ([{"path": "/private"}], [{"path": "/var/mobile/Containers/Data/save"}],
+                       [{"path": "/private/exact-probe"}] * 2, [{"path": "/private/x", "extra": True}]):
+            self.assertTrue(self.module.problems(dict(p, write_probes=probes)))
+        self.assertTrue(self.module.problems(dict(p, apis=["stat"])))
+
     def test_schema2_modes_only_reduce_global_mode_and_observation_requires_diagnostics(self):
         p = dict(self.profile, schema_version=2, diagnostics=True,
                  module_modes={"filesystem": "observe"})

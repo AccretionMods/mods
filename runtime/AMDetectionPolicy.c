@@ -29,6 +29,7 @@ static bool path_valid(const char *s) {
     return true;
 }
 static unsigned char lower_ascii(unsigned char c) { return c>='A' && c<='Z' ? c+32 : c; }
+bool AMDetectionPathValid(const char *s) { return path_valid(s); }
 static bool equal_name(const char *a, const char *b, bool ignore_case) {
     size_t n=bounded_length(a,256), m=bounded_length(b,256);
     if (!n || n==256 || n!=m) return false;
@@ -59,6 +60,13 @@ AMDetectionRuleRef AMDetectionEnvironmentRule(const AMDetectionProfile *p, const
     if (!p) return (AMDetectionRuleRef){0};
     for (size_t i=0;p->rules.environment_names && i<p->rules.environment_count && i<64;i++)
         if (equal_name(s,p->rules.environment_names[i],false)) return (AMDetectionRuleRef){AM_DETECTION_RULE_ENVIRONMENT,(unsigned)i};
+    return (AMDetectionRuleRef){0};
+}
+AMDetectionRuleRef AMDetectionWriteRule(const AMDetectionProfile *p,const char *s) {
+    if (!p || !path_valid(s)) return (AMDetectionRuleRef){0};
+    for (size_t i=0;p->rules.write_paths && i<p->rules.write_count && i<64;i++)
+        if (path_valid(p->rules.write_paths[i]) && !strcmp(s,p->rules.write_paths[i]))
+            return (AMDetectionRuleRef){AM_DETECTION_RULE_WRITE_PATH,(unsigned)i};
     return (AMDetectionRuleRef){0};
 }
 bool AMDetectionMatchPath(const AMDetectionProfile *p,const char *s) { return AMDetectionPathRule(p,s).kind!=AM_DETECTION_RULE_NONE; }
