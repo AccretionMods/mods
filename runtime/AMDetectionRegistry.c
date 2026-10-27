@@ -125,6 +125,10 @@ bool AMDetectionPrepareModule(AMDetectionModuleID module) {
         const AMDetectionEntry *entry=&am_registry_entries[i];
         if (entry->module!=module || !AMDetectionEntrySelected(entry->id)) continue;
         any=true;
+        if (!entry->implemented) {
+            atomic_store(&am_registry_modules[module].state,AM_DETECTION_UNSUPPORTED);
+            atomic_store(&am_registry_modules[module].reason,AM_DETECTION_REASON_CONTRACT_UNIMPLEMENTED);return false;
+        }
         if (!entry->prepare || !entry->publish || !entry->prepare(entry,entry->context)) {
             atomic_store(&am_registry_modules[module].state,AM_DETECTION_UNSUPPORTED);
             atomic_store(&am_registry_modules[module].reason,AM_DETECTION_REASON_PREPARE_FAILED); return false;

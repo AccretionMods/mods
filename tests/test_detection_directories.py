@@ -48,6 +48,15 @@ class DetectionDirectories(unittest.TestCase):
     def test_relative_stream_without_descriptor_witness_is_unfiltered(self):
         self.run_case("relative")
 
+    def test_closing_busy_stream_does_not_block_unrelated_stream(self):
+        self.run_case("concurrent")
+
+    def test_symlink_parent_uses_its_explicit_configured_child_path(self):
+        self.run_case("symlink")
+
+    def test_ambiguous_parent_normalization_forwards_without_guessing(self):
+        self.run_case("normalization")
+
     @unittest.skip("Apple Foundation execution is unavailable on this POSIX host")
     def test_foundation_enumerator_contract(self):
         pass

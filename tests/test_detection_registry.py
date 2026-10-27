@@ -56,3 +56,6 @@ class DetectionRegistry(unittest.TestCase):
     def test_module_observe_reduces_filter_and_cannot_escalate_observing_parent(self):
         subprocess.run([self.exe, "reduced"], check=True)
         subprocess.run([self.exe, "escalation"], check=True)
+
+    def test_unimplemented_contract_cannot_activate_via_registered_callbacks(self):
+        subprocess.run([self.exe, "unimplemented"], check=True)

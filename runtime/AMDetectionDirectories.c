@@ -30,14 +30,21 @@ bool AMDetectionConfigureDirectories(const AMDetectionProfile *p,const AMDetecti
 static bool am_dir_filter(AMDetectionEntryID entry) {
     return am_dir_profile && am_dir_profile->mode==AM_DETECTION_FILTER && (!am_dir_ready || am_dir_ready(entry));
 }
-/* Map lock precedes slot lock. Readers release the map before original I/O. */
+/* Never wait for a slot while holding the map. Revalidate its generation after
+   acquiring it, so a concurrent close/reuse cannot supply the wrong parent. */
 static struct AMDirectorySlot *am_dir_lock_stream(DIR *handle) {
     pthread_mutex_lock(&am_dir_map_lock);
-    struct AMDirectorySlot *found=NULL;
+    struct AMDirectorySlot *found=NULL;uint64_t generation=0;
     for (unsigned i=0;i<AM_DETECTION_DIRECTORY_CAPACITY;i++) if (handle && am_dir_streams[i].handle==handle) {
-        found=&am_dir_streams[i];pthread_mutex_lock(&found->lock);break;
+        found=&am_dir_streams[i];generation=found->generation;break;
     }
-    pthread_mutex_unlock(&am_dir_map_lock);return found;
+    pthread_mutex_unlock(&am_dir_map_lock);
+    if (!found) return NULL;
+    pthread_mutex_lock(&found->lock);pthread_mutex_lock(&am_dir_map_lock);
+    bool same=found->handle==handle && found->generation==generation;
+    pthread_mutex_unlock(&am_dir_map_lock);
+    if (!same) {pthread_mutex_unlock(&found->lock);return NULL;}
+    return found;
 }
 bool AMDetectionDirectoryShouldSkip(DIR *handle,const char *child) {
     struct AMDirectorySlot *slot=am_dir_lock_stream(handle);if (!slot) return false;
@@ -59,7 +66,8 @@ DIR *AMDetectionOpendir(const char *path) {
         if (resolved) {
             pthread_mutex_lock(&am_dir_map_lock);
             for (unsigned i=0;i<AM_DETECTION_DIRECTORY_CAPACITY;i++) if (!am_dir_streams[i].handle && am_dir_streams[i].generation<UINT64_MAX) {
-                struct AMDirectorySlot *slot=&am_dir_streams[i];pthread_mutex_lock(&slot->lock);
+                struct AMDirectorySlot *slot=&am_dir_streams[i];
+                if (pthread_mutex_trylock(&slot->lock)) continue;
                 slot->generation++;memcpy(slot->parent,parent,strlen(parent)+1);slot->handle=handle;
                 pthread_mutex_unlock(&slot->lock);tracked=true;break;
             }
@@ -104,11 +112,12 @@ int AMDetectionClosedir(DIR *handle) {
     if (!am_dir_originals.closedir_fn) {errno=ENOSYS;return -1;}
     if (am_dir_depth) return am_dir_originals.closedir_fn(handle);
     am_dir_depth++;
-    pthread_mutex_lock(&am_dir_map_lock);struct AMDirectorySlot *slot=NULL;
-    for (unsigned i=0;i<AM_DETECTION_DIRECTORY_CAPACITY;i++) if (handle && am_dir_streams[i].handle==handle) {
-        slot=&am_dir_streams[i];pthread_mutex_lock(&slot->lock);slot->handle=NULL;memset(slot->parent,0,sizeof slot->parent);break;
+    struct AMDirectorySlot *slot=am_dir_lock_stream(handle);
+    if (slot) {
+        pthread_mutex_lock(&am_dir_map_lock);
+        slot->handle=NULL;memset(slot->parent,0,sizeof slot->parent);
+        pthread_mutex_unlock(&am_dir_map_lock);
     }
-    pthread_mutex_unlock(&am_dir_map_lock);
     int value=am_dir_originals.closedir_fn(handle),saved=errno;
     if (slot) pthread_mutex_unlock(&slot->lock);
     AMDetectionRecordEntryPostOutcome(AM_DETECTION_ENTRY_CLOSEDIR,(AMDetectionRuleRef){0},false,__builtin_return_address(0),

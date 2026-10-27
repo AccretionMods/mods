@@ -1,6 +1,6 @@
 # Runtime adapter expansion checkpoint
 
-Date: 2026-10-27. Execution paused at a checkpoint to conserve the owner's remaining usage.
+Date: 2026-10-27. Checkpoint retained to conserve the owner's remaining usage.
 The expansion is not complete or ready for publication.
 
 Branch: `codex/runtime-adapter-expansion-design`.
@@ -15,11 +15,11 @@ Base: `d9878b4`; draft PR #85 remains separate and unchanged.
 | `2959669` | Schema 2, reducing module modes and signing-independent caller fingerprints |
 | `864f03f` | File/readlink/fstatat contracts and exact write-opening probes |
 
-The subsequent directory checkpoint adds a bounded 256-stream map, per-stream locking,
+The subsequent directory checkpoints add a bounded 256-stream map, per-stream locking,
 handle retirement/reuse, original-result reporting after filtering and explicit coverage gaps.
 It is a partial implementation of Task 5, not its completion marker.
 
-Checkpoint verification: 276 tests ran without failures, with two skips. The native
+Latest verification: 280 tests ran without failures, with two skips. The native
 directory cases passed ASan/UBSan. Quiet-default and expanded arm64 builds succeeded.
 Apple Foundation execution and device behavior were not verified by these builds.
 
@@ -36,8 +36,13 @@ no account was touched, and no branch or IPA was published during these changes.
   `AM_DETECTION_APPLE_DIRECTORY_CONTRACTS_VERIFIED=0`. Do not change this without actual
   Apple contract execution. Enumeration entries explicitly report `implemented=false`;
   their concrete contract is unsupported rather than replaced by a guessed proxy.
-- Complete Task 5's symlink-parent/normalization and concurrent-lifetime cases and provide
-  a runnable Apple fixture. The current skipped Foundation test is an availability marker,
+- Native symlink-parent, ambiguous normalization, cross-thread reuse and a blocked-read /
+  concurrent-close case are covered. The concurrency regression found and fixed a close
+  waiting on a stream while holding the global map lock; unrelated streams now proceed.
+  Slot generations are revalidated after acquiring their locks, and open never waits on
+  a slot while holding the map. Unimplemented contracts also fail registry preparation
+  without executing installers, even when callbacks have been registered.
+- Provide a runnable Apple fixture to finish Task 5. The current skipped Foundation test is an availability marker,
   not an executed fixture or evidence of compatibility.
 - Directory entry counters count wrapper calls. Attribution rows count rule observations,
   which may exceed calls; the registry/report labels this unit. Filtered entries retain
