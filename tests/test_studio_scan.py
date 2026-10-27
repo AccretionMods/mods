@@ -140,12 +140,23 @@ class Filters(unittest.TestCase):
         }
         paths = scan_view.object_paths(classes)
         self.assertEqual(paths["Core.GameplayData"]["object"], "Core.Wave.Data")
-        self.assertEqual(paths["Core.Save"]["via"], "get_Save")
+        self.assertEqual(paths["Core.Save"]["path"], [{"getter": "get_Save", "class": "Core.Save"}])
         self.assertEqual(paths["Core.Save"]["target_class"], "Core.Save")
         inherited = scan_view.object_paths(
             {"Core.Base": {"base": "MonoBehaviour"}, "Core.Child": {"base": "Base"}}
         )
         self.assertEqual(inherited["Core.Child"]["object"], "Core.Child[]")
+
+    def test_nested_battle_paths_are_available_to_alternatives(self):
+        paths = scan_view.object_paths({
+            "HotFix:Game": {"references": {"world": "World"}},
+            "HotFix:World": {"object_fields": {"logic": "Logic"}},
+            "HotFixBattle:Logic": {"object_fields": {"heroes": "List<Hero>"}},
+            "HotFixBattle:Hero": {},
+        })
+        self.assertEqual(paths["HotFixBattle:Hero"]["root_class"], "HotFix:World")
+        self.assertEqual(paths["HotFixBattle:Hero"]["path"][-1],
+                         {"field": "heroes", "each": "list", "class": "HotFixBattle:Hero"})
 
     def test_groups_property_variants_without_losing_overloads(self):
         rows = [

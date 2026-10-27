@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 import zipfile
+from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
@@ -128,6 +129,47 @@ class Helper(unittest.TestCase):
                 appstore.get_license(7)
         self.assertEqual(sent[0]["account"]["passwordToken"], "tok")
         self.assertNotIn("password", sent[0])
+
+    def test_keep_puts_the_copy_apart_and_remembers_it(self):
+        (appstore.state_dir() / "appstore.json").write_text(json.dumps(
+            {"email": "a@example.com", "dsid": "42", "token_protected": "dG9r"}), encoding="utf-8")
+        with self.assertRaisesRegex(appstore.AppStoreError, "off"):
+            appstore.keep(7, "com.example.game")  # the choice starts at "don't keep"
+        with self.assertRaisesRegex(appstore.AppStoreError, "isn't built"):
+            appstore.keep(7, "com.example.game", where="servers")
+
+        def run(cmd, input=None, **kwargs):
+            req = json.loads(input)
+            out = Path(req["output"]) / "Game_7_1.2.ipa"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(b"PK ipa")
+            return mock.Mock(stdout=json.dumps({"path": str(out), "version": "1.2", "bundle": "com.example.game"}) + "\n",
+                             stderr="", returncode=0)
+        appstore.set_keep_choice("pc")
+        with mock.patch.object(appstore.subprocess, "run", side_effect=run):
+            row = appstore.keep(7, "com.example.game")
+        self.assertEqual((row["file"], row["version"], row["size"]), ("com.example.game-1.2.ipa", "1.2", 6))
+        self.assertTrue((appstore.kept_dir() / row["file"]).is_file())
+        self.assertNotIn("intake", str(appstore.kept_dir()))
+        self.assertEqual([r["file"] for r in appstore.kept()], ["com.example.game-1.2.ipa"])
+        appstore.forget("com.example.game-1.2.ipa")
+        self.assertEqual(appstore.kept(), [])
+        with self.assertRaises(appstore.AppStoreError):
+            appstore.forget("../appstore.json")
+
+    def test_regions_sorts_sold_missing_and_unknown(self):
+        answers = {"us": {"name": "Game", "price": 0}, "jp": {}, "fr": None}
+
+        def lookup(bundle, country):
+            return country, answers.get(country, {})
+        with mock.patch.object(appstore, "STOREFRONTS", ["us", "jp", "fr"]), \
+                mock.patch.object(appstore, "_region_lookup", side_effect=lookup):
+            r = appstore.regions("com.example.game", refresh=True)
+        self.assertEqual((list(r["sold"]), r["missing"], r["unknown"]), (["us"], ["jp"], ["fr"]))
+        with mock.patch.object(appstore, "_region_lookup", side_effect=AssertionError("cached")):
+            self.assertEqual(appstore.regions("com.example.game")["missing"], ["jp"])
+        with self.assertRaises(appstore.AppStoreError):
+            appstore.regions("../x")
 
 
 if __name__ == "__main__":

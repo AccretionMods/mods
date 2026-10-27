@@ -9,6 +9,8 @@ phone, switches confirmed), "Build and run on the phone" in the header, an "On t
 Watch / Push / Screenshot) and the jobs list as a bottom dock (3 newest as chips, open state in `studio.jobs.open`).
 `/api/mods/<mod>/live` gained `runtime` ("attached" / "not found" / null). Checked in the browser at 1440 px (dark,
 light), 800 px and 375 px. Design canvas with the next steps (guided phone test, one-switch editor): handbook HANDOFF.
+Auto-build includes all topics in its candidate selection, model prompt and confirmation dialog.
+Existing targets and inspect-only entries remain excluded; automatic additions still require a valid no-JIT pin.
 Custom always-on features can be recorded in local `AM_ROOT/dev/<mod>.json` under `verified_features`.
 Studio shows their evidence separately from switches and marks results stale if either game or mod
 version changes. Local `patterns.json` may contain `workflows`: topic words, a proven-on scope and
@@ -67,6 +69,16 @@ chose a local web app in this repo over a desktop app, a Claude panel or an iOS 
   newest from the decrypt site". Checked in the page against the live site (paused, captcha shown); no real download yet.
 
 ## State (2026-10-23)
+- Local nested pin paths: scanner follows reference fields/getters, arrays/lists/dictionary values and typed
+  casts across assemblies. Add and Auto-build preserve `root_class`/`path`; CLI validates metadata before
+  writing, compiled/live pins share the bounded resolver. Survivor: Ace 1.2.0 exposes HotFixBattle candidates
+  through BattleGame._world -> CurLogicWorld -> entity manager/context. Players use _playerSlot; bullets use
+  _entityDic values with a concrete type filter. Scratch work lists are excluded from automatic routes.
+  An isolated arm64 tweak with three battle paths compiled. No personal mod or phone install changed;
+  runtime object access and gameplay effects still need a phone test. Rebuild before pushing nested pins.
+  Final scan: 3,103 HotFixBattle candidates (5,300 total). Validation: 229 tests passed, 11 skipped;
+  JavaScript parses, Survivor Ace+ and tweak-library validators pass. Full mod validation still reports
+  the existing Minecraft add-on folder as incompatible with the tweak-only schema. Changes are uncommitted.
 - Branch codex/studio-feature-scope (pushed, main merged in). Added this session, all checked in a test copy of Studio
   (AM_ROOT C:\AccretionMods-storetest, port 8779, launch config `mod-studio-storetest`) and against the live store:
   - Store tab (`store_view.py`): store numbers, admin link (linked as b•••@me.com: token in AM_ROOT/studio/admin.json),

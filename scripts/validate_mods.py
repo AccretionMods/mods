@@ -148,7 +148,7 @@ def hooks_problems(path):
 
 WORKFLOWS = ("build.yml", "publish.yml")
 # the "options: [a, b]" line of the "mod:" input in a workflow file
-MOD_OPTIONS = re.compile(r"^      mod:\n(?:        [^\n]*\n)*?        options: \[([^\]]*)\]", re.M)
+MOD_OPTIONS = re.compile(r"^      mod:\n(?:        [^\n]*\n)*?        options: \[([^\]]*)\]", re.MULTILINE)
 
 
 def workflow_mod_options(name):

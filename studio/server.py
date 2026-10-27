@@ -554,6 +554,10 @@ def gemini_key():
     return key
 
 
+# free-tier quotas are per model (about 20 requests a day each): Auto-build moves to the next one when one runs out
+GEMINI_FALLBACKS = ("gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.7-flash", "gemini-3.8-flash", "gemini-flash-latest")
+
+
 def claude_api_command(prompt, account="", effort=""):
     """studio/claude_api.py: Claude through the Anthropic API with one of the saved accounts (the first when
     none is named). Answers only, like aider in ask mode. The prompt goes in a one-off file (no length limit)."""
@@ -574,12 +578,12 @@ def claude_api_command(prompt, account="", effort=""):
             "--prompt-file", path, *(["--effort", effort] if effort else [])]
 
 
-def gemini_command(prompt, mod=None, effort=""):
+def gemini_command(prompt, mod=None, effort="", model=None):
     """aider with Gemini instead of the model in ~/.aider.conf.yml; the key goes through the environment."""
     if not gemini_key():
         raise dev.DevError("no GEMINI_API_KEY on this PC (a free key from aistudio.google.com, saved as a user "
                            "environment variable)")
-    return aider_command(prompt, mod, effort, model="gemini/" + GEMINI_MODEL)
+    return aider_command(prompt, mod, effort, model="gemini/" + (model or GEMINI_MODEL))
 
 
 def aider_command(prompt, mod=None, effort="", model=None):
@@ -669,6 +673,25 @@ def start_autobuild(mod, engine, limit, effort="", account=""):
                                                    *(["--account", account] if account and engine == "claude-api" else []),
                                                    "--limit", str(max(0, int(limit))),  # 0: every usable switch
                                                    *(["--effort", effort] if effort else [])])
+        JOBS[job.id] = job
+    job.persist()
+    threading.Thread(target=job.run, daemon=True).start()
+    return job
+
+
+def start_appstore_keep(app_id, bundle, version_id="", license_ok=False):
+    """scripts/appstore.py keep as a job: the whole App Store .ipa (newest or one version) kept where the Keep the
+    .ipa choice says. license_ok only after the owner said yes for this free game."""
+    if not re.fullmatch(r"\d{5,12}", str(app_id or "")) or (version_id and not re.fullmatch(r"\d{1,15}", version_id)):
+        raise dev.DevError("keep: the game's App Store id (and a version id from its list)")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.\-]{1,150}", bundle or ""):
+        raise dev.DevError("keep: the game's bundle id")
+    with SESSION_LOCK:
+        if RESTARTING.is_set():
+            raise dev.DevError("Studio is restarting; reconnect before starting jobs")
+        job = Job("appstore-keep", [bundle], cmd=[sys.executable, str(ROOT / "scripts" / "appstore.py"), "keep",
+                                                  str(app_id), bundle, *([version_id] if version_id else []),
+                                                  *(["--license"] if license_ok else [])])
         JOBS[job.id] = job
     job.persist()
     threading.Thread(target=job.run, daemon=True).start()
@@ -1155,6 +1178,8 @@ def quick(name, command, body):
             "when": "always",
             "threshold": None,
             "via": None,
+            "path": None,
+            "root_class": None,
             "cls": None,
             "multiply": False,
             "field": False,
@@ -1375,6 +1400,18 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(store_get(parts[2:]))
         if parts[1:] == ["fetch", "account"]:
             return self.send_json(fetch_client().account())
+        if parts[1:] == ["appstore", "account"]:
+            return self.send_json(dev.appstore.account())
+        # Keep the .ipa: the default choice, the kept copies, and where a game is sold (public lookup, no account)
+        if parts[1:] == ["appstore", "prefs"]:
+            return self.send_json({"keep": dev.appstore.keep_choice()})
+        if parts[1:] == ["appstore", "kept"]:
+            return self.send_json({"kept": dev.appstore.kept(), "folder": str(dev.appstore.kept_dir())})
+        if parts[1:] == ["appstore", "regions"]:
+            try:
+                return self.send_json(dev.appstore.regions(q.get("bundle", ""), q.get("refresh") == "1"))
+            except dev.appstore.AppStoreError as e:
+                raise dev.DevError(str(e)) from e
         if parts[1:] == ["fetch", "search"]:
             rows = fetch_client().search(
                 q.get("q", "").strip(),
@@ -1619,6 +1656,41 @@ class Handler(BaseHTTPRequestHandler):
             self.local_only()
             fetch_client().logout()
             return self.send_json({"ok": True})
+        # App Store sign-in for the Games tab's engine check: the password and code go to Apple, never saved
+        if parts == ["api", "appstore", "login"]:
+            self.local_only()
+            try:
+                return self.send_json(dev.appstore.login(str(body.get("email", "")), str(body.get("password", "")),
+                                                         str(body.get("code", "")).strip()))
+            except dev.appstore.AppStoreError as e:
+                raise dev.DevError(str(e)) from e
+        if parts == ["api", "appstore", "logout"]:
+            self.local_only()
+            dev.appstore.logout()
+            return self.send_json({"ok": True})
+        if parts[:2] == ["api", "appstore"] and parts[2:] in (["prefs"], ["versions"], ["version"], ["keep"], ["forget"]):
+            self.local_only()
+            what = parts[2]
+            try:
+                if what == "prefs":
+                    return self.send_json({"keep": dev.appstore.set_keep_choice(str(body.get("keep", "")))})
+                if what == "versions":
+                    return self.send_json(dev.appstore.versions(str(body.get("id", ""))))
+                if what == "version":
+                    return self.send_json(dev.appstore.version_info(str(body.get("id", "")), str(body.get("version_id", ""))))
+                if what == "forget":
+                    return self.send_json(dev.appstore.forget(str(body.get("file", ""))))
+                job = start_appstore_keep(str(body.get("id", "")), str(body.get("bundle", "")),
+                                          str(body.get("version_id", "") or ""), body.get("license") is True)
+                return self.send_json(job.view(0))
+            except dev.appstore.NeedsLicense:
+                return self.send_json({"needs_license": True})
+            except dev.appstore.AppStoreError as e:
+                raise dev.DevError(str(e)) from e
+        if parts == ["api", "games", "engine"]:  # license: true only after the owner said yes for this game
+            self.local_only()
+            return self.send_json(dev.games_engine(str(body.get("id", "")), str(body.get("bundle", "")),
+                                                   body.get("license") is True))
         if len(parts) == 4 and parts[:2] == ["api", "jobs"] and parts[3] == "stop":
             self.local_only()
             job = JOBS.get(parts[2])

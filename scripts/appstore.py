@@ -28,6 +28,7 @@ import struct
 import subprocess
 import sys
 import time
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -137,11 +138,29 @@ def install_helper(run_id=None):
         shutil.rmtree(tmp, ignore_errors=True)
         raise AppStoreError("the downloaded helper doesn't match its sha256: not installed")
     shutil.rmtree(folder, ignore_errors=True)
-    tmp.rename(folder)
+    if folder.exists():
+        # Windows can keep a helper .exe that ran a moment ago unremovable (still mapped, or being scanned); it
+        # can still be renamed, so the old one steps aside and the new files go in next to it
+        for old in folder.glob("appstore-helper*.exe"):
+            if old.name != "appstore-helper.exe":
+                continue
+            old.rename(old.with_name(f"appstore-helper.old-{int(time.time())}.exe"))
+        for item in tmp.iterdir():
+            os.replace(item, folder / item.name)
+        shutil.rmtree(tmp, ignore_errors=True)
+        for stale in folder.glob("appstore-helper.old-*.exe"):
+            try:
+                stale.unlink()  # gone once Windows lets go of it; a later install tries again
+            except OSError:
+                pass
+    else:
+        tmp.rename(folder)
+    if hashlib.sha256(helper_path().read_bytes()).hexdigest() != want:
+        raise AppStoreError("the installed helper doesn't match the downloaded one")
     return {"path": str(helper_path()), "run": str(run_id), "sha256": want}
 
 
-def _helper(request):
+def _helper(request, timeout=300):
     """One request to the helper (JSON on stdin, so the password is never on a command line); its JSON answer."""
     exe = helper_path()
     if not exe.is_file():
@@ -150,10 +169,10 @@ def _helper(request):
     request = {**request, "cookies": str(state_dir() / "appstore-helper.cookies"),
                "kbsync": str(state_dir() / "appstore-helper.kbsync")}
     try:
-        r = subprocess.run([str(exe)], input=json.dumps(request), capture_output=True, text=True, timeout=300,
+        r = subprocess.run([str(exe)], input=json.dumps(request), capture_output=True, text=True, timeout=timeout,
                            check=False)
     except subprocess.TimeoutExpired as e:
-        raise AppStoreError("the App Store didn't answer within 5 minutes") from e
+        raise AppStoreError(f"the App Store didn't answer within {timeout // 60} minutes") from e
     try:
         answer = json.loads(r.stdout.strip().splitlines()[-1])
     except (ValueError, IndexError) as e:
@@ -311,9 +330,218 @@ def check(app_id, bundle, license_ok=False):
     return verdict
 
 
+# ------------------------------------------------------------------ keeping the .ipa (Studio's Keep the .ipa choice)
+# An App Store .ipa stays encrypted to the Apple ID that got it: a backup or an older version for that account's
+# phones, never a mod base (the mod tools need cryptid 0), so kept copies live in AM_ROOT/appstore/, apart from intake.
+
+KEEP_CHOICES = ("none", "pc", "servers")
+
+
+def _prefs_path():
+    return state_dir() / "appstore-prefs.json"
+
+
+def keep_choice():
+    """Where a kept .ipa goes by default: none (only check the engine), pc, or servers."""
+    try:
+        choice = json.loads(_prefs_path().read_text(encoding="utf-8")).get("keep", "none")
+    except (OSError, ValueError):
+        choice = "none"
+    return choice if choice in KEEP_CHOICES else "none"
+
+
+def set_keep_choice(choice):
+    if choice not in KEEP_CHOICES:
+        raise AppStoreError(f"keep: one of {', '.join(KEEP_CHOICES)}")
+    _prefs_path().write_text(json.dumps({"keep": choice}), encoding="utf-8")
+    return choice
+
+
+def kept_dir():
+    path = state_dir().parent / "appstore"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _kept_index():
+    return kept_dir() / "kept.json"
+
+
+def kept():
+    """Kept copies, newest first: {file, bundle, version, version_id, size, sha256, where, kept}."""
+    try:
+        rows = json.loads(_kept_index().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        rows = []
+    return [r for r in rows if (kept_dir() / r.get("file", "")).is_file() or r.get("where") == "servers"]
+
+
+def _save_kept(rows):
+    tmp = _kept_index().with_suffix(".tmp")
+    tmp.write_text(json.dumps(rows, indent=1), encoding="utf-8")
+    os.replace(tmp, _kept_index())
+
+
+def versions(app_id):
+    """The store's version ids for an app the account has (oldest first) and the newest one."""
+    answer = _helper({"cmd": "versions", "account": _account(_signed()), "app_id": int(app_id)})
+    if answer.get("needs_license"):
+        raise NeedsLicense("this Apple ID doesn't have this game yet")
+    if answer.get("expired"):
+        raise AppStoreError("the App Store sign-in expired: sign in again")
+    return {"ids": [str(i) for i in answer.get("ids") or []], "latest": str(answer.get("latest") or "")}
+
+
+def version_info(app_id, version_id):
+    """The version number and release date behind one version id."""
+    if not re.fullmatch(r"\d{1,15}", str(version_id or "")):
+        raise AppStoreError("version: a version id from versions()")
+    answer = _helper({"cmd": "version_info", "account": _account(_signed()), "app_id": int(app_id),
+                      "version_id": str(version_id)})
+    if answer.get("expired"):
+        raise AppStoreError("the App Store sign-in expired: sign in again")
+    return {"id": str(version_id), "version": answer.get("version", ""), "released": answer.get("released", "")}
+
+
+def keep(app_id, bundle="", version_id="", where=None):
+    """Downloads the whole .ipa (newest, or version_id) and keeps it where the choice says. NeedsLicense when the
+    account lacks the game (Studio asks before any free license). "servers" is not built yet."""
+    where = where or keep_choice()
+    if where == "none":
+        raise AppStoreError("Keep the .ipa is off: choose This PC (or Our servers) first")
+    if where == "servers":
+        raise AppStoreError("Our servers: the private upload for kept copies isn't built yet; keep it on This PC")
+    if version_id and not re.fullmatch(r"\d{1,15}", str(version_id)):
+        raise AppStoreError("version: a version id from versions()")
+    tmp = kept_dir() / ".downloading"
+    shutil.rmtree(tmp, ignore_errors=True)
+    answer = _helper({"cmd": "download", "account": _account(_signed()), "app_id": int(app_id),
+                      "version_id": str(version_id or ""), "output": str(tmp)}, timeout=3600)
+    if answer.get("needs_license"):
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise NeedsLicense("this Apple ID doesn't have this game yet")
+    if answer.get("expired"):
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise AppStoreError("the App Store sign-in expired: sign in again")
+    got = Path(answer.get("path") or "")
+    if not got.is_file():
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise AppStoreError("the download left no .ipa")
+    bundle = bundle or answer.get("bundle") or "app"
+    version = answer.get("version") or "unknown"
+    if version_id:
+        version = version_info(app_id, version_id).get("version") or version
+    name = re.sub(r"[^\w.-]", "_", f"{bundle}-{version}" + (f"-{version_id}" if version_id else "")) + ".ipa"
+    final = kept_dir() / name
+    os.replace(got, final)
+    shutil.rmtree(tmp, ignore_errors=True)
+    digest = hashlib.sha256()
+    with final.open("rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            digest.update(block)
+    row = {"file": name, "bundle": bundle, "version": version, "version_id": str(version_id or ""),
+           "app_id": int(app_id), "size": final.stat().st_size, "sha256": digest.hexdigest(), "where": "pc",
+           "kept": time.strftime("%Y-%m-%d %H:%M")}
+    _save_kept([row] + [r for r in kept() if r.get("file") != name])
+    return row
+
+
+def forget(name):
+    """Deletes one kept copy from this PC (Studio asks first)."""
+    rows = kept()
+    row = next((r for r in rows if r.get("file") == name), None)
+    if not row or "/" in name or "\\" in name:
+        raise AppStoreError("no kept copy by that name")
+    path = kept_dir() / name
+    if path.is_file():
+        path.unlink()
+    _save_kept([r for r in rows if r.get("file") != name])
+    return {"forgot": name}
+
+
+# ------------------------------------------------------------------ regions: where an app is sold (public, no account)
+
+# The App Store's storefront countries (ISO codes Apple's lookup takes); one a lookup refuses counts as "no answer".
+STOREFRONTS = (  # noqa: SIM905 - one readable block of codes
+    "ae ag ai al am ao ar at au az bb be bf bg bh bj bm bn bo br bs bt bw by bz ca cg ch cl cn co cr cv cy cz de dk "
+    "dm do dz ec ee eg es fi fj fm fr gb gd gh gm gr gt gw gy hk hn hr hu id ie il in is it jm jo jp ke kg kh kn kr "
+    "kw ky kz la lb lc lk lr lt lu lv md mg mk ml mn mo mr ms mt mu mw mx my mz na ne ng ni nl no np nz om pa pe pg "
+    "ph pk pl pt pw py qa ro ru sa sb sc se sg si sk sl sn sr st sv sz tc td th tj tm tn tr tt tw tz ua ug us uy uz "
+    "vc ve vg vn ye za zw"
+).split()
+REGIONS_TTL = 24 * 3600
+
+
+def _region_lookup(bundle, country):
+    q = urllib.parse.urlencode({"bundleId": bundle, "country": country, "entity": "software"})
+    req = urllib.request.Request(f"https://itunes.apple.com/lookup?{q}", headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            found = [x for x in json.loads(r.read()).get("results", []) if x.get("kind") == "software"]
+    except (OSError, ValueError):
+        return country, None
+    if not found:
+        return country, {}
+    x = found[0]
+    return country, {"name": x.get("trackName", ""), "version": x.get("version", ""), "price": x.get("price", 0),
+                     "currency": x.get("currency", ""), "id": x.get("trackId"), "url": x.get("trackViewUrl", "")}
+
+
+def regions(bundle, refresh=False):
+    """Where an app is on the App Store, from Apple's public lookup in every storefront (cached a day):
+    {bundle, checked, sold: {country: {name, version, price, currency, id, url}}, missing: [...], unknown: [...]}."""
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.\-]{1,150}", bundle or ""):
+        raise AppStoreError("regions: an app's bundle id")
+    cache = state_dir() / "regions" / f"{bundle}.json"
+    if not refresh:
+        try:
+            data = json.loads(cache.read_text(encoding="utf-8"))
+            if time.time() - data.get("at", 0) < REGIONS_TTL:
+                return data
+        except (OSError, ValueError):
+            pass
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        answers = dict(pool.map(lambda c: _region_lookup(bundle, c), STOREFRONTS))
+    data = {"bundle": bundle, "at": time.time(), "checked": time.strftime("%Y-%m-%d %H:%M"),
+            "sold": {c: a for c, a in sorted(answers.items()) if a},
+            "missing": sorted(c for c, a in answers.items() if a == {}),
+            "unknown": sorted(c for c, a in answers.items() if a is None)}
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_text(json.dumps(data), encoding="utf-8")
+    return data
+
+
+def _keep_main(argv):
+    """appstore.py keep <app id> <bundle> [version id] [--license]: Studio's Keep job (prints its steps)."""
+    license_ok = "--license" in argv
+    args = [a for a in argv if a != "--license"]
+    if len(args) < 2:
+        sys.exit("usage: appstore.py keep <app id> <bundle> [version id] [--license]")
+    app_id, bundle, version_id = args[0], args[1], (args[2] if len(args) > 2 else "")
+    print(f"==> {bundle}: downloading the App Store copy" + (f" (version id {version_id})" if version_id else " (newest)"),
+          flush=True)
+    try:
+        try:
+            row = keep(app_id, bundle, version_id)
+        except NeedsLicense:
+            if not license_ok:
+                sys.exit("this Apple ID doesn't have the game: Studio asks before getting a free license")
+            print("==> getting the free license first", flush=True)
+            get_license(app_id)
+            row = keep(app_id, bundle, version_id)
+    except AppStoreError as e:
+        sys.exit(f"error: {e}")
+    print(f"==> kept {row['file']}: version {row['version']}, {row['size'] / 1e6:.1f} MB, sha256 {row['sha256'][:16]}...")
+    print("    encrypted to this Apple ID: installs as is on its phones, not a mod base")
+
+
 if __name__ == "__main__":
     # python scripts/appstore.py install-helper [run id]: the helper .exe from GitHub Actions
     if sys.argv[1:2] == ["install-helper"]:
         print(json.dumps(install_helper(sys.argv[2] if len(sys.argv) > 2 else None), indent=1))
+    elif sys.argv[1:2] == ["keep"]:
+        _keep_main(sys.argv[2:])
     else:
-        sys.exit("usage: appstore.py install-helper [run id]")
+        sys.exit("usage: appstore.py install-helper [run id] | keep <app id> <bundle> [version id] [--license]")

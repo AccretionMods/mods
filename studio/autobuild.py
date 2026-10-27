@@ -3,8 +3,7 @@
   python studio/autobuild.py <mod> [--engine claude|codex|aider|gemini] [--effort low|medium|high] [--limit N]
                                    [--workers N] [--no-install]
 
-1. the scan's best no-JIT candidates not yet in the mod, without the topic-labelled ones (what the game sells,
-   ads, accounts, online play) and without inspect-only rows;
+1. the scan's best no-JIT pin candidates not yet in the mod, across all topics, without inspect-only rows;
 2. the model goes through every candidate, BATCH rows at a time, several batches at once (WORKERS per engine), and
    answers with one JSON line per row worth a switch: the row's number, a value, when, a title (read only: it
    changes nothing). A batch that fails or answers nothing is asked once more. No top N unless --limit caps it;
@@ -44,11 +43,6 @@ import server  # noqa: E402  (the model command lines and the Claude stream pars
 
 PIN = re.compile(r"^am pin (\S+) (.+)$")  # older answers: whole commands, still taken
 OBJECT = re.compile(r"\{[^{}]*\}")  # one flat JSON object; models wrap them in fences, lists or prose
-# networked code: a switch there could reach other players (no online cheats). FistFightingController is
-# NuclearDay's online fight club (its offline twin, FistFighting_offline_Controller, stays a candidate).
-ONLINE = re.compile(r"network|photon|mirror|online|multiplayer|pvp|lobby|matchmak|server|netcode|\brpc\b|fightclub"
-                    r"|^fistfightingcontroller\b",
-                    re.IGNORECASE)
 # batches asked at once: the paid plans take more; the free tiers allow about 20 requests a minute (OpenRouter)
 # or a day per model (Gemini), so they get two
 WORKERS = {"claude": 3, "claude-api": 3, "codex": 3, "aider": 2, "gemini": 2}
@@ -66,14 +60,15 @@ def say(text):
 
 
 BATCH = 50  # candidate rows per question: the whole scan in one prompt is too long for a model to read well
+# Gemini reads long prompts well and its free tier counts questions, not length: fewer, bigger questions
+BATCHES = {"gemini": 150}
 
 
 def candidates(mod):
-    """Every scan candidate a pin can reach, best first, without what the mod has, topic labels, inspect-only
-    rows and networked classes."""
+    """Every scan candidate a pin can reach, best first, excluding existing and inspect-only targets."""
     _, rows = dev.scan_rows(mod)
-    return [r for r in rows if not r.get("has") and not r.get("flag") and not r.get("inspect_only")
-            and r.get("area") != "In-app purchases" and not ONLINE.search(f"{r['class']} {r['object']}")]
+    # a family's other members ride on its representative (dump_scan._families): asked about once
+    return [r for r in rows if not r.get("has") and not r.get("inspect_only") and not r.get("family_member")]
 
 
 def fingerprint(row):
@@ -122,7 +117,8 @@ def table(rows):
         lr = r.get("learned")
         seen = f"like \"{lr['title']}\": {lr['works']} works, {lr['fails']} fails" if lr else ""
         typ = "FP (fixed point: write the plain number)" if r.get("scale") else r.get("ctype", "")
-        lines.append(f"{n} | {r['area']} | {r['object']} | {r['member']} | {typ} | {r.get('kind', '')} | "
+        fam = f" (and {r['family_size'] - 1} sibling classes)" if r.get("family_size") else ""
+        lines.append(f"{n} | {r['area']} | {r['object']} | {r['class']}.{r['member']}{fam} | {typ} | {r.get('kind', '')} | "
                      f"{r.get('value', '')} {r.get('when', '')} | {seen}")
     return "\n".join(lines)
 
@@ -139,22 +135,27 @@ def prompt_for(mod, meta, rows):
         '{"row": <number from the # column>, "value": <number, or true/false for bool>, '
         '"when": "always"|"lower"|"higher", "title": "<short menu title>"}\n'
         "A value that helps the player (a cap, a zero cost, a full stat); \"lower\" for stats that should stay at "
-        "least that high. Skip anything about purchases, store currency, ads, accounts or online play, and skip "
-        "rows that only look like UI or camera settings. No explanations, no commands."
+        "least that high. For a value the game spends or lowers during play (current health, shield, ammo, energy "
+        "left) answer \"value\": \"peak\" with \"when\": \"lower\": it holds the highest value seen, so health stays "
+        "full whatever the game's maximum is. Use the stat's own scale, never 99 by habit: a multiplier 2, a "
+        "cooldown, delay or cost 0 with \"higher\", a chance 1. Rows reached through the fight's objects (a path "
+        "through the battle world) are the ones that change a fight. Topic labels are informational: purchases, store currency, ads, accounts and online "
+        "play are in scope. Skip a row only when it lacks a useful effect or a technically supported pin path; "
+        "names alone do not prove behaviour. No explanations, no commands."
     )
 
 
 ACCOUNT = [""]  # claude-api: the account this run uses (--account)
 
 
-def ask(engine, prompt, effort=""):
+def ask(engine, prompt, effort="", model=None):
     """The model's whole answer as lines, and whether the run went well (nothing printed: batches run at once)."""
     if engine == "aider":
         cmd, parse = server.aider_command(prompt, None, effort), None
     elif engine == "claude-api":
         cmd, parse = server.claude_api_command(prompt, ACCOUNT[0], effort), None
     elif engine == "gemini":
-        cmd, parse = server.gemini_command(prompt, None, effort), None
+        cmd, parse = server.gemini_command(prompt, None, effort, model), None
     elif engine == "codex":
         cmd, parse = server.codex_command(prompt, True, effort, answer_only=True), None
     else:
@@ -177,7 +178,14 @@ def picks(mod, rows, answer):
         m = PIN.match(text)
         if m and m.group(1) == mod:
             try:
-                found.append(("cmd", shlex.split(text)))
+                argv = shlex.split(text)
+                row = next((r for r in rows if f"{r['class']}.{r['member']}" == argv[3]), None)
+                if row and "path" in row:
+                    if "--via" in argv:
+                        skipped.append("nested path answer cannot also use --via")
+                        continue
+                    argv += ["--object", row["object"], "--root-class", row["root_class"], "--path", json.dumps(row["path"])]
+                found.append(("cmd", argv))
             except ValueError:
                 skipped.append(f"bad quoting: {text[:120]}")
             continue
@@ -247,6 +255,8 @@ def pin_argv(mod, row, item, taken):
             "--when", when, "--as", key_for(title, row["member"], taken), "--title", title]
     if row["kind"] == "field" and row["member"].startswith("set_"):
         argv.append("--field")
+    if "path" in row:
+        argv += ["--root-class", row["root_class"], "--path", json.dumps(row["path"])]
     return argv, None
 
 
@@ -268,24 +278,44 @@ def pin_here(argv):
         dev.cmd_gen = real_gen
 
 
+GEMINI = {"at": 0}  # which of server.GEMINI_FALLBACKS answers now; a model out of free quota moves it on
+
+
 def ask_batch(engine, effort, mod, meta, batch):
-    """One batch, asked once more when the run fails or nothing usable comes back (after a pause on a rate limit)."""
+    """One batch, asked once more when the run fails or nothing usable comes back (after a pause on a rate limit).
+    Gemini: a model out of its free daily quota hands over to the next free model, as often as there are models."""
     prompt = prompt_for(mod, meta, batch)
     tries = []
-    for attempt in (1, 2):
+    attempts = 2 + (len(server.GEMINI_FALLBACKS) if engine == "gemini" else 0)
+    for attempt in range(1, attempts + 1):
+        model = None
+        if engine == "gemini":
+            with OUT:
+                at = GEMINI["at"]
+            if at >= len(server.GEMINI_FALLBACKS):
+                return [f"every free Gemini model is out of today's quota ({', '.join(server.GEMINI_FALLBACKS)})"], [], [], attempt
+            model = server.GEMINI_FALLBACKS[at]
         try:
-            answer, ok = ask(engine, prompt, effort)
+            answer, ok = ask(engine, prompt, effort, model)
         except (OSError, dev.DevError) as error:
             answer, ok = [f"could not start the model: {error}"], False
         found, skipped = picks(mod, batch, answer)
         tries.append(answer)
-        if any(OUT_OF_ALLOWANCE.search(a) for a in answer):
+        limited = any(RATE_LIMITED.search(a) for a in answer)
+        if engine != "gemini" and any(OUT_OF_ALLOWANCE.search(a) for a in answer):
             return answer, [], ["out of allowance"], attempt
-        if ok and (found or not any(RATE_LIMITED.search(a) for a in answer)):
+        if ok and (found or not limited):
             return answer, found, skipped, attempt
-        if attempt == 1:
-            time.sleep(30 if any(RATE_LIMITED.search(a) for a in answer) else 5)
-    return tries[-1], found, skipped, 2
+        if engine == "gemini" and limited and any(re.search(r"PerDay|per day|quota", a, re.I) for a in answer):
+            with OUT:
+                if GEMINI["at"] == at:  # another batch may have moved it on already
+                    GEMINI["at"] += 1
+                    print(f"  ({model} is out of today's free quota: next {server.GEMINI_FALLBACKS[GEMINI['at']] if GEMINI['at'] < len(server.GEMINI_FALLBACKS) else 'none'})", flush=True)
+            continue
+        if attempt >= 2:
+            break
+        time.sleep(30 if limited else 5)
+    return tries[-1], found, skipped, len(tries)
 
 
 def stream_log(mod, seconds):
@@ -304,7 +334,7 @@ def stream_log(mod, seconds):
 def dev_py(*args):
     say("$ am " + " ".join(shlex.quote(a) for a in args))
     run = subprocess.run([sys.executable, str(ROOT / "scripts" / "dev.py"), *args], cwd=ROOT, text=True,
-                         encoding="utf-8", errors="replace", capture_output=True)
+                         encoding="utf-8", errors="replace", capture_output=True, check=False)
     for line in (run.stdout + run.stderr).splitlines()[-12:]:
         say("  " + line)
     return run.returncode == 0
@@ -319,6 +349,9 @@ def main(argv=None):
     p.add_argument("--limit", type=int, default=0, help="at most this many switches (0: every usable one)")
     p.add_argument("--workers", type=int, default=0, help="batches asked at once (default: per engine)")
     p.add_argument("--no-install", action="store_true", help="stop after the build")
+    p.add_argument("--skip-flagged", action="store_true",
+                   help="leave out rows labelled shop, ads, accounts or online (and the In-app purchases area)")
+    p.add_argument("--areas", help="only these scan areas, comma-separated (Survival,Combat,Progress...)")
     p.add_argument("--with-presentation", action="store_true",
                    help="also ask about option, UI, camera and effect classes (left out by default)")
     p.add_argument("--again", action="store_true",
@@ -333,6 +366,11 @@ def main(argv=None):
 
     say(f"==> 1/5 scan: every no-JIT candidate for {mod}")
     rows = candidates(mod)
+    if args.skip_flagged:
+        rows = [r for r in rows if not r.get("flag") and r.get("area") != "In-app purchases"]
+    if args.areas:
+        wanted = {a.strip().lower() for a in args.areas.split(",") if a.strip()}
+        rows = [r for r in rows if r.get("area", "").lower() in wanted]
     if not args.with_presentation:  # options, UI widgets, cameras, effects: the scan ranks them low, the model skips them
         before = len(rows)
         package = sum(1 for r in rows if r.get("package"))
@@ -350,7 +388,7 @@ def main(argv=None):
         if before - len(rows):
             say(f"    {before - len(rows)} reviewed in an earlier run (same target): not asked again (--again asks)")
     if not rows:
-        say("nothing new to add: every scan candidate is in the mod already, labelled, inspect-only or reviewed before")
+        say("nothing new to add: every scan candidate is in the mod already, inspect-only or reviewed before")
         return 1
     say(f"    {len(rows)} candidates")
     # where they come from, so a scan of the wrong code shows before any model time is spent (Survivor: Ace's first
@@ -376,9 +414,10 @@ def main(argv=None):
            "gemini": f"Gemini ({server.GEMINI_MODEL})"}.get(args.engine, "Claude Code")
     if args.effort:
         who += f", {args.effort} effort"
-    batches = [rows[i:i + BATCH] for i in range(0, len(rows), BATCH)]
+    size = BATCHES.get(args.engine, BATCH)
+    batches = [rows[i:i + size] for i in range(0, len(rows), size)]
     workers = max(1, min(args.workers or WORKERS.get(args.engine, 2), len(batches)))
-    say(f"==> 2/5 {who} goes through all {len(rows)} in {len(batches)} batch(es) of up to {BATCH}, {workers} at once")
+    say(f"==> 2/5 {who} goes through all {len(rows)} in {len(batches)} batch(es) of up to {size}, {workers} at once")
     results, answers = {}, {}
     with ThreadPoolExecutor(max_workers=workers) as pool:
         jobs = {pool.submit(ask_batch, args.engine, args.effort or "", mod, meta, b): n
@@ -425,6 +464,18 @@ def main(argv=None):
                 continue  # one switch per field or setter
             targets.add(name)
             pins.append((argv_, target.get("area")))
+            for sib in target.get("family") or []:  # the same field on its sibling classes: one switch for all
+                if "--as" not in argv_[:-1]:
+                    break
+                more = ["pin", mod, f"{sib['class']}.{sib['member']}", "--object", sib["object"],
+                        "--value", argv_[argv_.index("--value") + 1], "--when", argv_[argv_.index("--when") + 1],
+                        "--to", argv_[argv_.index("--as") + 1]]
+                if argv_[-1] == "--field" or "--field" in argv_:
+                    more.append("--field")
+                if "path" in sib:
+                    more += ["--root-class", sib["root_class"], "--path", json.dumps(sib["path"])]
+                targets.add(more[2])
+                pins.append((more, None))
     if limit:
         pins = pins[:limit]
     if not pins:

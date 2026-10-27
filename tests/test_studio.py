@@ -17,10 +17,25 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import dev
 import server
+import autobuild
 from test_dev_cli import DUMP
 
 
 class Api(unittest.TestCase):
+    def test_autobuild_preserves_nested_paths_for_json_and_legacy_answers(self):
+        row = {"class": "HotFixBattle:Hero", "object": "HotFix:Game.world", "root_class": "HotFix:World",
+               "path": [{"field": "hero", "class": "HotFixBattle:Hero"}], "member": "Health",
+               "name": "Health", "ctype": "int64_t", "kind": "field", "area": "Survival"}
+        argv, why = autobuild.pin_argv("demo", row, {"value": 100, "title": "Health"}, set())
+        self.assertIsNone(why)
+        parsed = dev.build_parser().parse_args(argv)
+        self.assertEqual(json.loads(parsed.path), row["path"])
+        found, _ = autobuild.picks("demo", [row], ["am pin demo HotFixBattle:Hero.Health --value 100 --as hp"])
+        parsed = dev.build_parser().parse_args(found[0][1][1:])
+        self.assertEqual(json.loads(parsed.path), row["path"])
+        self.assertEqual(parsed.object, "HotFix:Game.world")
+        self.assertIn("HotFixBattle:Hero.Health", autobuild.table([row]))
+
     def test_effort_reaches_every_engine_and_gemini_runs_through_aider(self):
         from unittest import mock
         with mock.patch.object(server, "claude_exe", return_value="claude"), \
@@ -86,6 +101,33 @@ class Api(unittest.TestCase):
                 (folder / "tweaks.json").unlink(missing_ok=True)
             else:
                 (folder / "tweaks.json").write_text(before, encoding="utf-8")
+
+    def test_autobuild_topic_labels_do_not_exclude_supported_pins(self):
+        rows = [
+            {"class": cls, "member": "Value", "object": cls + ".instance", "area": area, "flag": flag}
+            for cls, area, flag in (
+                ("PurchaseState", "In-app purchases", "shop"),
+                ("StoreCurrency", "Progress", "shop"),
+                ("AdManager", "Other", "ads"),
+                ("AccountState", "Other", "account"),
+                ("MultiplayerState", "Other", "online"),
+                ("FistFightingController", "Combat", None),
+            )
+        ]
+        original = autobuild.dev.scan_rows
+        autobuild.dev.scan_rows = lambda _mod: ({}, rows + [dict(rows[0], has=True), dict(rows[0], inspect_only=True)])
+        try:
+            self.assertEqual(autobuild.candidates("game-plus"), rows)
+        finally:
+            autobuild.dev.scan_rows = original
+        original_text = autobuild.dev.dump_scan.as_text
+        autobuild.dev.dump_scan.as_text = lambda _rows, _limit: "candidate table"
+        try:
+            prompt = autobuild.prompt_for("game-plus", {"name": "Game", "target_bundle_id": "com.example.game"}, rows)
+            self.assertNotIn("Skip anything about", prompt)
+            self.assertIn("Topic labels", prompt)
+        finally:
+            autobuild.dev.dump_scan.as_text = original_text
 
     @classmethod
     def setUpClass(cls):

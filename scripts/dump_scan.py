@@ -1,9 +1,9 @@
 """Candidates for no-JIT switches in a game's dump.cs: what Mod Studio's Scan tab and `dev.py scan` list.
 
 A switch works without JIT when it is data: a pin writes a field or calls a property setter on a live object
-every half second. So the scan looks, in the game's own assembly (Assembly-CSharp), for
-- objects a pin can reach: a class with a static field of its own type (StatHandler.instance, Pet.p), or
-  every live object of a MonoBehaviour class (Enemy[]);
+every half second. So the scan looks in the game's own assemblies for
+- static reference roots (including generic singletons), live MonoBehaviours and their inherited references;
+- bounded paths through reference fields/getters, arrays, lists and dictionary values, with typed casts;
 - on them, number and true/false fields (int, float, long, bool) and property setters with a getter;
 then sorts each into an area by its names, scores it, and adds informational topic labels (shop, ads,
 accounts and online play). Every topic remains a candidate. Rows are suggestions: the scan reads names and
@@ -17,17 +17,19 @@ import hashlib
 import json
 import os
 import re
+from collections import deque
 from pathlib import Path
 
 from il2cpp_dump import ADDRESS, FLOATS, INTEGERS, SIGNATURE, TYPE, TYPE_INDEX, Method, split_params
 
-VERSION = 16  # assemblies chosen by content too, bought packages ranked low; presentation, counter and bookkeeping rows ranked lower; the game's own assembly from its bundle ID
+VERSION = 23  # values inside struct fields ("outer.inner"); sibling families grouped; generic base members specialized per subclass; ScriptableObject data assets as roots; get-only properties through their backing fields; assemblies chosen by content too, bought packages ranked low; object routes cached; presentation, counter and bookkeeping rows ranked lower; the game's own assembly from its bundle ID
 
 IMAGE = re.compile(r"^// Image \d+: (.+?)(?:\.dll)? - (\d+)\s*$")
 NAMESPACE = re.compile(r"^\s*// Namespace: ?(\S*)")
 CLASS = re.compile(
-    r"^(?:(?:public|private|protected|internal|static|sealed|abstract)\s+)*class\s+([A-Za-z_]\w*)(?=[\s:])"  # whole names: not "Enemy" from "Enemy.<>c"
-    r"(?:\s*:\s*([\w.]+(?:<[\w.]+>)?))?[^/]*// TypeDefIndex: (\d+)"
+    r"^(?:(?:public|private|protected|internal|static|sealed|abstract|readonly)\s+)*"
+    r"(class|interface|struct)\s+([A-Za-z_]\w*)(<[^>]+>)?(?=[\s:])"
+    r"(?:\s*:\s*([^/]+?))?\s*// TypeDefIndex: (\d+)"
 )
 # a generic singleton base (Singleton<T>, MonoSingleton<T>): its static field of type T holds each subclass's instance
 GENERIC = re.compile(r"^(?:(?:public|private|protected|internal|static|sealed|abstract)\s+)*class\s+([A-Za-z_]\w*)<(\w+)>")
@@ -38,7 +40,7 @@ HOT_UPDATE = re.compile(r"^(hot_?fix|hot_?update)", re.IGNORECASE)
 DEMO = re.compile(r"demo|sample|example|tutorial|showcase|editor|\btest", re.IGNORECASE)
 FIXED = {"FP": 65536}  # Photon Quantum's fixed point: a long holding value * 65536
 FIELD = re.compile(r"^\s+((?:(?:public|private|protected|internal|static|readonly)\s+)*)([\w.<>\[\], ]+?)\s+([\w<>]+); // (0x[0-9A-Fa-f]+)")
-METHOD = re.compile(r"^\s+(?:(?:public|private|protected|internal|virtual|override|static)\s+)*(\w+)\s+(get|set)_(\w+)\((\w*)[^)]*\)")
+METHOD = re.compile(r"^\s+(?:(?:public|private|protected|internal|virtual|override|static|sealed|abstract|final)\s+)*([\w.<>\[\], ]+?)\s+(get|set)_(\w+)\(([^)]*)\)")
 
 NUMERIC = {"int": "int32_t", "float": "float", "long": "int64_t", "bool": "bool", "double": "double"}
 
@@ -78,6 +80,7 @@ PROBABILITY = re.compile(r"chance|probab|odds", re.IGNORECASE)
 # switch restores it (gen_tweaks restorable pins do)
 SAVED = re.compile(r"save|snapshot|serializ|persist|container|profile", re.IGNORECASE)
 UI_CLASS = re.compile(r"(button|panel|popup|screen|menu|view|toggle|ui)$", re.IGNORECASE)  # "SaveLoadButton" is UI
+SCRATCH = re.compile(r"^(?:tmp|temp|scratch|help_list)(?:_|$)")
 # classes whose values are presentation, not play: player options (damage numbers on/off), UI widgets and visual
 # effects. Their rows stay in the scan, ranked lower (Vampire Survivors: 160 option rows, 600 on UI objects)
 PRESENTATION = re.compile(r"(?:options|settings|preferences|prefs|accessibility|localization)(?:data)?$|"
@@ -259,14 +262,27 @@ def scalar(ftype):
     return None
 
 
+def _types(text):
+    """Split a declaration's base types or generic arguments without splitting nested generics."""
+    result, start, depth = [], 0, 0
+    for i, c in enumerate(text):
+        depth += (c == "<") - (c == ">")
+        if c == "," and not depth:
+            result.append(text[start:i].strip())
+            start = i + 1
+    if text[start:].strip():
+        result.append(text[start:].strip())
+    return result
+
+
 def parse(path, assemblies=None, bundle_id=None):
     """Classes of the game's own assemblies: {name: {"base", "statics": [field], "fields": {...}, "props": {...}}}.
     A class outside Assembly-CSharp is named with its assembly (HotFix:GameManager), as the runtime finds it."""
-    images, classes, generics = [], {}, {}
+    images, classes, generics, others = [], {}, {}, {}
     current = generic = None
     namespace = ""
-    chosen = None
     profile = None if assemblies else assembly_profile(path)  # which assemblies hold game code, by content
+    chosen = None
     with open(path, encoding="utf-8", errors="replace") as f:
         for line in f:
             if line.startswith("// Image "):
@@ -282,34 +298,56 @@ def parse(path, assemblies=None, bundle_id=None):
                 if chosen is None:
                     chosen = game_assemblies(images, assemblies, bundle_id, profile)
                 current = generic = None
-                g = GENERIC.match(line)
-                if g:  # Singleton<T>: which of its static fields holds the T
-                    generic = generics.setdefault(g.group(1), {"t": g.group(2), "statics": []})
-                    continue
                 m = CLASS.match(line)
                 if m:  # namespaced game classes too (9 Kings keeps its code in Core, Spells, Policies...)
-                    index = int(m.group(3))
+                    declaration, short, args, bases, index = m.groups()
+                    index = int(index)
                     image = ""
                     for start, name in images:
                         if start <= index:
                             image = name
-                    full = f"{namespace}.{m.group(1)}" if namespace else m.group(1)
+                    full = f"{namespace}.{short}" if namespace else short
                     if not image.startswith("Assembly-CSharp"):
                         full = f"{image}:{full}"
-                    if image in chosen and full not in classes:
+                    parents = _types(bases or "")
+                    if args:  # retain generic bases' ancestry too, e.g. EntityBase<T> : IEntityBase
+                        generic = generics.setdefault(full, {"t": args[1:-1], "statics": [], "parents": parents})
+                        continue
+                    if image not in chosen:  # kept for inheritance only (a base class in an engine assembly)
+                        others.setdefault(full, {"parents": parents, "type_kind": declaration})
+                    elif full not in classes:
                         current = classes[full] = {
-                            "base": m.group(2) or "", "statics": [], "fields": {}, "props": {}, "getters": set(),
-                            "holds": set(), "references": {}, "object_getters": {},
+                            "base": parents[0] if parents else "", "parents": parents,
+                            "type_kind": declaration, "statics": [], "fields": {}, "props": {}, "getters": set(),
+                            "holds": set(), "references": {}, "object_fields": {}, "object_getters": {},
                         }
-                        current_name = m.group(1)
+                        current_name = short
                 continue
             if generic is not None:
                 if line.startswith("}"):
                     generic = None
                 else:
-                    m = FIELD.match(line)
+                    m = FIELD.match(line) if "; // 0x" in line else None
                     if m and "static" in m.group(1) and m.group(2).strip() == generic["t"]:
                         generic["statics"].append(m.group(3))
+                    elif m and "static" not in m.group(1):
+                        # instance members of a generic base (EntityBase<T>.Data): each subclass gets them with
+                        # its own type arguments (_specialize), so routes and pins can go through them
+                        mods, ftype, fname, offset = m.group(1), m.group(2).strip(), m.group(3), m.group(4)
+                        kind = scalar(ftype)
+                        if kind and "readonly" not in mods:
+                            generic.setdefault("fields", {})[fname] = {
+                                "ctype": kind[0], "offset": offset, "private": "public" not in mods, "readonly": False}
+                        elif not kind:
+                            generic.setdefault("object_fields", {})[fname] = ftype
+                    else:
+                        g = METHOD.match(line) if ("get_" in line or "set_" in line) else None
+                        if g and g.group(2) == "get" and not g.group(4).strip() and not re.search(r"\bstatic\b", line):
+                            rtype = g.group(1).strip()
+                            if scalar(rtype):
+                                generic.setdefault("getters", set()).add(g.group(3))
+                            else:
+                                generic.setdefault("object_getters", {})["get_" + g.group(3)] = rtype
                 continue
             if current is None:
                 continue
@@ -323,7 +361,7 @@ def parse(path, assemblies=None, bundle_id=None):
                 if "static" in mods:
                     if ftype == current_name:
                         current["statics"].append(fname)
-                    if ftype not in NUMERIC and "<" not in ftype and "[" not in ftype:
+                    if not kind:
                         current["references"][fname] = ftype
                 elif kind:
                     current["fields"][fname] = {"ctype": kind[0], "offset": offset,
@@ -331,25 +369,430 @@ def parse(path, assemblies=None, bundle_id=None):
                     if kind[1]:
                         current["fields"][fname]["scale"] = kind[1]
                 else:
+                    current["object_fields"][fname] = ftype
                     current["holds"].add(re.sub(r"[<\[].*", "", ftype).rsplit(".", 1)[-1])
                 continue
             m = METHOD.match(line) if ("get_" in line or "set_" in line) else None
             if m:
                 rtype, kind, prop, arg = m.groups()
+                arg = arg.split()[0] if arg.strip() else ""
                 if kind == "get" and scalar(rtype):
                     current["getters"].add(prop)
-                elif kind == "get" and not arg:
+                elif kind == "get" and not arg and not re.search(r"\bstatic\b", line):
                     current["object_getters"]["get_" + prop] = rtype
                 elif kind == "set" and scalar(arg) and not scalar(arg)[1]:  # an FP setter takes a struct: fields only
                     current["props"][prop] = NUMERIC[arg]
-    for name, info in classes.items():  # GameManager : Singleton<GameManager>
+    _add_ancestors(classes, others)
+    resolve_template, resolve_class = _type_resolver(generics), _type_resolver(classes)
+
+    def template(base, context):
+        return resolve_template(base.split("<", 1)[0], context)
+
+    for name, info in list(classes.items()):  # GameManager : Singleton<GameManager> (_specialize adds entries)
         b = re.match(r"([\w.]+)<([\w.]+)>$", info["base"])
         short = name.rpartition(":")[2].rsplit(".", 1)[-1]
         if b and b.group(2).rsplit(".", 1)[-1] == short:
-            statics = generics.get(b.group(1).rsplit(".", 1)[-1], {}).get("statics")
+            statics = generics.get(template(b.group(1), name), {}).get("statics")
             if statics:
                 info["singleton"] = statics[0]
+        pending, seen = list(info["parents"]), set()
+        while pending:
+            base = pending.pop()
+            key = template(base, name) if "<" in base else None
+            if key and key not in seen:
+                seen.add(key)
+                special = _specialize(classes, generics, key, base)
+                if special and special not in info["parents"]:
+                    info["parents"].append(special)
+                for parent in generics[key]["parents"]:
+                    # Qualify the generic declaration's non-generic parents in their own context.
+                    resolved = resolve_class(parent, key)
+                    value = resolved or parent
+                    if value not in info["parents"]:
+                        info["parents"].append(value)
+                        pending.append(value)
     return classes
+
+
+def _specialize(classes, generics, key, base):
+    """The generic base `base` (EntityBase<EntityHeroData>) as a class entry with its type arguments filled in
+    (T Data -> EntityHeroData Data), named "<template><args>", made once. None when the template has no
+    instance members. The entry is "outside" (no rows of its own): build() lists its value fields on the
+    subclasses, and routes go through its fields and getters."""
+    g = generics.get(key) or {}
+    if not (g.get("fields") or g.get("object_fields") or g.get("object_getters") or g.get("getters")):
+        return None
+    args = _types(base.split("<", 1)[1].rsplit(">", 1)[0]) if "<" in base else []
+    names = [p.strip() for p in _types(g.get("t", ""))]
+    subst = dict(zip(names, args))
+
+    def fill(ftype):
+        return re.sub(r"\b\w+\b", lambda m: subst.get(m.group(0), m.group(0)), ftype)
+
+    name = f"{key}<{','.join(args)}>"
+    if name not in classes:
+        classes[name] = {
+            "base": "", "parents": [], "type_kind": "class", "outside": True, "generic_of": key,
+            "statics": [], "fields": dict(g.get("fields") or {}), "props": {}, "getters": set(g.get("getters") or ()),
+            "holds": set(), "references": {},
+            "object_fields": {n: fill(t) for n, t in (g.get("object_fields") or {}).items()},
+            "object_getters": {n: fill(t) for n, t in (g.get("object_getters") or {}).items()},
+        }
+    return name
+
+
+def _add_ancestors(classes, others):
+    """Base classes from the assemblies the scan skips, as member-less "outside" entries, so a game class whose
+    chain runs through them (CharacterController : ArcadeSprite (PhaserPort) : ... : MonoBehaviour) still counts
+    as a live MonoBehaviour. Their members are not scanned."""
+    resolve = _type_resolver(others)
+    pending = [(base, name) for name, info in classes.items() for base in info["parents"]]
+    while pending:
+        base, context = pending.pop()
+        full = resolve(base.split("<", 1)[0], context)
+        if not full or full in classes:
+            continue
+        info = others[full]
+        classes[full] = {"base": info["parents"][0] if info["parents"] else "", "parents": info["parents"],
+                         "type_kind": info["type_kind"], "outside": True, "statics": [], "fields": {}, "props": {},
+                         "getters": set(), "holds": set(), "references": {}, "object_fields": {},
+                         "object_getters": {}}
+        pending.extend((parent, full) for parent in info["parents"])
+
+
+def _type_resolver(classes):
+    """Prefer the declaring namespace, then assembly, then one unambiguous global name."""
+    qualified, short = {}, {}
+    for n in classes:
+        local = n.rpartition(":")[2]
+        qualified.setdefault(local, []).append(n)
+        short.setdefault(local.rsplit(".", 1)[-1], []).append(n)
+
+    def resolve(name, context):
+        name = name.strip()
+        if ":" in name:
+            return name if name in classes else None
+        assembly, _, local = context.rpartition(":")
+        namespace = local.rpartition(".")[0]
+        prefix = assembly + ":" if assembly else ""
+        near = prefix + (namespace + "." if namespace else "") + name
+        if near in classes:
+            return near
+        candidates = qualified.get(name, ()) if "." in name else short.get(name, ())
+        same = [n for n in candidates if n.rpartition(":")[0] == assembly]
+        if len(same) == 1:
+            return same[0]
+        if same:
+            return None
+        return candidates[0] if len(candidates) == 1 else None
+
+    return resolve
+
+
+def _reference(ftype, context, classes, resolve=None):
+    """A reference class and optional collection operation. Value types are never pointers."""
+    ftype, each = ftype.strip(), None
+    if ftype.endswith("[]"):
+        ftype, each = ftype[:-2], "array"
+    elif "<" in ftype and ftype.endswith(">"):
+        container, args = ftype.split("<", 1)
+        args = _types(args[:-1])
+        container = container.rsplit(".", 1)[-1]
+        if container == "List" and len(args) == 1:
+            ftype, each = args[0], "list"
+        elif container in {"Dictionary", "OrderedDictionary"} and len(args) == 2:
+            ftype, each = args[1], "values"
+        else:
+            return None
+    if scalar(ftype):
+        return None
+    cls = (resolve or _type_resolver(classes))(ftype, context)
+    if not cls or classes[cls].get("type_kind") == "struct":
+        return None
+    return cls, each
+
+
+def _lineage(cls, classes, resolve):
+    """Breadth-first declarations, nearest first; visited types bound malformed inheritance cycles."""
+    pending, seen = deque([cls]), set()
+    while pending:
+        owner = pending.popleft()
+        if owner in seen:
+            continue
+        seen.add(owner)
+        yield owner
+        for base in classes[owner].get("parents", [classes[owner].get("base", "")]):
+            parent = resolve(base, owner)
+            if parent:
+                pending.append(parent)
+
+
+LIVE_BASES = {"MonoBehaviour", "UnityEngine.MonoBehaviour",
+              # data assets (balance tables, item and weapon stats): the runtime finds the loaded ones with
+              # Resources.FindObjectsOfTypeAll (AMIl2cppData.m AMIl2cppFindObjects)
+              "ScriptableObject", "UnityEngine.ScriptableObject"}
+
+
+def _component(cls, classes, resolve):
+    """True for a class whose live objects the runtime can collect as Class[]: scene objects and data assets."""
+    return any(base in LIVE_BASES
+               for owner in _lineage(cls, classes, resolve)
+               for base in classes[owner].get("parents", [classes[owner].get("base", "")]))
+
+
+def _reference_members(cls, kind, classes, resolve):
+    """Inherited reference declarations with runtime name shadowing, including scalar shadows."""
+    seen = set()
+    for owner in _lineage(cls, classes, resolve):
+        info = classes[owner]
+        for member, ftype in sorted(info.get(kind, {}).items()):
+            if member not in seen:
+                yield member, ftype, owner
+        if kind == "object_getters":
+            seen.update(info.get("object_getters", {}))
+            seen.update("get_" + prop for prop in info.get("getters", ()))
+        else:
+            for fields in ("fields", "object_fields", "references"):
+                seen.update(info.get(fields, {}))
+
+
+def object_paths(classes, max_hops=8):
+    """One deterministic shortest route per reference class, from singleton, static field or Unity object.
+
+    Steps name a field/getter, the resulting class and optional collection operation. A class-only step
+    narrows a base/interface to a concrete subclass; the runtime must check each object's actual type.
+    """
+    paths, queue = {}, deque()
+    resolve = _type_resolver(classes)
+
+    def offer(cls, obj, root, path, reach):
+        if cls not in paths and len(path) <= max_hops:
+            paths[cls] = {"object": obj, "root_class": root, "path": path, "reach": reach}
+            queue.append(cls)
+
+    # Existing direct roots win ties; adding other static roots never alters their shape.
+    for cls, info in sorted(classes.items()):
+        if DEMO.search(cls) or info.get("type_kind") in {"struct", "interface"}:
+            continue
+        statics = info.get("statics", [])
+        singleton = statics[0] if statics else info.get("singleton")
+        if singleton:
+            offer(cls, f"{cls}.{singleton}", cls, [], 3)
+        elif _component(cls, classes, resolve):
+            offer(cls, f"{cls}[]", cls, [], 1)
+    for owner, info in sorted(classes.items()):
+        if DEMO.search(owner):
+            continue
+        for field, ftype in sorted(info.get("references", {}).items()):
+            if SCRATCH.match(_split_words(field).lstrip("_").removeprefix("m_")):
+                continue
+            result = _reference(ftype, owner, classes, resolve)
+            if result and not result[1]:  # collection roots require a separate root contract
+                cls, _ = result
+                if not DEMO.search(cls):
+                    offer(cls, f"{owner}.{field}", cls, [], 3)
+
+    children = {}
+    for cls, info in sorted(classes.items()):
+        if DEMO.search(cls) or info.get("type_kind") in {"struct", "interface"}:
+            continue
+        for base in info.get("parents", [info.get("base", "")]):
+            parent = resolve(base, cls)
+            if parent:
+                children.setdefault(parent, []).append(cls)
+    while queue:
+        cls = queue.popleft()
+        current = paths[cls]
+        if len(current["path"]) >= max_hops:
+            continue
+        edges = []
+        for kind, members in (("field", "object_fields"), ("getter", "object_getters")):
+            for member, ftype, owner in _reference_members(cls, members, classes, resolve):
+                if SCRATCH.match(_split_words(member.removeprefix("get_")).lstrip("_").removeprefix("m_")):
+                    continue  # query work buffers may be empty except during a method call
+                result = _reference(ftype, owner, classes, resolve)
+                if result:
+                    target, each = result
+                    step = {kind: member, "class": target}
+                    if each:
+                        step["each"] = each
+                    edges.append((target, step))
+        edges.extend((target, {"class": target}) for target in children.get(cls, []))
+        for target, step in edges:
+            if not DEMO.search(target):
+                offer(target, current["object"], current["root_class"], current["path"] + [step], current["reach"])
+    return paths
+
+
+def _declaration(classes, resolve, cls, member):
+    """(owner, kind, type) of member as cls has it (own or inherited), or None. Offsets are left out: the runtime
+    finds fields by name, so a field that only moved is the same target."""
+    if cls not in classes:
+        return None
+    if "." in member and not member.startswith("<"):  # "outer.inner": a value inside a struct field
+        outer, _, inner = member.partition(".")
+        decl = _declaration(classes, resolve, cls, outer)
+        struct = resolve(decl[2], decl[0]) if decl and decl[1] == "ref" else None
+        f = (classes.get(struct) or {}).get("fields", {}).get(inner) if struct else None
+        if not f or classes[struct].get("type_kind") != "struct":
+            return None
+        return decl[0], "struct-field", f"{struct}.{inner}:{f['ctype']}"
+    for owner in _lineage(cls, classes, resolve):
+        info = classes[owner]
+        if member in info.get("fields", {}):
+            return owner, "field", info["fields"][member]["ctype"]
+        if member.startswith("set_") and member[4:] in info.get("props", {}):
+            return owner, "setter", info["props"][member[4:]]
+        if member in info.get("object_fields", {}):
+            return owner, "ref", info["object_fields"][member]
+        if member in info.get("object_getters", {}):
+            return owner, "getter", info["object_getters"][member]
+        if member in info.get("references", {}):
+            return owner, "static", info["references"][member]
+        if member in info.get("statics", []) or member == info.get("singleton"):
+            return owner, "static", owner
+    return None
+
+
+def pin_signature(classes, pin):
+    """What a pin reaches, declaration by declaration (root object, each path step, the field or setter), from one
+    dump's classes; None when any of it is gone. Equal signatures in two game versions mean the pin's target did
+    not change, so a works/fails mark made on the old version still describes the new one (dev.py update)."""
+    resolve = _type_resolver(classes)
+    obj = pin.get("object") or ""
+    parts = []
+    whole = resolve(obj, obj) if obj and not obj.endswith("[]") else None
+    if whole:  # a bare class ("Lock"): its live objects
+        parts.append(("class", whole))
+        target = whole
+    elif obj.endswith("[]"):
+        cls = resolve(obj[:-2], obj[:-2])
+        if not cls:
+            return None
+        parts.append(("each", cls))
+        target = cls
+    else:
+        name, _, member = obj.rpartition(".")
+        cls = resolve(name, name)
+        decl = _declaration(classes, resolve, cls, member) if cls else None
+        if not decl:
+            return None
+        parts.append(("root",) + decl)
+        found = _reference(decl[2], decl[0], classes, resolve) if decl[1] != "static" or decl[2] != decl[0] else (cls, None)
+        target = found[0] if found else cls
+    if pin.get("root_class"):  # the root narrowed to the class the path starts from
+        target = resolve(pin["root_class"], target) or pin["root_class"]
+        if target not in classes:
+            return None
+        parts.append(("class", target))
+    for step in pin.get("path") or []:
+        member = step.get("field") or step.get("getter")
+        if member:
+            decl = _declaration(classes, resolve, target, member)
+            if not decl:
+                return None
+            parts.append(("step",) + decl)
+        target = resolve(step.get("class", ""), target) or step.get("class")
+        if target not in classes:
+            return None
+        parts.append(("class", target))
+    if pin.get("via"):  # the object's getter hands over the instance that holds the field ("class")
+        decl = _declaration(classes, resolve, target, pin["via"])
+        if not decl:
+            return None
+        parts.append(("via",) + decl)
+        target = resolve(pin.get("class", ""), target) or pin.get("class")
+        if target not in classes:
+            return None
+        parts.append(("class", target))
+    member = pin.get("field") or pin.get("setter")
+    if member:
+        decl = _declaration(classes, resolve, target, member)
+        if not decl:
+            return None
+        parts.append(("member",) + decl)
+    return tuple(parts)
+
+
+def path_errors(classes, obj, root_class, path):
+    """Validate a user-picked route against dump metadata, independently of the scan's shortest route.
+
+    Returns readable errors (empty on success). The metadata proves the declared pointer types only;
+    it cannot prove a root or collection currently contains any live objects.
+    """
+    resolve = _type_resolver(classes)
+
+    def parents(cls):
+        return [p for base in classes[cls].get("parents", [classes[cls].get("base", "")])
+                if (p := resolve(base, cls))]
+
+    def derives(child, base):
+        pending, seen = [child], set()
+        while pending:
+            cls = pending.pop()
+            if cls == base:
+                return True
+            if cls not in seen:
+                seen.add(cls)
+                pending.extend(parents(cls))
+        return False
+
+    def member_type(cls, member, kind):
+        for name, ftype, owner in _reference_members(cls, kind, classes, resolve):
+            if name == member:
+                return _reference(ftype, owner, classes, resolve)
+        return None
+
+    if not isinstance(obj, str) or not obj:
+        return ["Object root must be a nonempty string"]
+    if obj.endswith("[]"):
+        owner = resolve(obj[:-2], obj[:-2])
+        if owner and owner != obj[:-2]:
+            return [f"Object root must use canonical class {owner}"]
+        result = (owner, None) if owner and _component(owner, classes, resolve) else None
+    else:
+        root_name, _, field = obj.rpartition(".")
+        owner = resolve(root_name, root_name)
+        if owner and owner != root_name:
+            return [f"Object root must use canonical class {owner}"]
+        result = member_type(owner, field, "references") if owner else None
+        if owner and (field in classes[owner].get("statics", []) or field == classes[owner].get("singleton")):
+            result = owner, None
+    if not result or result[1]:
+        return [f"Object root {obj} is not a known static reference or MonoBehaviour collection"]
+    cls = result[0]
+    root = resolve(root_class, cls) if isinstance(root_class, str) else cls
+    if root != cls or (root_class is not None and root_class != cls):
+        return [f"Root class must be {cls}, the declared type of {obj}"]
+    if not isinstance(path, list) or len(path) > 8:
+        return ["Object path must be a list of at most 8 steps"]
+    for i, step in enumerate(path, 1):
+        if not isinstance(step, dict) or set(step) - {"class", "field", "getter", "each"}:
+            return [f"Path step {i} has an invalid shape"]
+        name = step.get("class")
+        target = resolve(name, cls) if isinstance(name, str) else None
+        if not target or classes[target].get("type_kind") == "struct":
+            return [f"Path step {i} needs a known reference class"]
+        if name != target:
+            return [f"Path step {i} must use canonical class {target}"]
+        selectors = [kind for kind in ("field", "getter") if kind in step]
+        if not selectors:
+            if "each" in step or not derives(target, cls):
+                return [f"Path step {i} cannot narrow {cls} to {target}"]
+        elif len(selectors) != 1 or not isinstance(step[selectors[0]], str):
+            return [f"Path step {i} needs exactly one field or getter"]
+        else:
+            selector = selectors[0]
+            member = step[selector]
+            result = member_type(cls, member, "object_fields" if selector == "field" else "object_getters")
+            if not result:
+                return [f"Path step {i}: {cls}.{member} is not a known object reference"]
+            expected, each = result
+            if expected != target or step.get("each") != each:
+                return [f"Path step {i}: {cls}.{member} requires class {expected}" +
+                        (f" and each={each}" if each else " without collection expansion")]
+        cls = target
+    return []
 
 
 def _suggest(member, ctype, has_getter):
@@ -377,37 +820,91 @@ def saved_classes(classes):
     return saved
 
 
-def build(classes, existing=frozenset(), learned=None):
-    """learned(name, ctype, cls) -> (bonus, use or None): dev_learn.member_boost, what worked in other games."""
+FAMILY_MIN = 3  # siblings declaring the same field: this many and they become one family
+
+
+def _families(rows, classes):
+    """The same value field declared by sibling classes (each projectile's _radius, each weapon's _speed: same
+    name, same type, same base class) as one family: the best-scoring row stands for it ("family_size": N,
+    "family": the others' targets), the rest are marked "family_member" and ranked lower. Auto-build asks about
+    the representative only and makes one switch for the whole family."""
+    groups = {}
+    for r in rows:
+        base = (classes.get(r["class"]) or {}).get("base", "")
+        if base and r["kind"] in ("field", "setter"):
+            groups.setdefault((r["member"], r["ctype"], base), []).append(r)
+    for members in groups.values():
+        if len(members) < FAMILY_MIN:
+            continue
+        members.sort(key=lambda r: -r["score"])
+        head, rest = members[0], members[1:]
+        head["family_size"] = len(members)
+        head["family"] = [{"class": r["class"], "member": r["member"], "object": r["object"],
+                           **({"root_class": r["root_class"], "path": r["path"]} if "path" in r else {})} for r in rest]
+        for r in rest:
+            r["family_member"] = head["class"]
+            r["score"] -= 2
+
+
+def build(classes, existing=frozenset(), learned=None, paths=None):
+    """learned(name, ctype, cls) -> (bonus, use or None): dev_learn.member_boost, what worked in other games.
+    paths: object_paths(classes) when the caller has it (scan() keeps it in its cache)."""
     rows, flagged = [], []
     saved = saved_classes(classes)
+    paths = object_paths(classes) if paths is None else paths
+    resolve = _type_resolver(classes)
     for cls, info in classes.items():
-        if DEMO.search(cls):
+        if DEMO.search(cls) or cls not in paths or info.get("outside") or info.get("type_kind") in {"struct", "interface"}:
             continue  # a package's demo or sample script, not the game
-        if info["statics"]:
-            obj, reach = f"{cls}.{info['statics'][0]}", 3
-        elif info.get("singleton"):
-            obj, reach = f"{cls}.{info['singleton']}", 3
-        elif info["base"] == "MonoBehaviour":
-            obj, reach = f"{cls}[]", 1
-        else:
-            continue
+        route = paths[cls]
+        obj, reach = route["object"], route["reach"]
         local = cls.rpartition(":")[2]
         presentation = bool(PRESENTATION.search(local.rsplit(".", 1)[-1]) or UI_NAMESPACE.search(local.rpartition(".")[0]))
         package = bool(PACKAGE.match(local.rpartition(".")[0] or local))
+        root = route["root_class"] if route.get("root_class") else obj[:-2] if obj.endswith("[]") else obj.rpartition(".")[0]
+        root_local = (root or "").rpartition(":")[2]
+        via_ui = bool(root_local) and root_local != local and bool(
+            PRESENTATION.search(root_local.rsplit(".", 1)[-1]) or UI_NAMESPACE.search(root_local.rpartition(".")[0]))
         members = []
         for prop, ctype in info["props"].items():
             members.append((f"set_{prop}", prop, ctype, "setter", None, prop in info["getters"], False))
         for fname, f in info["fields"].items():
-            if fname.startswith("<") or f.get("readonly"):
-                continue  # compiler backing fields: the setter covers them
+            if f.get("readonly"):
+                continue
+            if fname.startswith("<"):
+                # a compiler backing field: its setter covers it, but a get-only property ({ get; }) has none, so
+                # the field is the only way to its value (shown under the property's name)
+                prop = fname[1:].split(">", 1)[0]
+                if not fname.endswith(">k__BackingField") or prop in info["props"]:
+                    continue
+                members.append((fname, prop, f["ctype"], "field", f["offset"], prop in info["getters"], True))
+                continue
             members.append((fname, fname, f["ctype"], "field", f["offset"], False, f["private"]))
+        for outer, ftype in info.get("object_fields", {}).items():  # values inside a struct it holds: "outer.inner"
+            inner_cls = resolve(ftype, cls) if not ftype.endswith("]") and "<" not in ftype else None
+            inner = classes.get(inner_cls) if inner_cls else None
+            if inner and inner.get("type_kind") == "struct" and not outer.startswith("<"):
+                for fname, f in inner.get("fields", {}).items():
+                    if not fname.startswith("<") and not f.get("readonly"):
+                        members.append((f"{outer}.{fname}", f"{outer} {fname}", f["ctype"], "field", None, False,
+                                        f["private"]))
+        own = {m[0] for m in members}
+        for owner in _lineage(cls, classes, resolve):  # value fields a generic base declares (EntityBase<T>.Hp)
+            g = classes[owner]
+            if not g.get("generic_of"):
+                continue
+            for fname, f in g["fields"].items():
+                if fname not in own and not fname.startswith("<"):
+                    own.add(fname)
+                    members.append((fname, fname, f["ctype"], "field", f["offset"], fname in g["getters"], f["private"]))
         for target, name, ctype, kind, offset, getter, private in members:
             area, by_member = area_of(cls.rpartition(":")[2], name)
             row = {
                 "class": cls, "object": obj, "member": target, "name": name, "kind": kind, "ctype": ctype,
                 "offset": offset, "area": area, "has": f"{cls}.{target}" in existing,
             }
+            if route["path"] or (not obj.endswith("[]") and obj.rpartition(".")[0] != cls):
+                row.update(root_class=route["root_class"], path=route["path"])
             scale = info["fields"].get(name, {}).get("scale") if kind == "field" else None
             if scale:
                 row["scale"] = scale  # fixed point: the value is written as value * scale
@@ -431,6 +928,8 @@ def build(classes, existing=frozenset(), learned=None):
             elif package:
                 score -= 3
                 row["package"] = True  # a bought package (animation, tweening, text...): Auto-build leaves it out
+            elif via_ui:
+                score -= 2  # a game value, but reached through a UI object: often stale or a copy
             words = _split_words(name)
             if COUNTER.search(words):
                 score -= 2
@@ -450,6 +949,7 @@ def build(classes, existing=frozenset(), learned=None):
                         row["when"] = p["when"]
             row["score"] = score
             rows.append(row)
+    _families(rows, classes)
     rows.sort(key=lambda r: (-r["score"], r["area"], r["class"], r["member"]))
     flagged.sort(key=lambda r: (r["flag"], r["class"], r["member"]))
     return rows, flagged
@@ -496,13 +996,14 @@ def scan(dump, tweaks=None, learned=None, assemblies=None, bundle_id=None):
     if not data or data.get("stamp") != stamp:
         classes = parse(dump, assemblies, bundle_id)
         data = {"stamp": stamp, "classes": len(classes), "inventory": purchase_inventory(dump),
-                "data": {k: dict(v, getters=sorted(v["getters"]), holds=sorted(v["holds"])) for k, v in classes.items()}}
+                "data": {k: dict(v, getters=sorted(v["getters"]), holds=sorted(v["holds"])) for k, v in classes.items()},
+                "paths": object_paths(classes)}  # routes depend on the dump only: kept with it (1.7 s per scan)
         tmp = cache.with_name(cache.name + ".tmp")
         tmp.write_text(json.dumps(data), encoding="utf-8")
         os.replace(tmp, cache)
     classes = {k: dict(v, getters=set(v["getters"]), holds=set(v.get("holds", ()))) for k, v in data["data"].items()}
     existing = existing_targets(tweaks)
-    rows, flagged = build(classes, existing, learned)
+    rows, flagged = build(classes, existing, learned, data.get("paths"))
     pins = {(r["class"], r["member"]) for r in rows}
     inventory = [dict(r, has=f"{r['class']}.{r['member']}" in existing)
                  for r in data["inventory"] if (r["class"], r["member"]) not in pins]
@@ -549,8 +1050,6 @@ def purchase_inventory(path):
         if hit is None:
             hit = member_hits[member] = topics.search(_split_words(member)) is not None
         return hit
-
-
 
     def add(member, ctype, kind, signature, offset=None, method=None):
         row = {"class": cls, "object": cls, "member": member, "name": member,

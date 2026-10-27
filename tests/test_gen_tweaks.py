@@ -4,6 +4,8 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
+from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
@@ -746,6 +748,119 @@ class Pins(unittest.TestCase):
         }
         _h, m = gen_tweaks.render(data, HOOKS, "x")
         self.assertIn('title:@"A"', m)
+
+
+class ObjectPaths(unittest.TestCase):
+    def pin(self):
+        return {"object": "HotFix:Game.world", "root_class": "HotFix:World",
+                "path": [{"field": "logic", "class": "HotFixBattle:Logic"},
+                         {"getter": "get_Players", "each": "array", "class": "HotFixBattle:Hero"}],
+                "class": "HotFixBattle:Hero", "field": "Health", "ctype": "int64_t", "value": 100}
+
+    def test_generated_pin_walks_path_before_writing_final_class(self):
+        lines, closers, cls = gen_tweaks.pin_objects(self.pin())
+        self.assertEqual(cls, "HotFixBattle:Hero")
+        self.assertIn("AMIl2cppPathObjects", "\n".join(lines))
+        self.assertIn('"get_Players"', "\n".join(lines))
+        self.assertGreater(len(closers), 1)
+
+    def test_collection_path_cannot_use_single_object_state(self):
+        pin = self.pin()
+        self.assertFalse(gen_tweaks.restorable(pin))
+        pin["op"] = "multiply"
+        self.assertTrue(gen_tweaks.pin_problems(pin, "switch"))
+
+    def test_invalid_paths_are_rejected_before_codegen(self):
+        for path in ("logic", [{}], [{"field": "x", "getter": "get_X", "class": "Hero"}],
+                     [{"field": "x", "class": "Hero", "each": "bogus"}],
+                     [{"field": 'x\";bad', "class": "Hero"}], [{"class": "Hero"}] * 9):
+            pin = dict(self.pin(), path=path)
+            self.assertTrue(gen_tweaks.pin_problems(pin, "switch"), path)
+
+    def test_single_path_can_restore_and_cannot_mix_with_via(self):
+        pin = self.pin()
+        pin["path"] = pin["path"][:1]
+        pin["class"] = "HotFixBattle:Logic"
+        self.assertTrue(gen_tweaks.restorable(pin))
+        self.assertEqual(gen_tweaks.pin_problems(pin, "switch"), [])
+        pin["via"] = "get_Other"
+        self.assertTrue(gen_tweaks.pin_problems(pin, "switch"))
+
+    def test_path_cannot_write_an_unrelated_target_class(self):
+        pin = self.pin()
+        pin["class"] = "HotFixBattle:Enemy"
+        self.assertTrue(gen_tweaks.pin_problems(pin, "switch"))
+
+    def test_field_lookup_respects_assembly_when_names_repeat(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "dump.cs"
+            source.write_text("""// Image 0: HotFix.dll - 0
+// Image 1: HotFixBattle.dll - 10
+// Namespace: Game
+public class Shared // TypeDefIndex: 0
+{
+    public int Health; // 0x10
+}
+// Namespace: Game
+public class Shared // TypeDefIndex: 10
+{
+    public long Health; // 0x20
+}
+""")
+            with patch.object(dev, "dump_path", return_value=source):
+                self.assertEqual(dev.fields_of("demo", "HotFixBattle:Game.Shared"), [(32, False, "long", "Health")])
+
+    def test_cli_writes_valid_path_and_rejects_missing_step_without_changes(self):
+        dump = """// Image 0: HotFix.dll - 0
+// Image 1: HotFixBattle.dll - 10
+// Namespace:
+public static class Game // TypeDefIndex: 0
+{
+    public static World world; // 0x0
+}
+// Namespace:
+public class World // TypeDefIndex: 1
+{
+    public Hero hero; // 0x10
+}
+// Namespace:
+public class Hero // TypeDefIndex: 10
+{
+    public long Health; // 0x10
+}
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            folder = root / "mods" / "demo"
+            folder.mkdir(parents=True)
+            (folder / "mod.json").write_text(json.dumps({"name": "Demo", "target_bundle_id": "example.demo"}))
+            output = root / "dump" / "out"
+            output.mkdir(parents=True)
+            (output / "dump.cs").write_text(dump)
+            path = [{"field": "hero", "class": "HotFixBattle:Hero"}]
+            with patch.object(dev, "ROOT", root), patch.dict(os.environ, {"AM_ROOT": tmp}):
+                dev.save_state("demo", {"dump_dir": str(root / "dump")})
+                argv = ["pin", "demo", "HotFixBattle:Hero.Health", "--object", "HotFix:Game.world",
+                        "--root-class", "HotFix:World", "--path", json.dumps(path), "--value", "100", "--as", "hp"]
+                args = dev.build_parser().parse_args(argv)
+                self.assertEqual(args.fn(args), 0)
+                data = (folder / "tweaks.json").read_bytes()
+                pin = json.loads(data)["tweaks"][0]["pins"][0]
+                self.assertEqual(pin["path"], path)
+                self.assertEqual(pin["class"], "HotFixBattle:Hero")
+                self.assertFalse([e for e in dev.pin_problems_in_dump("demo") if e[0] == "error"])
+                argv[argv.index("--path") + 1] = json.dumps([{"field": "missing", "class": "HotFixBattle:Hero"}])
+                with self.assertRaises(dev.DevError):
+                    args = dev.build_parser().parse_args(argv)
+                    args.fn(args)
+                self.assertEqual((folder / "tweaks.json").read_bytes(), data)
+                sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "studio"))
+                import server
+                result = server.quick("demo", "pin", {"target": "HotFixBattle:Hero.Health", "object": "HotFix:Game.world",
+                                      "root_class": "HotFix:World", "path": path, "value": 200, "key": "studioHp"})
+                self.assertTrue(result["ok"], result)
+                studio_pin = json.loads((folder / "tweaks.json").read_bytes())["tweaks"][-1]["pins"][0]
+                self.assertEqual(studio_pin["path"], path)
 
 
 class HiddenNames(unittest.TestCase):

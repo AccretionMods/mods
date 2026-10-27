@@ -18,5 +18,6 @@
     "private": true,
     "open_source": false,
     "sha256": "ab2788f0ff1aaec300869e03ce6255c3a099d7bf8b32292d0da0ee8778a6af2f"
-  }
+  },
+  "branding": false
 }

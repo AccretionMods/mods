@@ -661,7 +661,7 @@ const App = {
         this.el("span", { class: "title", text: t.title }),
         this.el("span", { class: "key", text: `${t.key} · ${kindText}` }),
         jit ? this.el("span", { class: "badge warn", text: "JIT", title: "every hook needs JIT; add a pin for phones without it" }) : null,
-        t.verified ? this.el("span", { class: "badge " + (t.verification_state === "works" ? "good" : "warn"), text: `${t.verification_state === "stale" ? "needs retest" : t.verification_state} · ${t.verified.app_version}`, title: t.verified.date }) : null),
+        t.verified ? this.el("span", { class: "badge " + (t.verification_state === "works" ? "good" : "warn"), text: `${t.verification_state === "stale" ? "needs retest" : t.verification_state} · ${t.verified.app_version}${t.verified.carried_from ? ` (carried from ${t.verified.carried_from})` : ""}`, title: t.verified.carried_from ? `marked on ${t.verified.carried_from} (${t.verified.date}); carried by dev.py update because every target is unchanged in ${t.verified.app_version}` : t.verified.date }) : null),
       chips.length ? this.el("div", { class: "chips" }, chips) : this.el("div", { class: "hint", text: "No hook or pin: a value for hand-written code in Tweak.x (am_" + t.key + ")." }),
       this.el("div", { class: "row acts" },
         this.el("button", { class: "small", onclick: () => this.quick("mark", { key: t.key, works: true }) }, "Works"),
@@ -750,6 +750,7 @@ const App = {
       { type: "note", text: "A pin runs every half second on the live object(s): write a field or call a setter. Works without JIT." },
       { name: "target", label: "Target", help: "Class.field or Class.set_Property", value: preset.target || "", mono: true },
       { name: "object", label: "Object", help: "blank = the class's instance field; or Class, or Class[] for every live object", value: preset.object || "", mono: true },
+      ...(preset.path !== undefined ? [{type:"note", text:"Object path: " + preset.root_class + " → " + preset.path.map(s => (s.field || s.getter || s.class) + (s.each ? " [" + s.each + "]" : "")).join(" → ")}] : []),
       { name: "value", label: "Value", help: "number, true/false, peak, getter:get_X, field:Y, slider", value: preset.value || "", mono: true },
       { name: "when", label: "When", type: "select", options: [["always", "always"], ["lower", "only when the current value is lower"], ["higher", "only when higher"]], value: preset.when || "always" },
       { name: "threshold", label: "Threshold (with when)", value: "", type: "number" },
@@ -765,6 +766,7 @@ const App = {
       if (!v.target.includes(".")) { this.toast("target is Class.field or Class.set_X", "bad"); return false; }
       if (!v.to && !this.validKey(v.key)) { this.toast("key: letters, digits, underscores", "bad"); return false; }
       const body = { target: v.target, value: v.value || undefined, when: v.when };
+      if (preset.path !== undefined) { body.path = preset.path; body.root_class = preset.root_class; }
       if (v.object) body.object = v.object; if (v.threshold) body.threshold = Number(v.threshold); if (v.via) body.via = v.via; if (v.class) body.class = v.class; if (v.multiply) body.multiply = true;
       if (v.to) body.to = v.to; else { body.key = v.key; body.title = v.title || v.target; }
       if (v.value === "slider") body.slider = v.slider.split(/\s+/).map(Number);
@@ -925,7 +927,7 @@ const App = {
     this.byId("buildInfo").textContent = (d.last_dylib ? "Last dylib: " + d.last_dylib : "No build yet") + (d.last_ipa ? "   ·   Last ipa: " + d.last_ipa : "");
     box.querySelectorAll("button").forEach(b => { if (b.textContent.startsWith("Sign + install")) b.disabled = !d.last_ipa; });
     const up = this.byId("updateSec"); up.replaceChildren(this.el("h3", { text: "Newer game version" }));
-    if (d.newer_bases.length) for (const b of d.newer_bases) up.append(this.el("div", { class: "row", style: "margin-bottom:6px" }, this.el("span", { class: "mono small grow", text: `${b.version}  ${b.path}` }), this.el("button", { class: "small", onclick: () => this.job("update", [b.path]) }, "Update to it")));
+    if (d.newer_bases.length) for (const b of d.newer_bases) up.append(this.el("div", { class: "row", style: "margin-bottom:6px" }, this.el("span", { class: "mono small grow", text: `${b.version}  ${b.path}` }), this.el("button", { class: "small", onclick: () => this.job("update", [b.path]) }, "Update to it"), this.el("button", { class: "small ghost", title: "dumps it (once, cached) and lists which hooks, pins and works marks stay, change or need a retest; changes nothing", onclick: () => this.job("update", [b.path, "--dry-run"]) }, "Preview")));
     else up.append(this.el("p", { class: "hint", text: `No copy of ${d.target} newer than ${d.app_version} in intake/ or Downloads. Drop one there and this offers the update (re-dump, hooks checked, mod.json refreshed).` }));
     up.append(this.el("div", { class: "row" }, this.el("button", { class: "small", onclick: () => this.job("fetch", ["--mod", this.mod]) }, "Get the newest from the decrypt site"), this.el("span", { class: "muted small", text: "then reload: it shows up above" })));
   },
@@ -1084,7 +1086,7 @@ const App = {
   // ---------------------------------------------------------------- scan (no-JIT candidates in the dump)
   scanActions(x) {
     const pin = target => this.pinDialog({ target: `${target.class}.${target.member}`, object: target.object, value: target.value,
-      when: target.when, via: target.via, target_class: target.target_class, title: target.name.replace(/^set_/, "").replace(/([a-z0-9])([A-Z])/g, "$1 $2") });
+      when: target.when, via: target.via, root_class: target.root_class, path: target.path, target_class: target.target_class || (target.path !== undefined ? target.class : undefined), title: target.name.replace(/^set_/, "").replace(/([a-z0-9])([A-Z])/g, "$1 $2") });
     const inspect = () => this.dialog(`${x.class}.${x.member}`, [
       {type:"note", text:x.signature || `${x.ctype} ${x.member}`},
       {type:"note", text: x.explanation || "Identify an object path before changing this field."},
@@ -1166,7 +1168,7 @@ const App = {
     // Auto-build: the picked model chooses switches from this scan, Studio adds them, runs gen and builds the .ipa
     const auto = this.el("button", { class: "small", title: "The selected model goes through every scan candidate and makes a switch of each useful one; Studio adds them, runs gen, builds the .ipa and, when all went well, installs it on the phone", onclick: async () => {
       const who = this.engineName();
-      if (!confirm(`Auto-build ${this.detail ? this.detail.title : this.mod}: ${who} goes through every candidate in this scan and makes a switch of each useful one, no top 10 (nothing about purchases, store currency, ads, accounts or online play), Studio adds them with am pin, runs gen and builds the .ipa, and if all of that went well signs and installs it on the phone (USB, unlocked) and shows the new switches' status from the log. The mod's files are snapshotted first (Files tab restores). Start?`)) return;
+      if (!confirm(`Auto-build ${this.detail ? this.detail.title : this.mod}: ${who} goes through every candidate in this scan, across all topics, and makes a switch of each useful pin-compatible one, no top 10. Studio adds them with am pin, runs gen and builds the .ipa, and if all of that went well signs and installs it on the phone (USB, unlocked) and shows the new switches' status from the log. The mod's files are snapshotted first (Files tab restores). Start?`)) return;
       try { const j = await this.api(`/api/mods/${this.mod}/autobuild`, { engine: this.engine(), effort: this.effort(), limit: 0, account: this.account() }); this.showJob(j); this.poll(j.id); this.openJobs(); this.toast(`${who} is picking switches; Studio adds and builds them: follow it in Jobs`, "ok"); }
       catch (e) { this.toast(e.message, "bad"); }
     } }, "Auto-build menu");
@@ -1623,16 +1625,46 @@ const App = {
     const filter = this.el("input", { placeholder: "filter this list, or Enter to search the whole App Store", style: "flex:1;min-width:200px" });
     let likeBundle = "", likeName = "", loads = 0;
     const offline = this.el("input", { type: "checkbox" });
+    const compat = this.el("input", { type: "checkbox" });
     list.value = pref("list", "similar"); if (list.value === "like" || list.value === "search") list.value = "similar"; region.value = pref("region", "us"); offline.checked = pref("offlineFilter", "0") === "1";
+    compat.checked = pref("compatFilter", "0") === "1";
+    // the engine check reads each game's App Store file list with the owner's Apple ID (scripts/appstore.py)
+    const account = this.el("span", { class: "muted small" });
+    const showAccount = async () => {
+      let a = { signed_in: false };
+      try { a = await this.api("/api/appstore/account"); } catch (e) { /* older server */ }
+      account.replaceChildren(a.signed_in
+        ? this.el("span", {}, `App Store: ${a.email} `, this.el("button", { class: "small", onclick: async () => { await this.api("/api/appstore/logout", {}); showAccount(); } }, "Sign out"))
+        : this.el("button", { class: "small", title: "To check engines: Studio reads each game's file list from the App Store with your Apple ID", onclick: () => this.appStoreLogin(showAccount) }, "App Store sign-in"));
+    };
+    showAccount();
+    const checkAll = this.el("button", { class: "small", title: "Checks every unchecked game in this list that your Apple ID already has; games it doesn't have are counted, never licensed", onclick: async () => {
+      const todo = rows.filter(g => !g.engine && !g.mods.length && g.id);
+      if (!todo.length) { this.toast("every game here is checked", "ok"); return; }
+      checkAll.disabled = true;
+      let done = 0, unowned = 0, failed = 0;
+      for (const g of todo) {
+        checkAll.textContent = `Checking ${done + unowned + failed + 1} of ${todo.length}…`;
+        try {
+          const r = await this.api("/api/games/engine", { id: g.id, bundle: g.bundle });
+          if (r.needs_license) unowned++; else { g.engine = r.verdict; done++; }
+        } catch (e) { failed++; if (/sign in/i.test(e.message)) { this.toast(e.message, "bad"); break; } }
+        draw();
+      }
+      checkAll.disabled = false; checkAll.textContent = "Check engines";
+      this.toast(`${done} checked` + (unowned ? `, ${unowned} not on your Apple ID (Check engine on a card asks to get a free one)` : "") + (failed ? `, ${failed} failed` : ""), failed ? "bad" : "ok");
+    } }, "Check engines");
     const note = this.el("p", { class: "hint" });
     const grid = this.el("div", { class: "games" });
     let rows = [];
     const draw = () => {
       const f = list.value === "search" ? "" : filter.value.trim().toLowerCase();  // a search list is already the answer
-      const shown = rows.filter(g => (list.value === "search" || !offline.checked || !g.online) && (!f || [g.name, g.seller, g.bundle, ...g.genres].join(" ").toLowerCase().includes(f)));
+      const shown = rows.filter(g => (list.value === "search" || !offline.checked || !g.online) && (!f || [g.name, g.seller, g.bundle, ...g.genres].join(" ").toLowerCase().includes(f))
+        && (!compat.checked || g.mods.length || (g.engine && g.engine.compatible)));
       const hidden = rows.filter(g => g.online).length;
       note.textContent = (list.value === "search" ? `${shown.length} App Store results for "${filter.value.trim()}"` : list.value === "like" ? `${shown.length} games like ${likeName}` : `${shown.length} of ${rows.length} games`)
         + (list.value !== "search" && offline.checked && hidden ? ` · ${hidden} online or multiplayer hidden by your filter` : "")
+        + (compat.checked ? ` · compatible only: ${rows.filter(g => !g.engine && !g.mods.length).length} not checked yet` : "")
         + (f && !shown.length ? " · press Enter to search the whole App Store" : "");
       grid.replaceChildren(...shown.map(g => this.gameCard(g, region.value)));
     };
@@ -1651,10 +1683,23 @@ const App = {
     list.addEventListener("change", load); region.addEventListener("change", load);
     filter.addEventListener("input", draw);
     filter.addEventListener("keydown", ev => { if (ev.key === "Enter" && filter.value.trim().length >= 2) { ev.preventDefault(); list.value = "search"; load(); } }); offline.addEventListener("change", () => { save("offlineFilter", offline.checked ? "1" : "0"); draw(); });
+    compat.addEventListener("change", () => { save("compatFilter", compat.checked ? "1" : "0"); draw(); });
+    this.gamesRedraw = draw;
+    // Keep the .ipa: where an App Store copy goes when a card's App Store copy asks to keep one (scripts/appstore.py)
+    const keepPick = this.el("select", { title: "Where Keep puts a game's App Store .ipa. It stays encrypted to your Apple ID: a backup or an older version, never a mod base" },
+      [["none", "Keep the .ipa: don't keep"], ["pc", "Keep the .ipa: this PC"], ["servers", "Keep the .ipa: our servers (not yet)"]].map(o => this.el("option", { value: o[0], text: o[1] })));
+    this.api("/api/appstore/prefs").then(p => { keepPick.value = p.keep; }).catch(() => {});
+    keepPick.addEventListener("change", async () => {
+      try { await this.api("/api/appstore/prefs", { keep: keepPick.value }); this.toast(keepPick.selectedOptions[0].text, "ok"); }
+      catch (e) { this.toast(e.message, "bad"); }
+    });
+    const keptBtn = this.el("button", { class: "small", title: "App Store copies kept on this PC", onclick: () => this.keptDialog() }, "Kept copies");
     box.append(
       this.el("div", { class: "row", style: "margin-bottom:10px" }, list, region, filter,
         this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center" }, offline, "single-player only"),
+        this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center", title: "Unity IL2CPP games (what our mods support), from an engine check or one of our mods" }, compat, "compatible only"),
         this.el("button", { class: "small", onclick: load }, "Refresh")),
+      this.el("div", { class: "row", style: "margin-bottom:6px" }, account, checkAll, keepPick, keptBtn),
       this.el("p", { class: "hint", text: "From the App Store's public charts and search. Type in the box to filter this list; press Enter to search the whole App Store (a name or a bundle ID). \"Like the games we mod\" ranks games by the themes and genres they share with our mods' games; Like this on a card does the same for one game. Get .ipa looks the game up on the decrypt site; New mod starts a mod from a decrypted copy. Same lists from a console: am games (see am games --help)." }),
       note, grid);
     load();
@@ -1665,8 +1710,24 @@ const App = {
       ...g.mods.map(m => this.el("span", { class: "badge good", text: "our mod: " + m.title })),
       g.ipa ? this.el("span", { class: "badge accent", text: ".ipa " + (g.ipa.version || "") + " ready" }) : null,
       g.online ? this.el("span", { class: "badge warn", text: "online" }) : null,
+      g.engine ? this.el("span", { class: "badge " + (g.engine.compatible ? "good" : "bad"), title: `${g.engine.files} files, version ${g.engine.version}, checked ${g.engine.checked}` + (g.engine.hot_update ? "; hot-update code (HybridCLR or similar)" : ""), text: g.engine.engine + (g.engine.hot_update ? " · hot-update" : "") }) : null,
       ...g.like.map(t => this.el("span", { class: "badge", text: "like " + t })),
     ];
+    const engineBtn = g.engine || g.mods.length || !g.id ? null : this.el("button", { class: "small", title: "Reads this game's file list from the App Store (not the game): Unity IL2CPP or not", onclick: async () => {
+      engineBtn.disabled = true; engineBtn.textContent = "Checking…";
+      try {
+        let r = await this.api("/api/games/engine", { id: g.id, bundle: g.bundle });
+        if (r.needs_license) {
+          const free = /free|^0/i.test(String(g.price || ""));
+          if (!free) { this.toast(`${g.name} is paid and not on your Apple ID: Studio never buys games`, "bad"); engineBtn.disabled = false; engineBtn.textContent = "Check engine"; return; }
+          if (!confirm(`Your Apple ID doesn't have ${g.name} yet. Get it for free on your account (like tapping Get in the App Store; it shows in your purchases) so Studio can read its file list?`)) { engineBtn.disabled = false; engineBtn.textContent = "Check engine"; return; }
+          r = await this.api("/api/games/engine", { id: g.id, bundle: g.bundle, license: true });
+        }
+        g.engine = r.verdict;
+        this.toast(`${g.name}: ${r.verdict.engine}` + (r.verdict.compatible ? " (compatible)" : ""), r.verdict.compatible ? "ok" : "bad");
+        if (this.gamesRedraw) this.gamesRedraw();
+      } catch (e) { this.toast(e.message, "bad"); engineBtn.disabled = false; engineBtn.textContent = "Check engine"; }
+    } }, "Check engine");
     const newMod = g.mods.length
       ? this.el("button", { class: "small", onclick: () => { this.select(g.mods[0].name); this.setTab("switches"); } }, "Open mod")
       : this.el("button", { class: "small primary", title: "decrypted copy, moddability report, mod folder + dump, then the scan, in one job", onclick: () => {
@@ -1684,8 +1745,125 @@ const App = {
         this.el("button", { class: "small", onclick: () => this.getIpaDialog(g.bundle, region) }, "Get .ipa"),
         newMod,
         report,
+        engineBtn,
+        g.id ? this.el("button", { class: "small", title: "Where it's sold, its versions, and keeping the App Store .ipa", onclick: () => this.appStoreCopyDialog(g) }, "App Store copy") : null,
         this.el("button", { class: "small", onclick: () => this.gamesLike && this.gamesLike(g.bundle, g.name) }, "Like this"),
         g.url ? this.el("a", { href: g.url, target: "_blank", rel: "noopener", class: "small", style: "align-self:center" }, "App Store") : null));
+  },
+
+  // A game's App Store copy: where it is sold (public lookup), the store's versions (signed in), and Keep, which
+  // downloads the whole .ipa as a job. The copy stays encrypted to the Apple ID: a backup or an older version.
+  async appStoreCopyDialog(g) {
+    const dlg = this.byId("dlg"), body = this.byId("dlgBody"); body.replaceChildren();
+    const regionsBox = this.el("div", { class: "sec" }, this.el("h3", { text: "Where it's sold" }), this.el("p", { class: "hint", text: "Asking every App Store…" }));
+    const versionsBox = this.el("div", { class: "sec" }, this.el("h3", { text: "Versions" }));
+    const keepRow = this.el("div", { class: "row", style: "margin-top:14px;justify-content:flex-end" });
+    body.append(this.el("form", { method: "dialog" },
+      this.el("h3", { text: `${g.name}: App Store copy` }),
+      this.el("p", { class: "hint", text: "An App Store .ipa stays encrypted to your Apple ID: it installs as it is on phones signed in with that Apple ID (no 7-day or yearly limit), but it can't be re-signed or modded." }),
+      regionsBox, versionsBox, keepRow));
+    dlg.showModal();
+    // where it's sold, from the public lookup in every storefront (cached a day)
+    this.api(`/api/appstore/regions?bundle=${encodeURIComponent(g.bundle)}`).then(r => {
+      const sold = Object.entries(r.sold), tb = this.el("tbody");
+      for (const [c, v] of sold) tb.append(this.el("tr", {},
+        this.el("td", { class: "mono", text: c.toUpperCase() }),
+        this.el("td", { text: v.name !== g.name ? v.name : "" }),
+        this.el("td", { text: v.price ? `${v.price} ${v.currency}` : "free" }),
+        this.el("td", { class: "mono", text: v.version })));
+      regionsBox.replaceChildren(this.el("h3", { text: "Where it's sold" }),
+        this.el("p", { class: "hint", text: `Sold in ${sold.length} App Stores` + (r.missing.length ? `, not in ${r.missing.length}: ${r.missing.map(c => c.toUpperCase()).join(", ")}` : "") + (r.unknown.length ? ` (${r.unknown.length} didn't answer)` : "") + `. Checked ${r.checked}.` }),
+        this.el("div", { style: "max-height:220px;overflow:auto" }, this.el("table", {}, this.el("thead", {}, this.el("tr", {}, ["store", "name there", "price", "version"].map(h => this.el("th", { text: h })))), tb)));
+    }).catch(e => regionsBox.replaceChildren(this.el("h3", { text: "Where it's sold" }), this.el("p", { class: "hint", text: e.message })));
+    // the store's versions for this Apple ID; a version id's number is looked up when it is picked
+    let account = { signed_in: false }, choice = "none";
+    try { account = await this.api("/api/appstore/account"); choice = (await this.api("/api/appstore/prefs")).keep; } catch (e) { /* older server */ }
+    if (!account.signed_in) { versionsBox.append(this.el("p", { class: "hint", text: "Sign in to the App Store (Games tab) to see versions and keep a copy." })); keepRow.append(this.el("button", { type: "button", onclick: () => dlg.close() }, "Close")); return; }
+    const pick = this.el("select", { style: "width:100%" }), about = this.el("p", { class: "hint", text: "" });
+    const license = async () => {
+      const free = /free|^0/i.test(String(g.price || ""));
+      if (!free) { this.toast(`${g.name} is paid and not on your Apple ID: Studio never buys games`, "bad"); return false; }
+      return confirm(`Your Apple ID doesn't have ${g.name} yet. Get it for free on your account (like tapping Get in the App Store; it shows in your purchases)?`);
+    };
+    let licensed = false, v;
+    versionsBox.append(this.el("p", { class: "hint", text: "Loading the store's versions…" }));
+    try {
+      v = await this.api("/api/appstore/versions", { id: g.id });
+      if (v.needs_license) {
+        if (!(await license())) { versionsBox.replaceChildren(this.el("h3", { text: "Versions" }), this.el("p", { class: "hint", text: "Not on your Apple ID." })); keepRow.append(this.el("button", { type: "button", onclick: () => dlg.close() }, "Close")); return; }
+        licensed = true;
+        await this.api("/api/games/engine", { id: g.id, bundle: g.bundle, license: true });  // gets the free license, and checks the engine
+        v = await this.api("/api/appstore/versions", { id: g.id });
+      }
+    } catch (e) { versionsBox.replaceChildren(this.el("h3", { text: "Versions" }), this.el("p", { class: "hint", text: e.message })); keepRow.append(this.el("button", { type: "button", onclick: () => dlg.close() }, "Close")); return; }
+    const ids = [...v.ids].reverse();  // newest first
+    pick.replaceChildren(...ids.map((id, i) => this.el("option", { value: id === v.latest ? "" : id, text: id === v.latest ? `newest (${id})` : `${ids.length - i}. version id ${id}` })));
+    const describe = async () => {
+      if (!pick.value) { about.textContent = "The newest version."; return; }
+      about.textContent = "Looking up this version…";
+      try { const i = await this.api("/api/appstore/version", { id: g.id, version_id: pick.value }); about.textContent = `Version ${i.version || "?"}` + (i.released ? `, released ${String(i.released).slice(0, 10)}` : ""); }
+      catch (e) { about.textContent = e.message; }
+    };
+    pick.addEventListener("change", describe); describe();
+    versionsBox.replaceChildren(this.el("h3", { text: `Versions (${ids.length})` }), pick, about);
+    const where = { none: "Keep is off (Games tab: Keep the .ipa)", pc: "Keeps it on this PC", servers: "Our servers aren't ready yet" }[choice];
+    const keepBtn = this.el("button", { type: "button", class: "primary", disabled: choice !== "pc", title: where, onclick: async () => {
+      keepBtn.disabled = true;
+      try {
+        const j = await this.api("/api/appstore/keep", { id: g.id, bundle: g.bundle, version_id: pick.value, license: licensed });
+        dlg.close(); this.showJob(j); this.poll(j.id); this.openJobs();
+        this.toast(`Keeping ${g.name}: the download follows in Jobs`, "ok");
+      } catch (e) { this.toast(e.message, "bad"); keepBtn.disabled = false; }
+    } }, choice === "pc" ? "Keep on this PC" : "Keep");
+    keepRow.append(this.el("span", { class: "muted small", style: "margin-right:auto;align-self:center", text: where }),
+      this.el("button", { type: "button", onclick: () => dlg.close() }, "Close"), keepBtn);
+  },
+
+  async keptDialog() {
+    const dlg = this.byId("dlg"), body = this.byId("dlgBody"); body.replaceChildren();
+    let k = { kept: [], folder: "" };
+    try { k = await this.api("/api/appstore/kept"); } catch (e) { this.toast(e.message, "bad"); return; }
+    const tb = this.el("tbody");
+    for (const r of k.kept) {
+      const del = this.el("button", { class: "small", type: "button", onclick: async () => {
+        if (!confirm(`Delete ${r.file} from this PC? It can be downloaded again while the App Store keeps that version.`)) return;
+        try { await this.api("/api/appstore/forget", { file: r.file }); dlg.close(); this.keptDialog(); } catch (e) { this.toast(e.message, "bad"); }
+      } }, "Delete");
+      tb.append(this.el("tr", {}, this.el("td", { class: "mono", text: r.bundle }), this.el("td", { class: "mono", text: r.version }),
+        this.el("td", { text: this.mb(r.size) }), this.el("td", { text: r.kept }), this.el("td", {}, del)));
+    }
+    body.append(this.el("form", { method: "dialog" },
+      this.el("h3", { text: "Kept App Store copies" }),
+      this.el("p", { class: "hint", text: `In ${k.folder}. Encrypted to your Apple ID: they install as they are on its phones (pymobiledevice3 apps install), never as a mod base.` }),
+      k.kept.length ? this.el("table", {}, this.el("thead", {}, this.el("tr", {}, ["game", "version", "size", "kept", ""].map(h => this.el("th", { text: h })))), tb)
+        : this.el("p", { class: "hint", text: "Nothing kept yet: App Store copy on a game card." }),
+      this.el("div", { class: "row", style: "margin-top:14px;justify-content:flex-end" }, this.el("button", { type: "button", onclick: () => dlg.close() }, "Close"))));
+    dlg.showModal();
+  },
+
+  // App Store sign-in for engine checks: the password and the code go to Apple through this PC's Studio and are
+  // never saved; Studio keeps Apple's session token, encrypted for this Windows user.
+  appStoreLogin(after) {
+    const email = this.el("input", { type: "email", placeholder: "Apple ID", autocomplete: "username", style: "width:100%" });
+    const pass = this.el("input", { type: "password", placeholder: "Password", autocomplete: "current-password", style: "width:100%;margin-top:6px" });
+    const code = this.el("input", { inputmode: "numeric", placeholder: "Code from your Apple device", autocomplete: "one-time-code", style: "width:100%;margin-top:6px;display:none" });
+    const msg = this.el("p", { class: "hint", text: "Used only to read games' file lists (Check engine). Your password and code go to Apple and are not saved; Studio keeps Apple's sign-in token on this PC, encrypted for your Windows account." });
+    const go = this.el("button", { class: "primary" }, "Sign in");
+    const dlg = this.el("dialog", { style: "max-width:360px" }, this.el("h3", { text: "App Store sign-in" }), email, pass, code, msg,
+      this.el("div", { class: "row", style: "margin-top:8px;justify-content:flex-end" }, this.el("button", { onclick: () => { dlg.close(); dlg.remove(); } }, "Cancel"), go));
+    go.onclick = async () => {
+      go.disabled = true;
+      try {
+        const r = await this.api("/api/appstore/login", { email: email.value.trim(), password: pass.value, code: code.value.trim() });
+        if (r.needs_code) { code.style.display = ""; code.focus(); msg.textContent = "Apple sent a code to your devices: type it and press Sign in again."; return; }
+        pass.value = ""; dlg.close(); dlg.remove();
+        this.toast(`Signed in to the App Store as ${r.email}`, "ok");
+        if (after) after();
+      } catch (e) { msg.textContent = e.message; } finally { go.disabled = false; }
+    };
+    document.body.append(dlg);
+    dlg.showModal();
+    email.focus();
   },
 
   // ---------------------------------------------------------------- new mod

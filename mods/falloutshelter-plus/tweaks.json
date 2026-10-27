@@ -161,6 +161,5205 @@
         }
       ],
       "section": "Other"
+    },
+    {
+      "key": "fastZoom",
+      "title": "Fast Zoom",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameFlowManager.m_Instance",
+          "when": "lower",
+          "setter": "set_ZoomSpeedSensitivityNormalized",
+          "ctype": "float",
+          "value": 1
+        }
+      ],
+      "section": "Exploration"
+    },
+    {
+      "key": "blockPurchases",
+      "title": "Block Purchases",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameFlowManager.m_Instance",
+          "when": "always",
+          "setter": "set_ShouldDenyAllPurchases",
+          "ctype": "bool",
+          "value": true
+        }
+      ],
+      "section": "In-app purchases"
+    },
+    {
+      "key": "zeroAccumulatedRetryCost",
+      "title": "Zero Accumulated Retry Cost",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "QuestDataManager.m_Instance",
+          "when": "higher",
+          "setter": "set_AccumulatedRetryCost",
+          "ctype": "int32_t",
+          "value": 0
+        }
+      ],
+      "section": "In-app purchases"
+    },
+    {
+      "key": "instantCameraCloseUp",
+      "title": "Instant Camera Close-Up",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "CameraController.m_Instance",
+          "when": "higher",
+          "field": "m_TimeForCloseUp",
+          "ctype": "float",
+          "value": 0
+        }
+      ],
+      "section": "Exploration"
+    },
+    {
+      "key": "instantRoomDrag",
+      "title": "Instant Room Drag",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "CameraController.m_Instance",
+          "when": "higher",
+          "field": "m_TimeForRoomDrag",
+          "ctype": "float",
+          "value": 0
+        }
+      ],
+      "section": "Exploration"
+    },
+    {
+      "key": "instantRoomSwipe",
+      "title": "Instant Room Swipe",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "CameraController.m_Instance",
+          "when": "higher",
+          "field": "m_TimeForRoomSwipe",
+          "ctype": "float",
+          "value": 0
+        }
+      ],
+      "section": "Exploration"
+    },
+    {
+      "key": "skipIntroSlideWait",
+      "title": "Skip Intro Slide Wait",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "MainMenuScene.m_Instance",
+          "when": "higher",
+          "field": "m_timeForIntroSlides",
+          "ctype": "float",
+          "value": 0
+        }
+      ],
+      "section": "Exploration"
+    },
+    {
+      "key": "noTruckPrefillWait",
+      "title": "No Truck Prefill Wait",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "NukaColaTruckWasteland.m_Instance",
+          "when": "higher",
+          "field": "WaitTimeBeforeFilling",
+          "ctype": "float",
+          "value": 0
+        }
+      ],
+      "section": "Exploration"
+    },
+    {
+      "key": "instantTruckFilling",
+      "title": "Instant Truck Filling",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "NukaColaTruckWasteland.m_Instance",
+          "when": "higher",
+          "field": "WaitTimeOnFilling",
+          "ctype": "float",
+          "value": 0
+        }
+      ],
+      "section": "Exploration"
+    },
+    {
+      "key": "instantDwellerSpawning",
+      "title": "Instant Dweller Spawning",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "QuestSetupReferences.m_Instance",
+          "when": "higher",
+          "field": "WaitingTimeBeforeSpawningDwellers",
+          "ctype": "float",
+          "value": 0
+        }
+      ],
+      "section": "Exploration"
+    },
+    {
+      "key": "noResourceParticleLaunchDelay",
+      "title": "No Resource Particle Launch Delay",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "ResourceParticleMgr.m_Instance",
+          "when": "higher",
+          "field": "m_particleLaunchWaitTime",
+          "ctype": "float",
+          "value": 0
+        }
+      ],
+      "section": "Exploration"
+    },
+    {
+      "key": "guaranteedAdditionalItemChance",
+      "title": "Guaranteed Additional Item Chance",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "CardMgr.m_Instance",
+          "when": "lower",
+          "field": "m_additionalItemChance",
+          "ctype": "float",
+          "value": 1
+        }
+      ],
+      "section": "Items & crafting"
+    },
+    {
+      "key": "maximumLegendaryItemChance",
+      "title": "Maximum Legendary Item Chance",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "CardMgr.m_Instance",
+          "when": "lower",
+          "field": "m_legendaryItemLotteryChance",
+          "ctype": "float",
+          "value": 1
+        }
+      ],
+      "section": "Items & crafting"
+    },
+    {
+      "key": "maximumRareItemChance",
+      "title": "Maximum Rare Item Chance",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "CardMgr.m_Instance",
+          "when": "lower",
+          "field": "m_rareItemLotteryChance",
+          "ctype": "float",
+          "value": 1
+        }
+      ],
+      "section": "Items & crafting"
+    },
+    {
+      "key": "noBreedingCycleWait",
+      "title": "No Breeding Cycle Wait",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_breedingCycleTime",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_dweller",
+              "class": "DwellerParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "DwellerParameters"
+        }
+      ],
+      "section": "Exploration"
+    },
+    {
+      "key": "noOfflineBirthWait",
+      "title": "No Offline Birth Wait",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_relationBirthOfflineWaitTime",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_dweller",
+              "class": "DwellerParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "DwellerParameters"
+        }
+      ],
+      "section": "Exploration"
+    },
+    {
+      "key": "noOfflineKissingWait",
+      "title": "No Offline Kissing Wait",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_relationKissingOfflineWaitTime",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_dweller",
+              "class": "DwellerParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "DwellerParameters"
+        }
+      ],
+      "section": "Exploration"
+    },
+    {
+      "key": "instantBirth",
+      "title": "Instant Birth",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_relationshipBabyBirthTime",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_dweller",
+              "class": "DwellerParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "DwellerParameters"
+        }
+      ],
+      "section": "Exploration"
+    },
+    {
+      "key": "instantKissing",
+      "title": "Instant Kissing",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_relationshipKissTime",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_dweller",
+              "class": "DwellerParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "DwellerParameters"
+        }
+      ],
+      "section": "Exploration"
+    },
+    {
+      "key": "instantConception",
+      "title": "Instant Conception",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_relationshipMakeBabyTime",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_dweller",
+              "class": "DwellerParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "DwellerParameters"
+        }
+      ],
+      "section": "Exploration"
+    },
+    {
+      "key": "fasterQuestMovement",
+      "title": "Faster Quest Movement",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "lower",
+          "field": "m_dwellerMovementSpeedFactor",
+          "ctype": "float",
+          "value": 2,
+          "path": [
+            {
+              "field": "m_generalQuestParameters",
+              "class": "GeneralQuestParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "GeneralQuestParameters"
+        }
+      ],
+      "section": "Exploration"
+    },
+    {
+      "key": "noEventQuestCooldown",
+      "title": "No Event Quest Cooldown",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_eventQuestCooldownTimeInDays",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_generalQuestParameters",
+              "class": "GeneralQuestParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "GeneralQuestParameters"
+        }
+      ],
+      "section": "Exploration"
+    },
+    {
+      "key": "strangerAppearsImmediately",
+      "title": "Stranger Appears Immediately",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "MysteriousStrangerMgr.m_Instance",
+          "when": "higher",
+          "field": "m_remainingTimeToAppear",
+          "ctype": "float",
+          "value": 0
+        }
+      ],
+      "section": "Exploration"
+    },
+    {
+      "key": "keepStrangerVisible",
+      "title": "Keep Stranger Visible",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "MysteriousStrangerMgr.m_Instance",
+          "when": "lower",
+          "field": "m_remainingTimeToHide",
+          "ctype": "float",
+          "value": "peak"
+        }
+      ],
+      "section": "Exploration"
+    },
+    {
+      "key": "noTruckDeliveryWait",
+      "title": "No Truck Delivery Wait",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "NukaColaTruckWasteland.m_Instance",
+          "when": "higher",
+          "field": "m_waitToDeliverTime",
+          "ctype": "float",
+          "value": 0
+        }
+      ],
+      "section": "Exploration"
+    },
+    {
+      "key": "noMaximumRadioWait",
+      "title": "No Maximum Radio Wait",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_maxRadioCycleTimeInMinutes",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_roomParameters",
+              "class": "RoomParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "RoomParameters"
+        }
+      ],
+      "section": "Exploration"
+    },
+    {
+      "key": "noMinimumRadioWait",
+      "title": "No Minimum Radio Wait",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_minRadioCycleTimeInMinutes",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_roomParameters",
+              "class": "RoomParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "RoomParameters"
+        }
+      ],
+      "section": "Exploration"
+    },
+    {
+      "key": "removeSurpriseQuestTimeRequirement",
+      "title": "Remove Surprise Quest Time Requirement",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_minimumVaultTimeForSurpriseQuest_Minutes",
+          "ctype": "int32_t",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_surpriseQuestParameters",
+              "class": "SurpriseQuestParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "SurpriseQuestParameters"
+        }
+      ],
+      "section": "Exploration"
+    },
+    {
+      "key": "strangerAdCooldown",
+      "title": "Stranger Ad Cooldown",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "UnityAdsManager.m_Instance",
+          "when": "higher",
+          "field": "m_mysteriousStrangerRemainingCooldownTime",
+          "ctype": "double",
+          "value": 0
+        }
+      ],
+      "section": "Exploration"
+    },
+    {
+      "key": "rushAdCooldown",
+      "title": "Rush Ad Cooldown",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "UnityAdsManager.m_Instance",
+          "when": "higher",
+          "field": "m_productionRushRemainingCooldownTime",
+          "ctype": "double",
+          "value": 0
+        }
+      ],
+      "section": "Exploration"
+    },
+    {
+      "key": "vaultTecMessageCooldown",
+      "title": "Vault-Tec Message Cooldown",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "UnityAdsManager.m_Instance",
+          "when": "higher",
+          "field": "m_vaultTecMessageRemainingCooldownTime",
+          "ctype": "double",
+          "value": 0
+        }
+      ],
+      "section": "Exploration"
+    },
+    {
+      "key": "extraVaultMessageCooldown",
+      "title": "Extra Vault Message Cooldown",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "UnityAdsManager.m_Instance",
+          "when": "higher",
+          "field": "m_vaultTecMessageRemainingCooldownTime_ExVault",
+          "ctype": "double",
+          "value": 0
+        }
+      ],
+      "section": "Exploration"
+    },
+    {
+      "key": "explorationAdCooldown",
+      "title": "Exploration Ad Cooldown",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "UnityAdsManager.m_Instance",
+          "when": "higher",
+          "field": "m_wastelandExplorationRemainingCooldownTime",
+          "ctype": "double",
+          "value": 0
+        }
+      ],
+      "section": "Exploration"
+    },
+    {
+      "key": "encounterMaximumDelay",
+      "title": "Encounter Maximum Delay",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "WastelandEncounter[]",
+          "when": "higher",
+          "setter": "set_MaximumTimeForEncounter",
+          "ctype": "float",
+          "value": 0
+        }
+      ],
+      "section": "Exploration"
+    },
+    {
+      "key": "encounterMinimumDelay",
+      "title": "Encounter Minimum Delay",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "WastelandEncounter[]",
+          "when": "higher",
+          "setter": "set_MinimumTimeForEncounter",
+          "ctype": "float",
+          "value": 0
+        }
+      ],
+      "section": "Exploration"
+    },
+    {
+      "key": "noQuantumSkipCostIncrease",
+      "title": "No Quantum Skip Cost Increase",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "CompletedQuestDataManager.m_Instance",
+          "when": "higher",
+          "field": "m_nukaQuantumSkipCostIncrement",
+          "ctype": "int32_t",
+          "value": 0
+        }
+      ],
+      "section": "In-app purchases"
+    },
+    {
+      "key": "explorerInventoryCapacity",
+      "title": "Explorer Inventory Capacity",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "lower",
+          "field": "m_dwellerInventoryMaxItems",
+          "ctype": "int32_t",
+          "value": 100,
+          "path": [
+            {
+              "field": "m_dweller",
+              "class": "DwellerParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "DwellerParameters"
+        }
+      ],
+      "section": "Items & crafting"
+    },
+    {
+      "key": "clearEmptyInvaderBodies",
+      "title": "Clear Empty Invader Bodies",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_lootlessInvaderBodyTime",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Items & crafting"
+    },
+    {
+      "key": "stopRaiderLootingTime",
+      "title": "Stop Raider Looting Time",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_raidersLootMaxTime",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Items & crafting"
+    },
+    {
+      "key": "guaranteedSpecialRaidLoot",
+      "title": "Guaranteed Special Raid Loot",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "lower",
+          "field": "m_specialLootChancePerRaid",
+          "ctype": "float",
+          "value": 1,
+          "path": [
+            {
+              "field": "m_lootParameters",
+              "class": "LootParameters"
+            },
+            {
+              "field": "m_aliensLootPackData",
+              "class": "InvaderLootPackData"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "InvaderLootPackData"
+        }
+      ],
+      "section": "Items & crafting"
+    },
+    {
+      "key": "legendaryDuplicateNukaReward",
+      "title": "Legendary Duplicate Nuka Reward",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "lower",
+          "field": "m_legendaryRecipeDuplicateNukaReward",
+          "ctype": "float",
+          "value": 100,
+          "path": [
+            {
+              "field": "m_items",
+              "class": "ItemParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "ItemParameters"
+        }
+      ],
+      "section": "Items & crafting"
+    },
+    {
+      "key": "rareDuplicateNukaReward",
+      "title": "Rare Duplicate Nuka Reward",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "lower",
+          "field": "m_rareRecipeDuplicateNukaReward",
+          "ctype": "float",
+          "value": 100,
+          "path": [
+            {
+              "field": "m_items",
+              "class": "ItemParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "ItemParameters"
+        }
+      ],
+      "section": "Items & crafting"
+    },
+    {
+      "key": "recipePartDuplicateNukaReward",
+      "title": "Recipe Part Duplicate Nuka Reward",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "lower",
+          "field": "m_recipePartDuplicateNukaReward",
+          "ctype": "float",
+          "value": 100,
+          "path": [
+            {
+              "field": "m_items",
+              "class": "ItemParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "ItemParameters"
+        }
+      ],
+      "section": "Items & crafting"
+    },
+    {
+      "key": "survivalExplorerInventoryCapacity",
+      "title": "Survival Explorer Inventory Capacity",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "SurvivalModeParameters.m_Instance",
+          "when": "lower",
+          "field": "m_dwellerInventoryMaxItems",
+          "ctype": "int32_t",
+          "value": 100,
+          "path": [
+            {
+              "field": "m_wasteland",
+              "class": "SurvivalModeWasteland"
+            }
+          ],
+          "root_class": "SurvivalModeParameters",
+          "class": "SurvivalModeWasteland"
+        }
+      ],
+      "section": "Items & crafting"
+    },
+    {
+      "key": "noExtraDeathclawChance",
+      "title": "No Extra Deathclaw Chance",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "DeathclawIncidentsMgr.m_Instance",
+          "when": "higher",
+          "setter": "set_DeathclawTotalExtraChance",
+          "ctype": "float",
+          "value": 0
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "showDebugOverlay",
+      "title": "Show Debug Overlay",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "DebugOverlay.m_Instance",
+          "when": "always",
+          "setter": "set_Visible",
+          "ctype": "bool",
+          "value": true
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "maximumMinimumHappiness",
+      "title": "Maximum Minimum Happiness",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "DwellerManager.m_Instance",
+          "when": "lower",
+          "setter": "set_MinDwellerHappiness",
+          "ctype": "float",
+          "value": 100
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "noRandomAlienIncidents",
+      "title": "No Random Alien Incidents",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "setter": "set_AlienEmergencyChance",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "zeroMaximumDeathclaws",
+      "title": "Zero Maximum Deathclaws",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "setter": "set_DeathclawCountMax",
+          "ctype": "int32_t",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "zeroMinimumDeathclaws",
+      "title": "Zero Minimum Deathclaws",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "setter": "set_DeathclawCountMin",
+          "ctype": "int32_t",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "noDoorDeathclawChanceIncrease",
+      "title": "No Door Deathclaw Chance Increase",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "setter": "set_DeathclawDoorOpenedIncrease",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "noRandomDeathclawIncidents",
+      "title": "No Random Deathclaw Incidents",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "setter": "set_DeathclawEmergencyChance",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "zeroDeathclawChanceCap",
+      "title": "Zero Deathclaw Chance Cap",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "setter": "set_DeathclawEmergencyChanceCap",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "noRandomEnclaveIncidents",
+      "title": "No Random Enclave Incidents",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "setter": "set_EnclaveSecurityEmergencyChance",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "noRandomEyebotIncidents",
+      "title": "No Random Eyebot Incidents",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "setter": "set_EyebotEmergencyChance",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "noRandomFireIncidents",
+      "title": "No Random Fire Incidents",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "setter": "set_FireEmergencyChance",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "disableDataSharing",
+      "title": "Disable Data Sharing",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameFlowManager.m_Instance",
+          "when": "always",
+          "setter": "set_DataSharingActivated",
+          "ctype": "bool",
+          "value": false
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "extendedZoomOut",
+      "title": "Extended Zoom Out",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameFlowManager.m_Instance",
+          "when": "always",
+          "setter": "set_HDZoomOut",
+          "ctype": "bool",
+          "value": true
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "enableLeaderboards",
+      "title": "Enable Leaderboards",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameFlowManager.m_Instance",
+          "when": "always",
+          "setter": "set_LeaderboardsActivated",
+          "ctype": "bool",
+          "value": true
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "disablePersonalizedAds",
+      "title": "Disable Personalized Ads",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameFlowManager.m_Instance",
+          "when": "always",
+          "setter": "set_PersonalizedAdsActivated",
+          "ctype": "bool",
+          "value": false
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "enableScreenshots",
+      "title": "Enable Screenshots",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameFlowManager.m_Instance",
+          "when": "always",
+          "setter": "set_ScreenshotActivated",
+          "ctype": "bool",
+          "value": true
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "disableTips",
+      "title": "Disable Tips",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameFlowManager.m_Instance",
+          "when": "always",
+          "setter": "set_TipsActivated",
+          "ctype": "bool",
+          "value": false
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "holdNukaColaStock",
+      "title": "Hold Nuka-Cola Stock",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "NukaColaTruckWasteland.m_Instance",
+          "when": "lower",
+          "setter": "set_NukaColaInStock",
+          "ctype": "int32_t",
+          "value": "peak"
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "noRadscorpionSpawns",
+      "title": "No Radscorpion Spawns",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_maxRadscorpionsPerMergeLevel",
+          "ctype": "int32_t",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Progress"
+    },
+    {
+      "key": "lootDwellerLevelCap",
+      "title": "Loot Dweller Level Cap",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "always",
+          "field": "m_maxDwellerLevel",
+          "ctype": "int32_t",
+          "value": 50,
+          "path": [
+            {
+              "field": "m_lootParameters",
+              "class": "LootParameters"
+            },
+            {
+              "field": "m_aliensLootPackData",
+              "class": "InvaderLootPackData"
+            },
+            {
+              "field": "m_lootPackRanges",
+              "class": "LootPackRange",
+              "each": "list"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "LootPackRange"
+        }
+      ],
+      "section": "Progress"
+    },
+    {
+      "key": "highLevelLootDwellers",
+      "title": "High Level Loot Dwellers",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "always",
+          "field": "m_minDwellerLevel",
+          "ctype": "int32_t",
+          "value": 50,
+          "path": [
+            {
+              "field": "m_lootParameters",
+              "class": "LootParameters"
+            },
+            {
+              "field": "m_aliensLootPackData",
+              "class": "InvaderLootPackData"
+            },
+            {
+              "field": "m_lootPackRanges",
+              "class": "LootPackRange",
+              "each": "list"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "LootPackRange"
+        }
+      ],
+      "section": "Progress"
+    },
+    {
+      "key": "roomCycleXP",
+      "title": "Room Cycle XP",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "always",
+          "field": "m_experiencePerCycle",
+          "ctype": "float",
+          "value": 100,
+          "path": [
+            {
+              "field": "m_roomParameters",
+              "class": "RoomParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "RoomParameters"
+        }
+      ],
+      "section": "Progress"
+    },
+    {
+      "key": "rushXPMaximum",
+      "title": "Rush XP Maximum",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "always",
+          "field": "m_maxRushExperienceReward",
+          "ctype": "int32_t",
+          "value": 100,
+          "path": [
+            {
+              "field": "m_roomParameters",
+              "class": "RoomParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "RoomParameters"
+        }
+      ],
+      "section": "Progress"
+    },
+    {
+      "key": "rushXPMinimum",
+      "title": "Rush XP Minimum",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "always",
+          "field": "m_minRushExperienceReward",
+          "ctype": "int32_t",
+          "value": 100,
+          "path": [
+            {
+              "field": "m_roomParameters",
+              "class": "RoomParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "RoomParameters"
+        }
+      ],
+      "section": "Progress"
+    },
+    {
+      "key": "rushXPTierBonus",
+      "title": "Rush XP Tier Bonus",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "always",
+          "field": "m_rushExpModPerTier",
+          "ctype": "float",
+          "value": 2,
+          "path": [
+            {
+              "field": "m_roomParameters",
+              "class": "RoomParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "RoomParameters"
+        }
+      ],
+      "section": "Progress"
+    },
+    {
+      "key": "seasonQuestUnlocked",
+      "title": "Season Quest Unlocked",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "SeasonEventTriggerManager.m_Instance",
+          "when": "always",
+          "field": "m_IsNewQuestUnlocked",
+          "ctype": "bool",
+          "value": true,
+          "path": [
+            {
+              "field": "m_playerData",
+              "class": "SeasonEventTriggerPlayerData"
+            }
+          ],
+          "root_class": "SeasonEventTriggerManager",
+          "class": "SeasonEventTriggerPlayerData"
+        }
+      ],
+      "section": "Progress"
+    },
+    {
+      "key": "outfitAgility",
+      "title": "Outfit Agility",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "Dressup[]",
+          "when": "lower",
+          "setter": "set_Agility",
+          "ctype": "float",
+          "value": 10,
+          "path": [
+            {
+              "field": "m_specialStats",
+              "class": "SpecialStatValues"
+            }
+          ],
+          "root_class": "Dressup",
+          "class": "SpecialStatValues"
+        }
+      ],
+      "section": "Progress"
+    },
+    {
+      "key": "outfitCharisma",
+      "title": "Outfit Charisma",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "Dressup[]",
+          "when": "lower",
+          "setter": "set_Charisma",
+          "ctype": "float",
+          "value": 10,
+          "path": [
+            {
+              "field": "m_specialStats",
+              "class": "SpecialStatValues"
+            }
+          ],
+          "root_class": "Dressup",
+          "class": "SpecialStatValues"
+        }
+      ],
+      "section": "Progress"
+    },
+    {
+      "key": "outfitIntelligence",
+      "title": "Outfit Intelligence",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "Dressup[]",
+          "when": "lower",
+          "setter": "set_Intelligence",
+          "ctype": "float",
+          "value": 10,
+          "path": [
+            {
+              "field": "m_specialStats",
+              "class": "SpecialStatValues"
+            }
+          ],
+          "root_class": "Dressup",
+          "class": "SpecialStatValues"
+        }
+      ],
+      "section": "Progress"
+    },
+    {
+      "key": "outfitLuck",
+      "title": "Outfit Luck",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "Dressup[]",
+          "when": "lower",
+          "setter": "set_Luck",
+          "ctype": "float",
+          "value": 10,
+          "path": [
+            {
+              "field": "m_specialStats",
+              "class": "SpecialStatValues"
+            }
+          ],
+          "root_class": "Dressup",
+          "class": "SpecialStatValues"
+        }
+      ],
+      "section": "Progress"
+    },
+    {
+      "key": "outfitPerception",
+      "title": "Outfit Perception",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "Dressup[]",
+          "when": "lower",
+          "setter": "set_Perception",
+          "ctype": "float",
+          "value": 10,
+          "path": [
+            {
+              "field": "m_specialStats",
+              "class": "SpecialStatValues"
+            }
+          ],
+          "root_class": "Dressup",
+          "class": "SpecialStatValues"
+        }
+      ],
+      "section": "Progress"
+    },
+    {
+      "key": "noSurvivalMoleratSpawns",
+      "title": "No Survival Molerat Spawns",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "SurvivalModeParameters.m_Instance",
+          "when": "higher",
+          "field": "m_maxMoleratsPerMergeLevel",
+          "ctype": "int32_t",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_emergency",
+              "class": "SurvivalModeEmergency"
+            }
+          ],
+          "root_class": "SurvivalModeParameters",
+          "class": "SurvivalModeEmergency"
+        }
+      ],
+      "section": "Progress"
+    },
+    {
+      "key": "noSurvivalRadscorpionSpawns",
+      "title": "No Survival Radscorpion Spawns",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "SurvivalModeParameters.m_Instance",
+          "when": "higher",
+          "field": "m_maxRadscorpionsPerMergeLevel",
+          "ctype": "int32_t",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_emergency",
+              "class": "SurvivalModeEmergency"
+            }
+          ],
+          "root_class": "SurvivalModeParameters",
+          "class": "SurvivalModeEmergency"
+        }
+      ],
+      "section": "Progress"
+    },
+    {
+      "key": "abrahamOutfitUnlocked",
+      "title": "Abraham Outfit Unlocked",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "SurvivalWindow.m_Instance",
+          "when": "always",
+          "field": "m_AbrahamOutfitUnlocked",
+          "ctype": "bool",
+          "value": true
+        }
+      ],
+      "section": "Progress"
+    },
+    {
+      "key": "noDwellerRadiation",
+      "title": "No Dweller Radiation",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "Dweller[]",
+          "when": "higher",
+          "setter": "set_RadiationValue",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_health",
+              "class": "DwellerHealth"
+            }
+          ],
+          "root_class": "Dweller",
+          "class": "DwellerHealth"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "enduranceHealthBonus",
+      "title": "Endurance Health Bonus",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "always",
+          "field": "m_healthEnduranceModifierFactor",
+          "ctype": "float",
+          "value": 2,
+          "path": [
+            {
+              "field": "m_dweller",
+              "class": "DwellerParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "DwellerParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "levelHealthBonus",
+      "title": "Level Health Bonus",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "always",
+          "field": "m_healthLevelModifierFactor",
+          "ctype": "float",
+          "value": 2,
+          "path": [
+            {
+              "field": "m_dweller",
+              "class": "DwellerParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "DwellerParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "noStarvationDamage",
+      "title": "No Starvation Damage",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "Vault.m_Instance",
+          "when": "higher",
+          "field": "m_healthDamage",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_dwellerFoodConsumption",
+              "class": "DwellersFoodConsumption"
+            }
+          ],
+          "root_class": "Vault",
+          "class": "DwellersFoodConsumption"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "noWaterShortageRadiation",
+      "title": "No Water Shortage Radiation",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "Vault.m_Instance",
+          "when": "higher",
+          "field": "m_addedRadiation",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_dwellerWaterConsumption",
+              "class": "DwellersWaterConsumption"
+            }
+          ],
+          "root_class": "Vault",
+          "class": "DwellersWaterConsumption"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "noGhoulRadiationDamage",
+      "title": "No Ghoul Radiation Damage",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_dwellerGhoulRadiationDamagePerCycle",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "noRadscorpionRadiationDamage",
+      "title": "No Radscorpion Radiation Damage",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_dwellerRadscorpionRadiationDamagePerCycle",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "weakEnclavePowerArmor",
+      "title": "Weak Enclave Power Armor",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_enclavePowerArmorHealthBase",
+          "ctype": "float",
+          "value": 1,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "noEnclavePowerArmorHealthVariation",
+      "title": "No Enclave Power Armor Health Variation",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "always",
+          "field": "m_enclavePowerArmorHealthVariation",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "weakEnclaveSecurity",
+      "title": "Weak Enclave Security",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_enclaveSecurityHealthBase",
+          "ctype": "float",
+          "value": 1,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "noEnclaveSecurityHealthVariation",
+      "title": "No Enclave Security Health Variation",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "always",
+          "field": "m_enclaveSecurityHealthVariation",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "weakEyebots",
+      "title": "Weak Eyebots",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_eyebotHealthBase",
+          "ctype": "float",
+          "value": 1,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "noEyebotHealthVariation",
+      "title": "No Eyebot Health Variation",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "always",
+          "field": "m_eyebotHealthVariation",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "weakGen1Synths",
+      "title": "Weak Gen 1 Synths",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_gen1SynthHealthBase",
+          "ctype": "float",
+          "value": 1,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "noGen1SynthHealthVariation",
+      "title": "No Gen 1 Synth Health Variation",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "always",
+          "field": "m_gen1SynthHealthVariation",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "weakGen2Synths",
+      "title": "Weak Gen 2 Synths",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_gen2SynthHealthBase",
+          "ctype": "float",
+          "value": 1,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "noGen2SynthHealthVariation",
+      "title": "No Gen 2 Synth Health Variation",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "always",
+          "field": "m_gen2SynthHealthVariation",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "noGhoulHealthVariation",
+      "title": "No Ghoul Health Variation",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "always",
+          "field": "m_ghoulHealthVariation",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "weakGhoulHealthPool",
+      "title": "Weak Ghoul Health Pool",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_ghoulPoolHealthBase",
+          "ctype": "float",
+          "value": 1,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "weakMoleRats",
+      "title": "Weak Mole Rats",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_moleratHealthBase",
+          "ctype": "float",
+          "value": 1,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "noMoleRatHealthVariation",
+      "title": "No Mole Rat Health Variation",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "always",
+          "field": "m_moleratHealthVariation",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "weakProtectrons",
+      "title": "Weak Protectrons",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_protectronHealthBase",
+          "ctype": "float",
+          "value": 1,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "noProtectronHealthVariation",
+      "title": "No Protectron Health Variation",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "always",
+          "field": "m_protectronHealthVariation",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "weakRadroaches",
+      "title": "Weak Radroaches",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_radroachHealthBase",
+          "ctype": "float",
+          "value": 1,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "noRadroachHealthVariation",
+      "title": "No Radroach Health Variation",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "always",
+          "field": "m_radroachHealthVariation",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "weakRadscorpions",
+      "title": "Weak Radscorpions",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_radscorpionHealthBase",
+          "ctype": "float",
+          "value": 1,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "noRadscorpionHealthVariation",
+      "title": "No Radscorpion Health Variation",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "always",
+          "field": "m_radscorpionHealthVariation",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "weakRaiders",
+      "title": "Weak Raiders",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_raiderHealthBase",
+          "ctype": "float",
+          "value": 1,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "noRaiderHealthVariation",
+      "title": "No Raider Health Variation",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "always",
+          "field": "m_raiderHealthVariation",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "weakScorched",
+      "title": "Weak Scorched",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_scorchedHealthBase",
+          "ctype": "float",
+          "value": 1,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "noScorchedHealthVariation",
+      "title": "No Scorched Health Variation",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "always",
+          "field": "m_scorchedHealthVariation",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "weakSecuritrons",
+      "title": "Weak Securitrons",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_securitronHealthBase",
+          "ctype": "float",
+          "value": 1,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "noSecuritronHealthVariation",
+      "title": "No Securitron Health Variation",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "always",
+          "field": "m_securitronHealthVariation",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "fullVaultDoorHealth",
+      "title": "Full Vault Door Health",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "EntranceRoomLevel[]",
+          "when": "lower",
+          "setter": "set_VaultDoorHealth",
+          "ctype": "float",
+          "value": "peak"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "showWastelandHealth",
+      "title": "Show Wasteland Health",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "always",
+          "field": "m_showWastelandHealthLabel",
+          "ctype": "bool",
+          "value": true,
+          "path": [
+            {
+              "field": "m_gui",
+              "class": "GUIParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "GUIParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "showHealthBars",
+      "title": "Show Health Bars",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "HitableEntity[]",
+          "when": "always",
+          "setter": "set_HealthBarShown",
+          "ctype": "bool",
+          "value": true
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "noAlienBossRadiationBlastDamage",
+      "title": "No Alien Boss Radiation Blast Damage",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_bossAlienRadiationBlastDamageMultiplier",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_improvedCombatParameters",
+              "class": "ImprovedCombatParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "ImprovedCombatParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "noAlienBossRadiationOverTime",
+      "title": "No Alien Boss Radiation Over Time",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_bossAlienRadsPerSecondMultiplier",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_improvedCombatParameters",
+              "class": "ImprovedCombatParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "ImprovedCombatParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "noGhoulBossRadiationBlastDamage",
+      "title": "No Ghoul Boss Radiation Blast Damage",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_bossGhoulRadiationBlastDamageMultiplier",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_improvedCombatParameters",
+              "class": "ImprovedCombatParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "ImprovedCombatParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "noGhoulBossRadiationOverTime",
+      "title": "No Ghoul Boss Radiation Over Time",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_bossGhoulRadsPerSecondMultiplier",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_improvedCombatParameters",
+              "class": "ImprovedCombatParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "ImprovedCombatParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "noProtectronBossRadiationBlastDamage",
+      "title": "No Protectron Boss Radiation Blast Damage",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_bossProtectronRadiationBlastDamageMultiplier",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_improvedCombatParameters",
+              "class": "ImprovedCombatParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "ImprovedCombatParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "noProtectronBossRadiationOverTime",
+      "title": "No Protectron Boss Radiation Over Time",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_bossProtectronRadsPerSecondMultiplier",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_improvedCombatParameters",
+              "class": "ImprovedCombatParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "ImprovedCombatParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "noRadroachBossRadiationOverTime",
+      "title": "No Radroach Boss Radiation Over Time",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_bossRadroachRadsPerSecondMultiplier",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_improvedCombatParameters",
+              "class": "ImprovedCombatParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "ImprovedCombatParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "noRadscorpionBossRadiationOverTime",
+      "title": "No Radscorpion Boss Radiation Over Time",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_bossRadscorpionRadsPerSecondMultiplier",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_improvedCombatParameters",
+              "class": "ImprovedCombatParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "ImprovedCombatParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "noEnemyFleeHealthRegeneration",
+      "title": "No Enemy Flee Health Regeneration",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_fleeHealthRegenerationEnemiesFactor",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_improvedCombatParameters",
+              "class": "ImprovedCombatParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "ImprovedCombatParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "fullRadAwayRecovery",
+      "title": "Full RadAway Recovery",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "lower",
+          "field": "m_radawayHealthPercent",
+          "ctype": "float",
+          "value": 100,
+          "path": [
+            {
+              "field": "m_resources",
+              "class": "ResourceParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "ResourceParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "fullStimpackHealing",
+      "title": "Full Stimpack Healing",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "lower",
+          "field": "m_stimpackHealthPercent",
+          "ctype": "float",
+          "value": 100,
+          "path": [
+            {
+              "field": "m_resources",
+              "class": "ResourceParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "ResourceParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "instantRoomUpgrades",
+      "title": "Instant Room Upgrades",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RoomLevel[]",
+          "when": "higher",
+          "field": "m_upgradeTimeCost",
+          "ctype": "int32_t",
+          "value": 0
+        }
+      ],
+      "section": "In-app purchases"
+    },
+    {
+      "key": "extraDwellerChance",
+      "title": "Extra Dweller Chance",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "CardMgr.m_Instance",
+          "when": "lower",
+          "field": "m_additionalDwellerChance",
+          "ctype": "float",
+          "value": 1
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "extraLegendaryChance",
+      "title": "Extra Legendary Chance",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "CardMgr.m_Instance",
+          "when": "lower",
+          "field": "m_additionalLegendaryChance",
+          "ctype": "float",
+          "value": 1
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "extraNukaChance",
+      "title": "Extra Nuka Chance",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "CardMgr.m_Instance",
+          "when": "lower",
+          "field": "m_additionalNukaChance",
+          "ctype": "float",
+          "value": 1
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "extraRareChance",
+      "title": "Extra Rare Chance",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "CardMgr.m_Instance",
+          "when": "lower",
+          "field": "m_additionalRareChance",
+          "ctype": "float",
+          "value": 1
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "extraResourcesChance",
+      "title": "Extra Resources Chance",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "CardMgr.m_Instance",
+          "when": "lower",
+          "field": "m_additionalResourcesChance",
+          "ctype": "float",
+          "value": 1
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "favorJunkOverDecorations",
+      "title": "Favor Junk Over Decorations",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "CardMgr.m_Instance",
+          "when": "lower",
+          "field": "m_junkOddsVersusDecorations",
+          "ctype": "float",
+          "value": 1
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "legendaryDwellerChance",
+      "title": "Legendary Dweller Chance",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "CardMgr.m_Instance",
+          "when": "lower",
+          "field": "m_legendaryDwellerLotteryChance",
+          "ctype": "float",
+          "value": 1
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "legendaryNukaChance",
+      "title": "Legendary Nuka Chance",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "CardMgr.m_Instance",
+          "when": "lower",
+          "field": "m_legendaryNukaLotteryChance",
+          "ctype": "float",
+          "value": 1
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "legendaryResourceChance",
+      "title": "Legendary Resource Chance",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "CardMgr.m_Instance",
+          "when": "lower",
+          "field": "m_legendaryResourceLotteryChance",
+          "ctype": "float",
+          "value": 1
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "minimumOneLegendaryCard",
+      "title": "Minimum One Legendary Card",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "CardMgr.m_Instance",
+          "when": "lower",
+          "field": "m_minLegendaryCards",
+          "ctype": "int32_t",
+          "value": 1
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "minimumOneRareCard",
+      "title": "Minimum One Rare Card",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "CardMgr.m_Instance",
+          "when": "lower",
+          "field": "m_minRareCards",
+          "ctype": "int32_t",
+          "value": 1
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "tenCardsPerPack",
+      "title": "Ten Cards Per Pack",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "CardMgr.m_Instance",
+          "when": "lower",
+          "field": "m_numCardsInPack",
+          "ctype": "int32_t",
+          "value": 10
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "rareDwellerChance",
+      "title": "Rare Dweller Chance",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "CardMgr.m_Instance",
+          "when": "lower",
+          "field": "m_rareDwellerLotteryChance",
+          "ctype": "float",
+          "value": 1
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "rareNukaChance",
+      "title": "Rare Nuka Chance",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "CardMgr.m_Instance",
+          "when": "lower",
+          "field": "m_rareNukaLotteryChance",
+          "ctype": "float",
+          "value": 1
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "rareResourceChance",
+      "title": "Rare Resource Chance",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "CardMgr.m_Instance",
+          "when": "lower",
+          "field": "m_rareResourceLotteryChance",
+          "ctype": "float",
+          "value": 1
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "oneTapRoomEntry",
+      "title": "One-Tap Room Entry",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "Vault.m_Instance",
+          "when": "higher",
+          "field": "m_TapsEnterRoom",
+          "ctype": "int32_t",
+          "value": 1
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "boostCriticalDamage",
+      "title": "Boost Critical Damage",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "Dweller[]",
+          "when": "lower",
+          "field": "m_criticalFactor",
+          "ctype": "float",
+          "value": 2
+        }
+      ],
+      "section": "Combat"
+    },
+    {
+      "key": "keepCriticalMeterFull",
+      "title": "Keep Critical Meter Full",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "Dweller[]",
+          "when": "lower",
+          "field": "m_criticalHitMeter",
+          "ctype": "float",
+          "value": "peak"
+        }
+      ],
+      "section": "Combat"
+    },
+    {
+      "key": "easyCapsAchievements",
+      "title": "Easy Caps Achievements",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementCollectCaps[]",
+          "when": "higher",
+          "field": "m_achievementTargetCaps",
+          "ctype": "float",
+          "value": 1
+        }
+      ],
+      "section": "In-app purchases"
+    },
+    {
+      "key": "easyCapsRequirements",
+      "title": "Easy Caps Requirements",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementCollectCaps[]",
+          "when": "higher",
+          "field": "m_baseTargetCaps",
+          "ctype": "float",
+          "value": 1
+        }
+      ],
+      "section": "In-app purchases"
+    },
+    {
+      "key": "easyCapsObjectives",
+      "title": "Easy Caps Objectives",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementCollectCaps[]",
+          "when": "higher",
+          "field": "m_objectiveTargetCaps",
+          "ctype": "float",
+          "value": 1
+        }
+      ],
+      "section": "In-app purchases"
+    },
+    {
+      "key": "freeRockRemoval",
+      "title": "Free Rock Removal",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RockZone[]",
+          "when": "higher",
+          "field": "m_nukaCost",
+          "ctype": "int32_t",
+          "value": 0
+        }
+      ],
+      "section": "In-app purchases"
+    },
+    {
+      "key": "noAdditionalRoomPrice",
+      "title": "No Additional Room Price",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RoomInfo[]",
+          "when": "higher",
+          "field": "m_additionalPriceFactor",
+          "ctype": "float",
+          "value": 0
+        }
+      ],
+      "section": "In-app purchases"
+    },
+    {
+      "key": "freeQuantumTimeSkip",
+      "title": "Free Quantum Time Skip",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RushWindow[]",
+          "when": "higher",
+          "field": "m_quantumSkipTimeCost",
+          "ctype": "int32_t",
+          "value": 0
+        }
+      ],
+      "section": "In-app purchases"
+    },
+    {
+      "key": "instantCrafting",
+      "title": "Instant Crafting",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "CraftingRoom[]",
+          "when": "higher",
+          "field": "m_craftingRequiredTime",
+          "ctype": "float",
+          "value": 0
+        }
+      ],
+      "section": "Items & crafting"
+    },
+    {
+      "key": "noMinimumCraftingTime",
+      "title": "No Minimum Crafting Time",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "CraftingRoom[]",
+          "when": "higher",
+          "field": "m_minCraftingTime",
+          "ctype": "float",
+          "value": 0
+        }
+      ],
+      "section": "Items & crafting"
+    },
+    {
+      "key": "allowLootCollection",
+      "title": "Allow Loot Collection",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "Fighter[]",
+          "when": "always",
+          "field": "m_canCollectLoot",
+          "ctype": "bool",
+          "value": true
+        }
+      ],
+      "section": "Items & crafting"
+    },
+    {
+      "key": "minimumNukaLoot",
+      "title": "Minimum Nuka Loot",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "Fighter[]",
+          "when": "lower",
+          "field": "m_nukaLoot",
+          "ctype": "int32_t",
+          "value": 1
+        }
+      ],
+      "section": "Items & crafting"
+    },
+    {
+      "key": "reduceBaseJunkGoal",
+      "title": "Reduce Base Junk Goal",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementCollectJunk[]",
+          "when": "higher",
+          "field": "m_baseNumberItemsToCollect",
+          "ctype": "int32_t",
+          "value": 1
+        }
+      ],
+      "section": "Items & crafting"
+    },
+    {
+      "key": "collectOneJunk",
+      "title": "Collect One Junk",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementCollectJunk[]",
+          "when": "higher",
+          "field": "m_targetNumberItemsToCollect",
+          "ctype": "int32_t",
+          "value": 1
+        }
+      ],
+      "section": "Items & crafting"
+    },
+    {
+      "key": "reduceOutfitGoal",
+      "title": "Reduce Outfit Goal",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementCollectOutifts[]",
+          "when": "higher",
+          "field": "m_numberItemsToCollect",
+          "ctype": "int32_t",
+          "value": 1
+        }
+      ],
+      "section": "Items & crafting"
+    },
+    {
+      "key": "collectOneOutfit",
+      "title": "Collect One Outfit",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementCollectOutifts[]",
+          "when": "higher",
+          "field": "m_targetNumberItemsToCollect",
+          "ctype": "int32_t",
+          "value": 1
+        }
+      ],
+      "section": "Items & crafting"
+    },
+    {
+      "key": "reduceBasePetGoal",
+      "title": "Reduce Base Pet Goal",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementCollectPet[]",
+          "when": "higher",
+          "field": "m_baseNumberItemsToCollect",
+          "ctype": "int32_t",
+          "value": 1
+        }
+      ],
+      "section": "Items & crafting"
+    },
+    {
+      "key": "collectOnePet",
+      "title": "Collect One Pet",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementCollectPet[]",
+          "when": "higher",
+          "field": "m_targetNumberItemsToCollect",
+          "ctype": "int32_t",
+          "value": 1
+        }
+      ],
+      "section": "Items & crafting"
+    },
+    {
+      "key": "reduceBaseWeaponGoal",
+      "title": "Reduce Base Weapon Goal",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementCollectWeapons[]",
+          "when": "higher",
+          "field": "m_baseNumberItemsToCollect",
+          "ctype": "int32_t",
+          "value": 1
+        }
+      ],
+      "section": "Items & crafting"
+    },
+    {
+      "key": "collectOneWeapon",
+      "title": "Collect One Weapon",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementCollectWeapons[]",
+          "when": "higher",
+          "field": "m_targetNumberItemsToCollect",
+          "ctype": "int32_t",
+          "value": 1
+        }
+      ],
+      "section": "Items & crafting"
+    },
+    {
+      "key": "reduceBaseCraftingGoal",
+      "title": "Reduce Base Crafting Goal",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementCraftItem[]",
+          "when": "higher",
+          "field": "m_baseNumberItemsToCraft",
+          "ctype": "int32_t",
+          "value": 1
+        }
+      ],
+      "section": "Items & crafting"
+    },
+    {
+      "key": "craftOneItem",
+      "title": "Craft One Item",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementCraftItem[]",
+          "when": "higher",
+          "field": "m_targetNumberItemsToCraft",
+          "ctype": "int32_t",
+          "value": 1
+        }
+      ],
+      "section": "Items & crafting"
+    },
+    {
+      "key": "reduceBaseQuestLootGoal",
+      "title": "Reduce Base Quest Loot Goal",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementQuestLoot[]",
+          "when": "higher",
+          "field": "m_baseNumberLoot",
+          "ctype": "int32_t",
+          "value": 1
+        }
+      ],
+      "section": "Items & crafting"
+    },
+    {
+      "key": "collectOneQuestLoot",
+      "title": "Collect One Quest Loot",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementQuestLoot[]",
+          "when": "higher",
+          "field": "m_targetNumberLoot",
+          "ctype": "int32_t",
+          "value": 1
+        }
+      ],
+      "section": "Items & crafting"
+    },
+    {
+      "key": "reduceBaseScrappingGoal",
+      "title": "Reduce Base Scrapping Goal",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementScrapItem[]",
+          "when": "higher",
+          "field": "m_baseNumberItemsToScrap",
+          "ctype": "int32_t",
+          "value": 1
+        }
+      ],
+      "section": "Items & crafting"
+    },
+    {
+      "key": "scrapOneItem",
+      "title": "Scrap One Item",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementScrapItem[]",
+          "when": "higher",
+          "field": "m_targetNumberItemsToCollect",
+          "ctype": "int32_t",
+          "value": 1
+        }
+      ],
+      "section": "Items & crafting"
+    },
+    {
+      "key": "reduceBaseSellingGoal",
+      "title": "Reduce Base Selling Goal",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementSellItems[]",
+          "when": "higher",
+          "field": "m_baseGoalItems",
+          "ctype": "int32_t",
+          "value": 1
+        }
+      ],
+      "section": "Items & crafting"
+    },
+    {
+      "key": "sellOneItem",
+      "title": "Sell One Item",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementSellItems[]",
+          "when": "higher",
+          "field": "m_goalItems",
+          "ctype": "int32_t",
+          "value": 1
+        }
+      ],
+      "section": "Items & crafting"
+    },
+    {
+      "key": "themesCrafted",
+      "title": "Themes Crafted",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "ThemeRecipeEntry[]",
+          "when": "always",
+          "field": "m_isCrafted",
+          "ctype": "bool",
+          "value": true
+        }
+      ],
+      "section": "Items & crafting"
+    },
+    {
+      "key": "maxBottleCappyTriggerChance",
+      "title": "Max Bottle & Cappy Trigger Chance",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "BottleAndCappyMgr.m_Instance",
+          "when": "lower",
+          "field": "m_accumulatedTriggerChance",
+          "ctype": "float",
+          "value": 1
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "disableDeathclawIncidents",
+      "title": "Disable Deathclaw Incidents",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "DeathclawIncidentsMgr.m_Instance",
+          "when": "always",
+          "field": "m_canDeathclawEmergencyOccurs",
+          "ctype": "bool",
+          "value": false
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "noExtraDeathclawChance2",
+      "title": "No Extra Deathclaw Chance",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "DeathclawIncidentsMgr.m_Instance",
+          "when": "higher",
+          "field": "m_deathclawTotalExtraChance",
+          "ctype": "float",
+          "value": 0
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "allowStrangerAppearances",
+      "title": "Allow Stranger Appearances",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "MysteriousStrangerMgr.m_Instance",
+          "when": "always",
+          "field": "m_canAppear",
+          "ctype": "bool",
+          "value": true
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "allowObjectiveChanges",
+      "title": "Allow Objective Changes",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "ObjectiveMgr.m_Instance",
+          "when": "always",
+          "field": "m_canChangeObjective",
+          "ctype": "bool",
+          "value": true
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "noRushNukaMultiplier",
+      "title": "No-Rush Nuka Multiplier",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "lower",
+          "field": "m_noRushNukaMultiplier",
+          "ctype": "float",
+          "value": 2,
+          "path": [
+            {
+              "field": "m_roomParameters",
+              "class": "RoomParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "RoomParameters"
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "noRushResourceMultiplier",
+      "title": "No-Rush Resource Multiplier",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "lower",
+          "field": "m_noRushResourcesMultiplier",
+          "ctype": "float",
+          "value": 2,
+          "path": [
+            {
+              "field": "m_roomParameters",
+              "class": "RoomParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "RoomParameters"
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "noRushAdCooldown",
+      "title": "No Rush Ad Cooldown",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_rushAdCooldown",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_roomParameters",
+              "class": "RoomParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "RoomParameters"
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "noRushDisasterChancePerTier",
+      "title": "No Rush Disaster Chance per Tier",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_rushDisasterChancePerTier",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_roomParameters",
+              "class": "RoomParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "RoomParameters"
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "rushNukaMultiplier",
+      "title": "Rush Nuka Multiplier",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "lower",
+          "field": "m_rushNukaMultiplier",
+          "ctype": "float",
+          "value": 2,
+          "path": [
+            {
+              "field": "m_roomParameters",
+              "class": "RoomParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "RoomParameters"
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "rushResourceMultiplier",
+      "title": "Rush Resource Multiplier",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "lower",
+          "field": "m_rushResourcesMultiplier",
+          "ctype": "float",
+          "value": 2,
+          "path": [
+            {
+              "field": "m_roomParameters",
+              "class": "RoomParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "RoomParameters"
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "noGiftingCooldown",
+      "title": "No Gifting Cooldown",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_giftingCooldownInMinutes",
+          "ctype": "int32_t",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_socialParameters",
+              "class": "SocialParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "SocialParameters"
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "suppressLowHappinessMessage",
+      "title": "Suppress Low Happiness Message",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "Vault.m_Instance",
+          "when": "always",
+          "field": "m_lowHappinessMessageShown",
+          "ctype": "bool",
+          "value": true
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "suppressLowPowerMessage",
+      "title": "Suppress Low Power Message",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "Vault.m_Instance",
+          "when": "always",
+          "field": "m_lowPowerMessageShown",
+          "ctype": "bool",
+          "value": true
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "suppressLowResourcesMessage",
+      "title": "Suppress Low Resources Message",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "Vault.m_Instance",
+          "when": "always",
+          "field": "m_lowResourcesMessageShown",
+          "ctype": "bool",
+          "value": true
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "suppressLowStorageMessage",
+      "title": "Suppress Low Storage Message",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "Vault.m_Instance",
+          "when": "always",
+          "field": "m_lowStorageMessageShown",
+          "ctype": "bool",
+          "value": true
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "raiseDwellerLimit",
+      "title": "Raise Dweller Limit",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "Vault.m_Instance",
+          "when": "lower",
+          "field": "m_maxDwellers",
+          "ctype": "int32_t",
+          "value": 99
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "removeMinimumRushFailureChance",
+      "title": "Remove Minimum Rush Failure Chance",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "Vault.m_Instance",
+          "when": "higher",
+          "field": "m_minimumRushFailureChance",
+          "ctype": "float",
+          "value": 0
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "suppressPregnancyEmergencyWarning",
+      "title": "Suppress Pregnancy Emergency Warning",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "Vault.m_Instance",
+          "when": "always",
+          "field": "m_pregnancyEmergencyWarningShown",
+          "ctype": "bool",
+          "value": true
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "suppressPregnancySpaceWarning",
+      "title": "Suppress Pregnancy Space Warning",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "Vault.m_Instance",
+          "when": "always",
+          "field": "m_pregnancyVaultSpaceWarningShown",
+          "ctype": "bool",
+          "value": true
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "disable2DAmbience",
+      "title": "Disable 2D Ambience",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "VaultSoundMgr.m_Instance",
+          "when": "always",
+          "field": "m_enable2dAmbience",
+          "ctype": "bool",
+          "value": false
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "disable3DAmbience",
+      "title": "Disable 3D Ambience",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "VaultSoundMgr.m_Instance",
+          "when": "always",
+          "field": "m_enable3dAmbience",
+          "ctype": "bool",
+          "value": false
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "raiseWastelandMrHandyLimit",
+      "title": "Raise Wasteland Mr. Handy Limit",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "Wasteland.m_Instance",
+          "when": "lower",
+          "field": "m_maxMrHandy",
+          "ctype": "int32_t",
+          "value": 99
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "allowAnyPetForQuestRequirements",
+      "title": "Allow Any Pet for Quest Requirements",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementQuestSpecificLoadout[]",
+          "when": "always",
+          "field": "m_completeWithAnyPet",
+          "ctype": "bool",
+          "value": true
+        }
+      ],
+      "section": "Pet & companion"
+    },
+    {
+      "key": "noRadioCharismaRequirement",
+      "title": "No Radio Charisma Requirement",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "ConditionRadioEvent[]",
+          "when": "higher",
+          "field": "m_charismaThreshold",
+          "ctype": "int32_t",
+          "value": 0
+        }
+      ],
+      "section": "Progress"
+    },
+    {
+      "key": "noDwellerRequirementForUpgrades",
+      "title": "No Dweller Requirement for Upgrades",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequiredDwellersLevel[]",
+          "when": "higher",
+          "field": "UpgradeRequiredDwellers",
+          "ctype": "int32_t",
+          "value": 0
+        }
+      ],
+      "section": "Progress"
+    },
+    {
+      "key": "noDwellerLevelRequirement",
+      "title": "No Dweller Level Requirement",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementDwellerLevel[]",
+          "when": "higher",
+          "field": "m_targetLevel",
+          "ctype": "int32_t",
+          "value": 0
+        }
+      ],
+      "section": "Progress"
+    },
+    {
+      "key": "noDwellerLevelUpRequirement",
+      "title": "No Dweller Level-Up Requirement",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementLevelUpDwellers[]",
+          "when": "higher",
+          "field": "m_baseDwellersToLevelUp",
+          "ctype": "int32_t",
+          "value": 0
+        }
+      ],
+      "section": "Progress"
+    },
+    {
+      "key": "noBaseSPECIALTrainingRequirement",
+      "title": "No Base SPECIAL Training Requirement",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementRaiseSpecialLevel[]",
+          "when": "higher",
+          "field": "m_baseSpecialLevelsToRaise",
+          "ctype": "int32_t",
+          "value": 0
+        }
+      ],
+      "section": "Progress"
+    },
+    {
+      "key": "noSPECIALTrainingTarget",
+      "title": "No SPECIAL Training Target",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementRaiseSpecialLevel[]",
+          "when": "higher",
+          "field": "m_targetSpecialLevelsToRaise",
+          "ctype": "int32_t",
+          "value": 0
+        }
+      ],
+      "section": "Progress"
+    },
+    {
+      "key": "noRoomMergeRequirement",
+      "title": "No Room Merge Requirement",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementRoom[]",
+          "when": "higher",
+          "field": "m_mergeLevel",
+          "ctype": "int32_t",
+          "value": 0
+        }
+      ],
+      "section": "Progress"
+    },
+    {
+      "key": "noRoomLevelRequirement",
+      "title": "No Room Level Requirement",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementRoom[]",
+          "when": "higher",
+          "field": "m_roomLevel",
+          "ctype": "int32_t",
+          "value": 0
+        }
+      ],
+      "section": "Progress"
+    },
+    {
+      "key": "instantEntranceTransition",
+      "title": "Instant Entrance Transition",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "QuestSetupReferences.m_Instance",
+          "when": "higher",
+          "field": "PostEntranceAnimationTransitionTime",
+          "ctype": "float",
+          "value": 0
+        }
+      ],
+      "section": "Exploration"
+    },
+    {
+      "key": "t2xGameSpeed",
+      "title": "2x Game Speed",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "TimeMgr.m_Instance",
+          "when": "lower",
+          "field": "m_timeScale",
+          "ctype": "float",
+          "value": 2
+        }
+      ],
+      "section": "Exploration"
+    },
+    {
+      "key": "noDailyRewardRequirement",
+      "title": "No Daily Reward Requirement",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementCollectDailyRewards[]",
+          "when": "higher",
+          "field": "m_targetRewards",
+          "ctype": "int32_t",
+          "value": 0
+        }
+      ],
+      "section": "In-app purchases"
+    },
+    {
+      "key": "noBaseBarberRequirement",
+      "title": "No Base Barber Requirement",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementUseBarberShop[]",
+          "when": "higher",
+          "field": "m_baseNumberOfCustomizations",
+          "ctype": "int32_t",
+          "value": 0
+        }
+      ],
+      "section": "In-app purchases"
+    },
+    {
+      "key": "rareSeasonSplashScreens",
+      "title": "Rare Season Splash Screens",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "SeasonPassDataManager[]",
+          "when": "lower",
+          "field": "m_NumDaysBetweenSplashDisplays",
+          "ctype": "float",
+          "value": 36500
+        }
+      ],
+      "section": "In-app purchases"
+    },
+    {
+      "key": "noExVaultDwellerRequirement",
+      "title": "No Ex Vault Dweller Requirement",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "SeasonPassDataManager[]",
+          "when": "higher",
+          "field": "m_minDwellerCountForExVaultUnlock",
+          "ctype": "int32_t",
+          "value": 0
+        }
+      ],
+      "section": "In-app purchases"
+    },
+    {
+      "key": "enableSeasonalLootboxRewards",
+      "title": "Enable Seasonal Lootbox Rewards",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "SeasonPassDataManager[]",
+          "when": "always",
+          "field": "m_seasonalLootboxRewardsEnabled",
+          "ctype": "bool",
+          "value": true
+        }
+      ],
+      "section": "In-app purchases"
+    },
+    {
+      "key": "enableSeasonalRoomThemes",
+      "title": "Enable Seasonal Room Themes",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "SeasonPassDataManager[]",
+          "when": "always",
+          "field": "m_seasonalRoomThemesEnabled",
+          "ctype": "bool",
+          "value": true
+        }
+      ],
+      "section": "In-app purchases"
+    },
+    {
+      "key": "suppressSeasonShopWarning",
+      "title": "Suppress Season Shop Warning",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "SeasonPassShopWarningModal[]",
+          "when": "always",
+          "field": "m_doNotShowAgain",
+          "ctype": "bool",
+          "value": true
+        }
+      ],
+      "section": "In-app purchases"
+    },
+    {
+      "key": "suppressStarterPackPopup",
+      "title": "Suppress Starter Pack Popup",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "StarterPackWindow[]",
+          "when": "always",
+          "field": "m_alreadyShowedInCurrentPlaySession",
+          "ctype": "bool",
+          "value": true
+        }
+      ],
+      "section": "In-app purchases"
+    },
+    {
+      "key": "unlockThemeEntries",
+      "title": "Unlock Theme Entries",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "ThemeManagementWindowEntry[]",
+          "when": "always",
+          "field": "m_isLocked",
+          "ctype": "bool",
+          "value": false
+        }
+      ],
+      "section": "In-app purchases"
+    },
+    {
+      "key": "enableThemeUnlocking",
+      "title": "Enable Theme Unlocking",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "ThemeManagementWindowEntry[]",
+          "when": "always",
+          "field": "m_isUnlockable",
+          "ctype": "bool",
+          "value": true
+        }
+      ],
+      "section": "In-app purchases"
+    },
+    {
+      "key": "enableSeasonPassArrows",
+      "title": "Enable Season Pass Arrows",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "UISeasonPassArrowButton[]",
+          "when": "always",
+          "field": "m_isEnabled",
+          "ctype": "bool",
+          "value": true
+        }
+      ],
+      "section": "In-app purchases"
+    },
+    {
+      "key": "unlockThemeRecipes",
+      "title": "Unlock Theme Recipes",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "ThemeRecipeEntry[]",
+          "when": "always",
+          "field": "m_isLocked",
+          "ctype": "bool",
+          "value": false
+        }
+      ],
+      "section": "Items & crafting"
+    },
+    {
+      "key": "instantTooltips",
+      "title": "Instant Tooltips",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "UICamera.current",
+          "when": "higher",
+          "field": "tooltipDelay",
+          "ctype": "float",
+          "value": 0
+        }
+      ],
+      "section": "Items & crafting"
+    },
+    {
+      "key": "noRadioDeathclawChance",
+      "title": "No Radio Deathclaw Chance",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RadioLevel[]",
+          "when": "higher",
+          "field": "m_deathclawExtraChance",
+          "ctype": "float",
+          "value": 0
+        }
+      ],
+      "section": "Progress"
+    },
+    {
+      "key": "maxRadioSearchChance",
+      "title": "Max Radio Search Chance",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RadioLevel[]",
+          "when": "lower",
+          "field": "m_dwellerSearchChance",
+          "ctype": "float",
+          "value": 1
+        }
+      ],
+      "section": "Progress"
+    },
+    {
+      "key": "maxLegendaryDwellerChance",
+      "title": "Max Legendary Dweller Chance",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RadioLevel[]",
+          "when": "lower",
+          "field": "m_legendaryDwellerChance",
+          "ctype": "float",
+          "value": 1
+        }
+      ],
+      "section": "Progress"
+    },
+    {
+      "key": "maxRareDwellerChance",
+      "title": "Max Rare Dweller Chance",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RadioLevel[]",
+          "when": "lower",
+          "field": "m_rareDwellerChance",
+          "ctype": "float",
+          "value": 1
+        }
+      ],
+      "section": "Progress"
+    },
+    {
+      "key": "maxRadioSuccessChance",
+      "title": "Max Radio Success Chance",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RadioLevel[]",
+          "when": "lower",
+          "field": "m_successRate",
+          "ctype": "float",
+          "value": 1
+        }
+      ],
+      "section": "Progress"
+    },
+    {
+      "key": "levelUpObjectivesAnywhere",
+      "title": "Level Up Objectives Anywhere",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementLevelUpDwellers[]",
+          "when": "always",
+          "field": "m_onlyInWasteland",
+          "ctype": "bool",
+          "value": false
+        }
+      ],
+      "section": "Progress"
+    },
+    {
+      "key": "anySPECIALCounts",
+      "title": "Any SPECIAL Counts",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementRaiseSpecialLevel[]",
+          "when": "always",
+          "field": "m_anySpecialStat",
+          "ctype": "bool",
+          "value": true
+        }
+      ],
+      "section": "Progress"
+    },
+    {
+      "key": "disablePermadeath",
+      "title": "Disable Permadeath",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "Dweller[]",
+          "when": "always",
+          "field": "m_permaDeath",
+          "ctype": "bool",
+          "value": false,
+          "path": [
+            {
+              "field": "m_health",
+              "class": "DwellerHealth"
+            }
+          ],
+          "root_class": "Dweller",
+          "class": "DwellerHealth"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "noWastelandRadiationChance",
+      "title": "No Wasteland Radiation Chance",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RadiationCycle[]",
+          "when": "higher",
+          "field": "m_Probability",
+          "ctype": "int32_t",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_Radiations",
+              "class": "WastelandRadiationInfo",
+              "each": "array"
+            }
+          ],
+          "root_class": "RadiationCycle",
+          "class": "WastelandRadiationInfo"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "doubleAttackScale",
+      "title": "Double Attack Scale",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "Fighter[]",
+          "when": "always",
+          "setter": "set_AttackScale",
+          "ctype": "float",
+          "value": 2
+        }
+      ],
+      "section": "Combat"
+    },
+    {
+      "key": "instantEncounterMessages",
+      "title": "Instant Encounter Messages",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_encounterFinalMessageDelay",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_wastelandParameters",
+              "class": "WastelandParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "WastelandParameters"
+        }
+      ],
+      "section": "Exploration"
+    },
+    {
+      "key": "instantEncounterProgress",
+      "title": "Instant Encounter Progress",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_encounterProgressDelay",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_wastelandParameters",
+              "class": "WastelandParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "WastelandParameters"
+        }
+      ],
+      "section": "Exploration"
+    },
+    {
+      "key": "instantEncounterResults",
+      "title": "Instant Encounter Results",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_encounterResultDelay",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_wastelandParameters",
+              "class": "WastelandParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "WastelandParameters"
+        }
+      ],
+      "section": "Exploration"
+    },
+    {
+      "key": "noReviveRetryCostIncrease",
+      "title": "No Revive Retry Cost Increase",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_reviveCostMultiplerPerRetry",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_dweller",
+              "class": "DwellerParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "DwellerParameters"
+        }
+      ],
+      "section": "In-app purchases"
+    },
+    {
+      "key": "fullHealthAfterInvasionRevival",
+      "title": "Full Health After Invasion Revival",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "lower",
+          "field": "m_exVaultPostInvasionReviveHealthRatio",
+          "ctype": "float",
+          "value": 1,
+          "path": [
+            {
+              "field": "m_emergencyParameters",
+              "class": "EmergencyParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "EmergencyParameters"
+        }
+      ],
+      "section": "In-app purchases"
+    },
+    {
+      "key": "suppressStarterPackPopup2",
+      "title": "Suppress Starter Pack Popup",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "ShopWindow[]",
+          "when": "always",
+          "setter": "set_HasStarterPackPopupShown",
+          "ctype": "bool",
+          "value": true
+        }
+      ],
+      "section": "In-app purchases"
+    },
+    {
+      "key": "muteAudio",
+      "title": "Mute Audio",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "AudioController[]",
+          "when": "always",
+          "setter": "set_DisableAudio",
+          "ctype": "bool",
+          "value": true
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "rushAlwaysSucceeds",
+      "title": "Rush Always Succeeds",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "ProductionRoom[]",
+          "when": "always",
+          "setter": "set_CheatRushAlwaysSucceeds",
+          "ctype": "bool",
+          "value": true
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "higherPetLimit",
+      "title": "Higher Pet Limit",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "Vault.m_Instance",
+          "when": "lower",
+          "field": "m_maximumPetCount",
+          "ctype": "int32_t",
+          "value": 1000
+        }
+      ],
+      "section": "Pet & companion"
+    },
+    {
+      "key": "noPowerRequirement",
+      "title": "No Power Requirement",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_EnergyRequirementScaleFactor",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_resources",
+              "class": "ResourceParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "ResourceParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "noFoodOrWaterRequirement",
+      "title": "No Food or Water Requirement",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_waterFoodRequirementScaleFactor",
+          "ctype": "float",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_resources",
+              "class": "ResourceParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "ResourceParameters"
+        }
+      ],
+      "section": "Survival"
+    },
+    {
+      "key": "allowDialogClosing",
+      "title": "Allow Dialog Closing",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "MessageOneButtonDialog[]",
+          "when": "always",
+          "field": "m_Uncloseable",
+          "ctype": "bool",
+          "value": false
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "noTextNewlineDelay",
+      "title": "No Text Newline Delay",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "TypewriterEffect.current",
+          "when": "higher",
+          "field": "delayOnNewLine",
+          "ctype": "float",
+          "value": 0
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "noTextPeriodDelay",
+      "title": "No Text Period Delay",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "TypewriterEffect.current",
+          "when": "higher",
+          "field": "delayOnPeriod",
+          "ctype": "float",
+          "value": 0
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "suppressStarterPackPopup3",
+      "title": "Suppress Starter Pack Popup",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "ShopWindow[]",
+          "when": "always",
+          "field": "m_hasStarterPackPopupShown",
+          "ctype": "bool",
+          "value": true
+        }
+      ],
+      "section": "In-app purchases"
+    },
+    {
+      "key": "keepInventoryItemCounts",
+      "title": "Keep Inventory Item Counts",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "DwellerInventoryItem[]",
+          "when": "lower",
+          "field": "m_itemCount",
+          "ctype": "int32_t",
+          "value": "peak"
+        }
+      ],
+      "section": "Items & crafting"
+    },
+    {
+      "key": "instantItemDrag",
+      "title": "Instant Item Drag",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "UIDragDropItem[]",
+          "when": "higher",
+          "field": "pressAndHoldDelay",
+          "ctype": "float",
+          "value": 0
+        }
+      ],
+      "section": "Items & crafting"
+    },
+    {
+      "key": "instantFixedItemDrag",
+      "title": "Instant Fixed Item Drag",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "UIDragDropItemFixed[]",
+          "when": "higher",
+          "field": "pressAndHoldDelay",
+          "ctype": "float",
+          "value": 0
+        }
+      ],
+      "section": "Items & crafting"
+    },
+    {
+      "key": "oneLegendaryDwellerTarget",
+      "title": "One Legendary Dweller Target",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "AchievementCollectLegendaryDwellers[]",
+          "when": "higher",
+          "field": "m_targetLegendaryDwellers",
+          "ctype": "int32_t",
+          "value": 1
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "oneLegendaryOutfitTarget",
+      "title": "One Legendary Outfit Target",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "AchievementCollectLegendaryOutfits[]",
+          "when": "higher",
+          "field": "m_targetLegendaryOutfits",
+          "ctype": "int32_t",
+          "value": 1
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "oneCompletedObjectiveTarget",
+      "title": "One Completed Objective Target",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "AchievementObjectivesCompleted[]",
+          "when": "higher",
+          "field": "m_targetNumberOfCompletedObjectives",
+          "ctype": "int32_t",
+          "value": 1
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "strangerClickable",
+      "title": "Stranger Clickable",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "MysteriousStranger[]",
+          "when": "always",
+          "field": "m_canClick",
+          "ctype": "bool",
+          "value": true
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "highlightStranger",
+      "title": "Highlight Stranger",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "MysteriousStranger[]",
+          "when": "always",
+          "field": "m_enableOutline",
+          "ctype": "bool",
+          "value": true
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "noTruckUnloadDelay",
+      "title": "No Truck Unload Delay",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "NukaColaTruckWasteland.m_Instance",
+          "when": "higher",
+          "field": "m_unloadDelay",
+          "ctype": "float",
+          "value": 0
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "minimumObjectiveBaseReward",
+      "title": "Minimum Objective Base Reward",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "Objective[]",
+          "when": "lower",
+          "field": "m_baseRewardAmount",
+          "ctype": "int32_t",
+          "value": 1000
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "noRoomDisasters",
+      "title": "No Room Disasters",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "ProductionRoom[]",
+          "when": "higher",
+          "field": "m_disasterChanceBase",
+          "ctype": "float",
+          "value": 0
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "allowQuestEscape",
+      "title": "Allow Quest Escape",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "QuestRoom[]",
+          "when": "always",
+          "field": "m_canEscape",
+          "ctype": "bool",
+          "value": true,
+          "path": [
+            {
+              "field": "m_challenge",
+              "class": "QuestChallenge"
+            }
+          ],
+          "root_class": "QuestRoom",
+          "class": "QuestChallenge"
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "meetQuestRequirements",
+      "title": "Meet Quest Requirements",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "QuestEntry[]",
+          "when": "always",
+          "field": "m_isAllRequirementsMeet",
+          "ctype": "bool",
+          "value": true,
+          "path": [
+            {
+              "field": "m_requirements",
+              "class": "QuestEntryRequirements"
+            }
+          ],
+          "root_class": "QuestEntry",
+          "class": "QuestEntryRequirements"
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "radioDwellerReady",
+      "title": "Radio Dweller Ready",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RadioStationRoom[]",
+          "when": "always",
+          "field": "m_newDwellerReady",
+          "ctype": "bool",
+          "value": true
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "radioHappinessOnly",
+      "title": "Radio Happiness Only",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RadioStationRoom[]",
+          "when": "always",
+          "field": "m_onlyIncreaseHappiness",
+          "ctype": "bool",
+          "value": true
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "easyRightRoomObjective",
+      "title": "Easy Right Room Objective",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementAssignInRightRoom[]",
+          "when": "higher",
+          "field": "m_targetDwellers",
+          "ctype": "int32_t",
+          "value": 1
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "easyBabiesObjective",
+      "title": "Easy Babies Objective",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementBabies[]",
+          "when": "higher",
+          "field": "m_targetBabies",
+          "ctype": "int32_t",
+          "value": 1
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "easyBaldDwellersObjective",
+      "title": "Easy Bald Dwellers Objective",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementBaldDwellersInVault[]",
+          "when": "higher",
+          "field": "m_targetBaldDwellers",
+          "ctype": "int32_t",
+          "value": 1
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "easyThemeCollectionObjective",
+      "title": "Easy Theme Collection Objective",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementCollectAllThemeParts[]",
+          "when": "higher",
+          "field": "m_targetThemesCollected",
+          "ctype": "int32_t",
+          "value": 1
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "easyCouplesObjective",
+      "title": "Easy Couples Objective",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementCouplesInRoom[]",
+          "when": "higher",
+          "field": "m_goalCouples",
+          "ctype": "int32_t",
+          "value": 1
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "lowerAssignmentStatRequirement",
+      "title": "Lower Assignment Stat Requirement",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementDwellerAssignMinStat[]",
+          "when": "higher",
+          "field": "m_minStatValue",
+          "ctype": "int32_t",
+          "value": 0
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "easyDwellerAssignmentObjective",
+      "title": "Easy Dweller Assignment Objective",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementDwellerAssignMinStat[]",
+          "when": "higher",
+          "field": "m_numberToAssign",
+          "ctype": "int32_t",
+          "value": 1
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "easyOutfitEquipObjective",
+      "title": "Easy Outfit Equip Objective",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementEquip[]",
+          "when": "higher",
+          "field": "m_targetOutfits",
+          "ctype": "int32_t",
+          "value": 1
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "easyFireExtinguishingObjective",
+      "title": "Easy Fire Extinguishing Objective",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementExtinguishFires[]",
+          "when": "higher",
+          "field": "m_targetFires",
+          "ctype": "int32_t",
+          "value": 1
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "easyMysteriousStrangerObjective",
+      "title": "Easy Mysterious Stranger Objective",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "RequirementFindMysteriousStranger[]",
+          "when": "higher",
+          "field": "m_targetMysteriousStranger",
+          "ctype": "int32_t",
+          "value": 1
+        }
+      ],
+      "section": "Other"
+    },
+    {
+      "key": "noSurpriseQuestPopupDelay",
+      "title": "No Surprise Quest Popup Delay",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "GameParameters.m_Instance",
+          "when": "higher",
+          "field": "m_delayInBetweenSurpriseQuestPopup_Minutes",
+          "ctype": "int32_t",
+          "value": 0,
+          "path": [
+            {
+              "field": "m_surpriseQuestParameters",
+              "class": "SurpriseQuestParameters"
+            }
+          ],
+          "root_class": "GameParameters",
+          "class": "SurpriseQuestParameters"
+        }
+      ],
+      "section": "Other"
     }
   ]
 }
