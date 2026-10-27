@@ -273,8 +273,12 @@ def zip_names(read):
 ENGINES = [  # first match wins
     ("Unity IL2CPP", lambda n: any(x.endswith("UnityFramework.framework/UnityFramework") for x in n)
                                and any(x.endswith("global-metadata.dat") for x in n)),
+    # Unity before 2019.3 builds the game into the main app with the IL2CPP functions unexported: dumpable, but the
+    # runtime finds those functions by name, so no switch can run (Dustoff II 1.6.2, 2026-10-27)
+    ("Unity IL2CPP, old (code in the main app)", lambda n: any(x.endswith("global-metadata.dat") for x in n)),
     ("Unity (no IL2CPP metadata)", lambda n: any("UnityFramework.framework/" in x for x in n)),
-    ("Unreal", lambda n: any(re.search(r"(UE4|UnrealGame|cookeddata|\.pak$)", x, re.IGNORECASE) for x in n)),
+    # Unreal's own markers only: a bare case-blind "ue4" also matched Minecraft's "become_statue4.fsb"
+    ("Unreal", lambda n: any(re.search(r"(?:^|/)UE[45]|UnrealGame|(?i:cookeddata)|/Paks/[^/]+\.pak$", x) for x in n)),
     ("Godot", lambda n: any(x.endswith(".pck") or "godot" in x.lower() for x in n)),
     ("Cocos", lambda n: any("cocos" in x.lower() for x in n)),
     ("Flutter", lambda n: any("Flutter.framework/" in x for x in n)),

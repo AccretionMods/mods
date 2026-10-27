@@ -59,6 +59,12 @@ class FileList(unittest.TestCase):
         self.assertEqual(appstore.engine_of(["Payload/A.app/cookeddata/game.pak"])[0], "Unreal")
         self.assertEqual(appstore.engine_of(["Payload/A.app/Frameworks/Flutter.framework/Flutter"])[0], "Flutter")
         self.assertEqual(appstore.engine_of(["Payload/A.app/A"]), ("Native or other", False))
+        # a sound file named "...statue4.fsb" is not Unreal (Minecraft); Unreal's .pak files live under Paks/
+        self.assertEqual(appstore.engine_of(["Payload/A.app/data/sounds/become_statue4.fsb"])[0], "Native or other")
+        self.assertEqual(appstore.engine_of(["Payload/A.app/Game/Content/Paks/pakchunk0.pak"])[0], "Unreal")
+        # old Unity: the game in the main app, metadata but no UnityFramework (dumpable, no switches)
+        self.assertEqual(appstore.engine_of(["Payload/A.app/A", "Payload/A.app/Data/Managed/Metadata/global-metadata.dat"]),
+                         ("Unity IL2CPP, old (code in the main app)", False))
 
     def test_check_remembers_and_asks_before_a_license(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"AM_ROOT": tmp}):

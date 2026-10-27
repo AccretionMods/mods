@@ -284,6 +284,24 @@ def index_old_dumps():
         print(f"==> dump cache: {folder.name} registered ({how})")
 
 
+def engine_check(ipa, bundle, version):
+    """Refuses a game our scan and switches can't mod, saying which engine it is; the verdict is remembered for
+    Studio's game list (appstore.remember, the same file the App Store check writes)."""
+    with zipfile.ZipFile(ipa) as z:
+        names = z.namelist()
+    engine, ok = appstore.engine_of(names)
+    try:
+        appstore.remember(bundle, {"engine": engine, "compatible": ok, "version": version, "files": len(names),
+                                   "checked": time.strftime("%Y-%m-%d"), "source": "local .ipa"})
+    except OSError:
+        pass  # a verdict Studio can't save still stops the dump below
+    if ok:
+        return
+    why = ("its IL2CPP functions aren't exported, so no switch could run on it" if engine.startswith("Unity IL2CPP")
+           else "the scan and the switches need a Unity IL2CPP game")
+    raise DevError(f"{ipa.name} is {engine}: {why}")
+
+
 def dump_build(ipa, force=False, structs=False, fallback_dir=None):
     """dump.cs of an .ipa's game build, dumped once (scripts/dump_cache.py): a build already dumped is reused
     without running the dumper; force dumps it again in the same folder; structs also writes il2cpp.h and
@@ -292,6 +310,7 @@ def dump_build(ipa, force=False, structs=False, fallback_dir=None):
     info, app = ipa_info(ipa)
     version = info.get("CFBundleShortVersionString", "0")
     bundle = info.get("CFBundleIdentifier") or "game"
+    engine_check(ipa, bundle, version)  # before any folder: a game we can't mod leaves nothing behind
     if not dump_cache.index_path(am_root()).is_file():
         index_old_dumps()
     key = dump_cache.key_of_ipa(ipa, app)
@@ -345,6 +364,21 @@ def dump(mod, base=None, force=False, structs=False):
     state.update(base_ipa=str(ipa), app_version=version, dump_dir=str(dump_cs.parent.parent), dump_key=key)
     save_state(mod, state)
     return dump_cs
+
+
+def cmd_dump(args):
+    """dump, then the scan, so a dumped game never waits unscanned (its result is cached for Studio's Scan tab)."""
+    if not dump(args.mod, args.base, args.force, args.structs):
+        return 1
+    if getattr(args, "no_scan", False):
+        return 0
+    try:
+        result, _ = scan_rows(args.mod)
+        print(f"==> scanned: {len(result['rows'])} candidates in {result['classes']} game classes"
+              f" (dev.py scan {args.mod} lists them)")
+    except (DevError, OSError, ValueError) as error:  # the dump stands; the scan can be run again on its own
+        print(f"==> dumped, but the scan didn't finish: {error} (dev.py scan {args.mod} retries it)")
+    return 0
 
 
 def cmd_dumps(args):
@@ -3057,7 +3091,8 @@ def build_parser():
     s.add_argument("--base")
     s.add_argument("--force", action="store_true", help="run the dumper again for this build")
     s.add_argument("--structs", action="store_true", help="also write il2cpp.h and script.json (~500 MB)")
-    s.set_defaults(fn=lambda a: 0 if dump(a.mod, a.base, a.force, a.structs) else 1)
+    s.add_argument("--no-scan", action="store_true", help="skip the scan that follows the dump")
+    s.set_defaults(fn=cmd_dump)
 
     s = sub.add_parser("dumps", help="the dump cache: every dumped game build, its size and the mods using it")
     s.add_argument("--index", action="store_true", help="register dumps made before the cache (in place)")

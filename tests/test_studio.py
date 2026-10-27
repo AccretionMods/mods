@@ -22,6 +22,19 @@ from test_dev_cli import DUMP
 
 
 class Api(unittest.TestCase):
+    def test_measure_probes_read_only_and_drop_numbers_the_game_never_uses(self):
+        row = {"class": "Core.EntityData", "member": "walkSpeed", "object": "Core.Entities.Entity[]",
+               "root_class": "Core.Entities.Entity", "path": [{"field": "PlayData", "class": "Core.EntityData"}],
+               "ctype": "double", "kind": "field"}
+        pin = autobuild.probe(row)
+        self.assertEqual((pin["field"], pin["class"], pin["root_class"], pin["path"]),
+                         ("walkSpeed", "Core.EntityData", "Core.Entities.Entity", row["path"]))
+        self.assertEqual(autobuild.probe(dict(row, member="set_Speed", kind="setter", path=None))["setter"], "set_Speed")
+        self.assertTrue(autobuild.dead(row, 9, [0, 0, 0, 0]))  # Entity._data.speed in 9 Kings
+        self.assertFalse(autobuild.dead(row, 9, [0, 1.52, 4.59]))  # a real walkSpeed
+        self.assertFalse(autobuild.dead(row, 0, []))  # nothing in play right now: not judged
+        self.assertFalse(autobuild.dead(dict(row, ctype="bool"), 9, [0, 0]))  # false is a normal bool
+
     def test_autobuild_preserves_nested_paths_for_json_and_legacy_answers(self):
         row = {"class": "HotFixBattle:Hero", "object": "HotFix:Game.world", "root_class": "HotFix:World",
                "path": [{"field": "hero", "class": "HotFixBattle:Hero"}], "member": "Health",

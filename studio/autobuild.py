@@ -331,6 +331,76 @@ def stream_log(mod, seconds):
     return proc.wait() == 0
 
 
+NUMBERS = {"int32_t", "int64_t", "float", "double"}
+
+
+def probe(row):
+    """A live pin that only reads a scan row's target (never turned on): what am snap reads for it."""
+    pin = {"object": row["object"], "ctype": row["ctype"], "value": 0, "when": "always"}
+    member = row["member"]
+    pin["setter" if row["kind"] == "setter" else "field"] = member
+    if row.get("path") is not None and row.get("root_class"):
+        pin.update(root_class=row["root_class"], path=row["path"], **{"class": row["class"]})
+    return pin
+
+
+def measure(mod, rows, wait=8):
+    """The live values of rows' targets in the running game: {target: (objects, values from two readings)}, read
+    by the build's AMLivePins snapshot (am snap) through a live file of read-only probes. The phone's own live file
+    goes back afterwards. Needs the game open in play on the USB phone."""
+    bundle = dev.installed_id(mod)
+    if not bundle:
+        raise dev.DevError(f"{mod} is not on the phone: install it first (Run), then open a game")
+    cli, work = dev.pymobiledevice3_cli(), dev.am_root() / "work"
+    work.mkdir(parents=True, exist_ok=True)
+    keys = {f"measure{i}": f"{r['class']}.{r['member']}" for i, r in enumerate(rows)}
+    tweaks = [{"key": k, "title": k, "kind": "switch", "hooks": [], "pins": [probe(r)]} for k, r in zip(keys, rows)]
+    prior, live, snap = (work / f"measure-{mod}-{name}.json" for name in ("before", "live", "snap"))
+    prior.unlink(missing_ok=True)
+    had = subprocess.run([cli, "apps", "pull", bundle, "Documents/live_tweaks.json", str(prior)],
+                         capture_output=True, text=True, check=False).returncode == 0 and prior.is_file()
+    readings = []
+    try:
+        for n in range(2):
+            if n:
+                time.sleep(wait)  # the game moves on between the readings
+            sid = f"measure-{int(time.time())}-{n}"
+            live.write_text(json.dumps({"title": "measure", "tweaks": tweaks, "snapshot": {"id": sid}}), encoding="utf-8")
+            subprocess.run([cli, "apps", "push", bundle, str(live), "Documents/live_tweaks.json"],
+                           capture_output=True, text=True, check=True)
+            for _ in range(10):
+                time.sleep(2)
+                snap.unlink(missing_ok=True)
+                subprocess.run([cli, "apps", "pull", bundle, "Documents/am_snapshot.json", str(snap)],
+                               capture_output=True, text=True, check=False)
+                try:
+                    data = json.loads(snap.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    continue
+                if data.get("id") == sid:
+                    readings.append(data["values"])
+                    break
+            else:
+                raise dev.DevError("the game sent no snapshot: is it open (a build from 1.0.12 on)?")
+    finally:  # the phone's own live switches back, or none
+        if had:
+            subprocess.run([cli, "apps", "push", bundle, str(prior), "Documents/live_tweaks.json"],
+                           capture_output=True, text=True, check=False)
+        else:
+            subprocess.run([cli, "apps", "rm", bundle, "Documents/live_tweaks.json"],
+                           capture_output=True, text=True, check=False)
+    return {target: (max(r.get(k, {}).get("objects", 0) for r in readings),
+                     [v for r in readings for v in r.get(k, {}).get("values", [])]) for k, target in keys.items()}
+
+
+def dead(row, objects, values):
+    """A number that reads exactly 0 on every object in both readings: a value the game doesn't use (9 Kings'
+    Entity._data.speed), or one it sets only in another phase: 9 Kings' PlayData.walkSpeed is 0 between fights
+    and 1.1-16 during one, so measure where the switch matters. Booleans are often false; a target with no object
+    now can't be judged."""
+    return row["ctype"] in NUMBERS and objects > 0 and bool(values) and all(v == 0 for v in values)
+
+
 def dev_py(*args):
     say("$ am " + " ".join(shlex.quote(a) for a in args))
     run = subprocess.run([sys.executable, str(ROOT / "scripts" / "dev.py"), *args], cwd=ROOT, text=True,
@@ -349,6 +419,12 @@ def main(argv=None):
     p.add_argument("--limit", type=int, default=0, help="at most this many switches (0: every usable one)")
     p.add_argument("--workers", type=int, default=0, help="batches asked at once (default: per engine)")
     p.add_argument("--no-install", action="store_true", help="stop after the build")
+    p.add_argument("--measure", action="store_true",
+                   help="read the picks' live values in the running game first (phone on USB, game open in play) "
+                        "and list numbers that read 0 on every object")
+    p.add_argument("--measure-drop", action="store_true",
+                   help="like --measure, and leave those out: measure where the switches matter (in a fight for "
+                        "combat values), since some games zero a value between phases")
     p.add_argument("--skip-flagged", action="store_true",
                    help="leave out rows labelled shop, ads, accounts or online (and the In-app purchases area)")
     p.add_argument("--areas", help="only these scan areas, comma-separated (Survival,Combat,Progress...)")
@@ -440,7 +516,7 @@ def main(argv=None):
     say("==> 3/5 adding the picked switches")
     tweaks = json.loads((folder / "tweaks.json").read_text(encoding="utf-8"))
     taken = {t["key"] for t in tweaks.get("tweaks", [])}
-    pins, targets = [], set()
+    pins, targets, picked = [], set(), {}
     for n in sorted(results):  # batch order: the scan's best rows first
         for kind, what in results[n][0]:
             if kind == "row":
@@ -464,6 +540,8 @@ def main(argv=None):
                 continue  # one switch per field or setter
             targets.add(name)
             pins.append((argv_, target.get("area")))
+            if kind == "row":
+                picked[name] = target
             for sib in target.get("family") or []:  # the same field on its sibling classes: one switch for all
                 if "--as" not in argv_[:-1]:
                     break
@@ -476,6 +554,25 @@ def main(argv=None):
                     more += ["--root-class", sib["root_class"], "--path", json.dumps(sib["path"])]
                 targets.add(more[2])
                 pins.append((more, None))
+    if (args.measure or args.measure_drop) and picked:
+        say(f"==> measuring {len(picked)} picks in the running game (two readings 8 s apart)")
+        try:
+            live = measure(mod, list(picked.values()))
+        except (dev.DevError, OSError, subprocess.CalledProcessError) as error:
+            say(f"  not measured ({error}): every pick is kept")
+            live = {}
+        zero = {name for name, row in picked.items() if name in live and dead(row, *live[name])}
+        unseen = sum(1 for name in picked if live.get(name, (0, []))[0] == 0)
+        for name in sorted(zero):
+            say(f"  reads 0 on every object right now: {name} (unused, or set only in another phase such as a fight)"
+                + (": left out" if args.measure_drop else ": kept"))
+        if args.measure_drop:  # measured where the switches matter: zeros are values the game doesn't use
+            dropped_keys = {a[a.index("--as") + 1] for a, _ in pins if a[2] in zero and "--as" in a[:-1]}
+            pins = [(a, s) for a, s in pins
+                    if a[2] not in zero and not ("--to" in a and a[a.index("--to") + 1] in dropped_keys)]
+        if live:
+            say(f"    {len(zero)} read 0 ({'left out' if args.measure_drop else 'kept'}), {len(picked) - len(zero)} live"
+                + (f"; {unseen} had no object in play right now (kept, not judged)" if unseen else ""))
     if limit:
         pins = pins[:limit]
     if not pins:

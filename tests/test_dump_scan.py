@@ -702,6 +702,23 @@ public struct Vector2D // TypeDefIndex: 24
 {
 	public float armor; // 0x10
 }
+
+// Namespace:
+public class Mob : MonoBehaviour // TypeDefIndex: 25
+{
+	public MobData PlayData; // 0x18
+}
+
+// Namespace:
+public class AaaBoss : Mob // TypeDefIndex: 26
+{
+}
+
+// Namespace:
+public class MobData // TypeDefIndex: 27
+{
+	public float walkSpeed; // 0x10
+}
 """
 
 
@@ -750,6 +767,12 @@ class MoreShapes(unittest.TestCase):
         row = self.rows["Tank._areaBoost.AttackStrengthBoost"]
         self.assertEqual(row["area"], "Combat")
         self.assertNotIn("flag", row)
+
+    def test_a_class_both_a_base_and_its_subclass_reach_is_routed_through_the_base(self):
+        # AaaBoss sorts first, but Mob[] holds every boss too: the base's list covers every unit
+        row = self.rows["MobData.walkSpeed"]
+        self.assertEqual(row["object"], "Mob[]")
+        self.assertEqual(row["path"], [{"field": "PlayData", "class": "MobData"}])
 
     def test_package_structs_are_left_out_and_shape_structs_rank_lower(self):
         self.assertNotIn("Tank.label.mRTL_IgnoreArabicFix", self.rows)  # I2 Localization's text struct

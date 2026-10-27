@@ -22,7 +22,7 @@ from pathlib import Path
 
 from il2cpp_dump import ADDRESS, FLOATS, INTEGERS, SIGNATURE, TYPE, TYPE_INDEX, Method, split_params
 
-VERSION = 24  # struct values labelled by their own name, package structs skipped, shape structs lower; values inside struct fields ("outer.inner"); sibling families grouped; generic base members specialized per subclass; ScriptableObject data assets as roots; get-only properties through their backing fields; assemblies chosen by content too, bought packages ranked low; object routes cached; presentation, counter and bookkeeping rows ranked lower; the game's own assembly from its bundle ID
+VERSION = 25  # inherited fields routed through the declaring class's object list, game roots before UI ones; struct values labelled by their own name, package structs skipped, shape structs lower; values inside struct fields ("outer.inner"); sibling families grouped; generic base members specialized per subclass; ScriptableObject data assets as roots; get-only properties through their backing fields; assemblies chosen by content too, bought packages ranked low; object routes cached; presentation, counter and bookkeeping rows ranked lower; the game's own assembly from its bundle ID
 
 IMAGE = re.compile(r"^// Image \d+: (.+?)(?:\.dll)? - (\d+)\s*$")
 NAMESPACE = re.compile(r"^\s*// Namespace: ?(\S*)")
@@ -573,8 +573,13 @@ def object_paths(classes, max_hops=8):
             paths[cls] = {"object": obj, "root_class": root, "path": path, "reach": reach}
             queue.append(cls)
 
-    # Existing direct roots win ties; adding other static roots never alters their shape.
-    for cls, info in sorted(classes.items()):
+    # Existing direct roots win ties; adding other static roots never alters their shape. Game classes seed before
+    # UI and presentation ones, so a value both reach goes through the game object (EnemyController, not EnemyItemUI)
+    def ui(cls):
+        local = cls.rpartition(":")[2]
+        return bool(PRESENTATION.search(local.rsplit(".", 1)[-1]) or UI_NAMESPACE.search(local.rpartition(".")[0]))
+
+    for cls, info in sorted(classes.items(), key=lambda item: (ui(item[0]), item[0])):
         if DEMO.search(cls) or info.get("type_kind") in {"struct", "interface"}:
             continue
         statics = info.get("statics", [])
@@ -619,6 +624,12 @@ def object_paths(classes, max_hops=8):
                     step = {kind: member, "class": target}
                     if each:
                         step["each"] = each
+                    if owner != cls and not current["path"] and paths.get(owner, {}).get("object") == f"{owner}[]":
+                        # inherited from a class with its own object list: that list holds this one's objects too,
+                        # so the route goes through it (Entity[].PlayData, not Boss_Blood[] or the castle alone)
+                        if not DEMO.search(target):
+                            offer(target, f"{owner}[]", owner, [step], paths[owner]["reach"])
+                        continue
                     edges.append((target, step))
         edges.extend((target, {"class": target}) for target in children.get(cls, []))
         for target, step in edges:
