@@ -59,3 +59,6 @@ class DetectionRegistry(unittest.TestCase):
 
     def test_unimplemented_contract_cannot_activate_via_registered_callbacks(self):
         subprocess.run([self.exe, "unimplemented"], check=True)
+
+    def test_unknown_process_query_contract_never_installs(self):
+        subprocess.run([self.exe, "process_query"], check=True)

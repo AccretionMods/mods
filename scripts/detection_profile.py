@@ -13,7 +13,7 @@ LISTS = (
     "environment_names",
     "image_basenames",
 )
-FEATURES = ("filesystem", "foundation", "urls", "environment", "images", "directories")
+FEATURES = ("filesystem", "foundation", "urls", "environment", "images", "directories", "writes", "process")
 MODULES = ("filesystem", "environment", "foundation", "urls", "directories", "writes",
            "preferences", "loader", "objc", "process", "sdk")
 ADVANCED_FIELDS = {"image_fingerprints", "module_modes", "write_probes", "preference_domains",
@@ -34,6 +34,9 @@ APIS.update({"readlink": "filesystem", "fstatat": "filesystem",
              "opendir": "directories", "readdir": "directories", "closedir": "directories",
              "foundation_directory_paths": "directories", "foundation_directory_urls": "directories",
              "foundation_enumerator_paths": "directories", "foundation_enumerator_urls": "directories"})
+APIS.update({"posix_spawn": "process", "sysctl": "process",
+             "foundation_string_write_path": "writes", "foundation_string_write_url": "writes",
+             "foundation_data_write_path": "writes", "foundation_data_write_url": "writes"})
 FIELDS = {
     "schema_version",
     "game_version",
@@ -229,7 +232,7 @@ def problems(data, app_version=None):
                 errors.append("image_basenames cannot contain paths")
             elif key == "adapters" and value not in FEATURES:
                 errors.append("unknown adapter")
-            elif key == "adapters" and value == "directories" and schema != 2:
+            elif key == "adapters" and value in ("directories", "writes", "process") and schema != 2:
                 errors.append("advanced adapter requires schema 2")
             elif (
                 key == "images"
@@ -291,6 +294,9 @@ def advanced_problems(data):
     else:
         seen = set()
         for probe in probes:
+            if isinstance(probe, dict) and set(probe)=={"token"} and probe["token"]=="private_display_name":
+                if "@private_display_name" in seen: errors.append("duplicate write probe")
+                seen.add("@private_display_name");continue
             if not isinstance(probe, dict) or set(probe) != {"path"} or not isinstance(probe["path"], str):
                 errors.append("write probe requires an exact path")
                 continue
@@ -306,8 +312,24 @@ def advanced_problems(data):
     directory_group = {"opendir", "readdir", "closedir"}
     if selected & directory_group and not directory_group <= selected:
         errors.append("native directory filtering requires opendir, readdir and closedir together")
-    if probes and not selected.intersection(("open", "fopen")):
+    if probes and not selected.intersection(("open", "fopen", "foundation_string_write_path", "foundation_string_write_url", "foundation_data_write_path", "foundation_data_write_url")):
         errors.append("write probes require an explicit write-capable entry point")
+    spawns = data.get("spawn_rules", [])
+    if not isinstance(spawns, list) or len(spawns)>64:
+        errors.append("spawn_rules must contain at most 64 exact executable paths")
+    else:
+        seen = set()
+        for rule in spawns:
+            if (not isinstance(rule, dict) or set(rule) not in ({"path"},{"path","error"}) or
+                    not isinstance(rule.get("path"),str) or rule.get("error","EACCES")!="EACCES"):
+                errors.append("spawn rule requires an exact path and EACCES denial");continue
+            path=rule["path"]
+            if path in seen: errors.append("duplicate spawn rule")
+            seen.add(path)
+            base={"schema_version":1,"game_version":data.get("game_version"),"mode":"off","images":[],"adapters":[],"paths":[path]}
+            if problems(base): errors.append("broad, ambiguous or protected spawn rule")
+        if spawns and "posix_spawn" not in selected:
+            errors.append("spawn rules require posix_spawn selection")
     if (selected - LEGACY_APIS or probes) and data.get("mode") != "off":
         images = data.get("images", [])
         if (not isinstance(fingerprints, dict) or not isinstance(images, list) or
@@ -315,7 +337,7 @@ def advanced_problems(data):
             errors.append("advanced entry points require fingerprints for all selected images")
     # Reserve remaining fields without silently accepting unimplemented policy.
     # Their owning adapter task replaces this rejection with its exact contract.
-    for name in ("preference_domains", "spawn_rules", "hidden_components", "sdk_adapters"):
+    for name in ("preference_domains", "hidden_components", "sdk_adapters"):
         value = data.get(name, [])
         if not isinstance(value, list) or value:
             errors.append(f"{name} requires its supported adapter; currently unavailable")
@@ -341,6 +363,15 @@ def c_string(value):
         )
         + '"'
     )
+
+
+def expand_write_probe(display_name):
+    if (not isinstance(display_name, str) or not display_name or display_name in (".", "..") or
+            any(c in display_name for c in ("/", "\\", "\0")) or
+            display_name.lower() in ("var", "etc", "tmp", "preboot") or
+            len(display_name.encode("utf-8")) > 4086):
+        raise ValueError("display name must be a bounded nonprotected path component")
+    return "/private/" + display_name
 
 
 def profile_identity(data):
@@ -405,10 +436,16 @@ def render(data):
             + "};"
         )
         out.append(f"#define AM_DETECTION_{key.upper()}_COUNT {len(values)}")
-    write_paths = [probe["path"] for probe in data.get("write_probes", [])]
-    out.append("static const char *const am_detection_write_paths[] = {"
-               + (", ".join(c_string(v) for v in write_paths) or "NULL") + "};")
+    write_paths = [probe.get("path") for probe in data.get("write_probes", [])]
+    out.append("static const char *am_detection_write_paths[] = {"
+               + (", ".join(c_string(v) if v is not None else "NULL" for v in write_paths) or "NULL") + "};")
     out.append(f"#define AM_DETECTION_WRITE_PATHS_COUNT {len(write_paths)}")
+    dynamic = [i for i,value in enumerate(write_paths) if value is None]
+    out.append(f"#define AM_DETECTION_WRITE_DYNAMIC_COUNT {len(dynamic)}")
+    out.append("static const unsigned am_detection_write_dynamic_indices[] = {" + (",".join(map(str,dynamic)) or "0") + "};")
+    spawn_paths = [rule["path"] for rule in data.get("spawn_rules", [])]
+    out.append("static const char *const am_detection_spawn_paths[] = {" + (",".join(c_string(p) for p in spawn_paths) or "NULL") + "};")
+    out.append(f"#define AM_DETECTION_SPAWN_PATHS_COUNT {len(spawn_paths)}")
     out.append(
         "static const char *const am_detection_image_ids[] = {"
         + (
@@ -427,12 +464,14 @@ def render(data):
             )
             + "},"
         )
-    out.append("    {" + (", ".join(c_string(rule_identity("write_probes", v)) for v in write_paths) or "NULL") + "},")
+    out.append("    {" + (", ".join(c_string(rule_identity("write_probes", v if v is not None else "@private_display_name")) for v in write_paths) or "NULL") + "},")
+    out.append("    {" + (", ".join(c_string(rule_identity("spawn_rules", v)) for v in spawn_paths) or "NULL") + "},")
     out.append("};")
     out += [
         "static const AMDetectionProfile am_detection_profile = {",
         "    .mode = AM_DETECTION_PROFILE_MODE, .rules = {",
         "        .write_paths = am_detection_write_paths, .write_count = AM_DETECTION_WRITE_PATHS_COUNT,",
+        "        .spawn_paths = am_detection_spawn_paths, .spawn_count = AM_DETECTION_SPAWN_PATHS_COUNT,",
         "        .paths = am_detection_paths, .path_count = AM_DETECTION_PATHS_COUNT,",
         "        .path_prefixes = am_detection_path_prefixes, .prefix_count = AM_DETECTION_PATH_PREFIXES_COUNT,",
         "        .url_schemes = am_detection_url_schemes, .scheme_count = AM_DETECTION_URL_SCHEMES_COUNT,",

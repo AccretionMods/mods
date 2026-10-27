@@ -17,8 +17,8 @@ static _Thread_local unsigned am_file_depth;
 
 bool AMDetectionConfigureFiles(const AMDetectionProfile *p,const AMDetectionOriginals *o,bool (*ready)(AMDetectionEntryID)) {
     if (am_file_profile || !p || !o || (unsigned)p->mode>AM_DETECTION_FILTER) return false;
-    const size_t counts[]={p->rules.path_count,p->rules.prefix_count,p->rules.environment_count,p->rules.scheme_count,p->rules.write_count};
-    const void *lists[]={p->rules.paths,p->rules.path_prefixes,p->rules.environment_names,p->rules.url_schemes,p->rules.write_paths};
+    const size_t counts[]={p->rules.path_count,p->rules.prefix_count,p->rules.environment_count,p->rules.scheme_count,p->rules.write_count,p->rules.spawn_count};
+    const void *lists[]={p->rules.paths,p->rules.path_prefixes,p->rules.environment_names,p->rules.url_schemes,p->rules.write_paths,p->rules.spawn_paths};
     for (size_t i=0;i<sizeof counts/sizeof *counts;i++) if (counts[i]>64 || (counts[i] && !lists[i])) return false;
     am_file_originals=*o;am_file_ready=ready;am_file_profile=p;return true;
 }

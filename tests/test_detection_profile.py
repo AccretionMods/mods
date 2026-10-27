@@ -11,6 +11,22 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class DetectionProfile(unittest.TestCase):
+    def test_dynamic_write_probe_and_exact_spawn_rules_are_strict(self):
+        identity = {"algorithm": "sha256-executable-sections-v1", "uuid": "a" * 32,
+                    "sha256": "b" * 64, "ranges": [{"offset": 512, "size": 64}]}
+        p = dict(self.profile, schema_version=2, adapters=["filesystem", "process"], apis=["open", "posix_spawn"],
+                 write_probes=[{"token": "private_display_name"}], spawn_rules=[{"path": "/bin/sh", "error": "EACCES"}],
+                 image_fingerprints={name: identity for name in self.profile["images"]})
+        self.assertEqual(self.module.problems(p), [])
+        header = self.module.render(p)
+        self.assertIn("#define AM_DETECTION_WRITE_DYNAMIC_COUNT 1", header)
+        self.assertIn(".spawn_paths = am_detection_spawn_paths", header)
+        for probes in ([{"token": "unknown"}], [{"token": "private_display_name"}] * 2):
+            self.assertTrue(self.module.problems(dict(p, write_probes=probes)))
+        for rules in ([{"path": "/", "error": "EACCES"}], [{"path": "/bin/sh", "error": "success"}],
+                      [{"path": "/bin/sh", "argv": ["anything"]}], [{"path": "/bin/sh"}] * 2):
+            self.assertTrue(self.module.problems(dict(p, spawn_rules=rules)))
+
     def test_directory_native_group_requires_all_lifetime_entrypoints(self):
         identity = {"algorithm": "sha256-executable-sections-v1", "uuid": "a" * 32,
                     "sha256": "b" * 64, "ranges": [{"offset": 512, "size": 64}]}

@@ -100,13 +100,16 @@ int main(int argc,char **argv) {
         assert(AMDetectionPublishModule(AM_DETECTION_MODULE_FILES));
         assert(!AMDetectionModuleActive(AM_DETECTION_MODULE_FILES));
         assert(AMDetectionModuleStatus(AM_DETECTION_MODULE_FILES).state==AM_DETECTION_OBSERVING);
-    } else if (!strcmp(argv[1],"unimplemented")) {
-        AMDetectionEntryID id=AM_DETECTION_ENTRY_ENUMERATOR_PATHS;install(id);
+    } else if (!strcmp(argv[1],"unimplemented") || !strcmp(argv[1],"process_query")) {
+        bool process=!strcmp(argv[1],"process_query");
+        AMDetectionEntryID id=process ? AM_DETECTION_ENTRY_SYSCTL : AM_DETECTION_ENTRY_ENUMERATOR_PATHS;
+        AMDetectionModuleID module=process ? AM_DETECTION_MODULE_PROCESS : AM_DETECTION_MODULE_DIRECTORIES;
+        install(id);
         assert(AMDetectionConfigureRegistry(&id,1,4,AM_DETECTION_FILTER));
-        assert(!AMDetectionPrepareModule(AM_DETECTION_MODULE_DIRECTORIES));
-        assert(!AMDetectionPublishModule(AM_DETECTION_MODULE_DIRECTORIES));
-        assert(!prepared && !published && !AMDetectionModuleActive(AM_DETECTION_MODULE_DIRECTORIES));
-        AMDetectionModuleResult status=AMDetectionModuleStatus(AM_DETECTION_MODULE_DIRECTORIES);
+        assert(!AMDetectionPrepareModule(module));
+        assert(!AMDetectionPublishModule(module));
+        assert(!prepared && !published && !AMDetectionModuleActive(module));
+        AMDetectionModuleResult status=AMDetectionModuleStatus(module);
         assert(status.state==AM_DETECTION_UNSUPPORTED && status.reason==AM_DETECTION_REASON_CONTRACT_UNIMPLEMENTED);
     } else if (!strcmp(argv[1],"gate")) {
         AMDetectionEntryID id=1; install(id);

@@ -10,7 +10,7 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCES = ("tests/detection_foundation_directory_contract.m", "runtime/AMDetectionDirectories.m",
+SOURCES = ("tests/detection_foundation_directory_contract.m", "runtime/AMDetectionDirectories.m", "runtime/AMDetectionWrites.m",
            "runtime/AMDetectionPolicy.h", "runtime/AMDetectionPolicy.c", "runtime/AMDetectionRegistry.h",
            "runtime/AMDetectionRegistry.c", "runtime/AMDetectionHooks.h", "runtime/AMDetectionHooks.c",
            "runtime/AMDetectionFiles.h", "runtime/AMDetectionFiles.c", "runtime/AMDetectionDiagnostics.h",
@@ -20,7 +20,7 @@ SOURCES = ("tests/detection_foundation_directory_contract.m", "runtime/AMDetecti
 def run_contracts(output):
     source_data = {name: (ROOT / name).read_bytes().replace(b"\r\n", b"\n") for name in SOURCES}
     hashes = {name: hashlib.sha256(data).hexdigest() for name, data in source_data.items()}
-    report = {"schema_version": 1, "fixture": "foundation-directory-contract-v1",
+    report = {"schema_version": 1, "fixture": "foundation-file-contract-v2",
               "source_digest_algorithm": "sha256-lf-source-map-v1", "sources": hashes,
               "source_digest": hashlib.sha256(json.dumps(hashes, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
               "status": "unavailable", "executed": False, "device_verified": False,
@@ -76,7 +76,7 @@ def run_contracts(output):
                     return report, 1
                 report["executed"] = True
                 stream.write(result.stdout);stream.write(result.stderr)
-                if result.returncode or result.stdout.strip() != b"PASS foundation-directory-contract-v1":
+                if result.returncode or result.stdout.strip() != b"PASS foundation-file-contract-v2":
                     report.update(status="failed", reason="contract_failed", mode=mode, return_code=result.returncode)
                     return report, 1
                 report["passed_modes"].append(mode)

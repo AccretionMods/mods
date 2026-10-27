@@ -11,11 +11,22 @@
 #include "AMDetectionHooks.c"
 #include "AMDetectionRegistry.c"
 #include "AMDetectionDirectories.h"
+#include "AMDetectionProcess.h"
+#include "AMDetectionWrites.h"
+#if AM_DETECTION_API_POSIX_SPAWN
+#include "AMDetectionProcess.c"
+#endif
+#if AM_DETECTION_WRITE_DYNAMIC_COUNT > 0
+#include "AMDetectionWrites.c"
+#endif
 #if AM_DETECTION_API_OPENDIR || AM_DETECTION_API_READDIR || AM_DETECTION_API_CLOSEDIR
 #include "AMDetectionDirectories.c"
 #endif
 #ifndef AM_DETECTION_APPLE_DIRECTORY_CONTRACTS_VERIFIED
 #define AM_DETECTION_APPLE_DIRECTORY_CONTRACTS_VERIFIED 0
+#endif
+#ifndef AM_DETECTION_APPLE_WRITE_CONTRACTS_VERIFIED
+#define AM_DETECTION_APPLE_WRITE_CONTRACTS_VERIFIED 0
 #endif
 #if AM_DETECTION_FINGERPRINT_COUNT > 0
 #include "AMDetectionIdentity.c"
@@ -27,6 +38,8 @@ static size_t am_detection_binding_count;
 static bool am_detection_started,am_detection_version_ok;
 static bool am_detection_fingerprints_ok=true;
 static bool am_detection_directory_initialization_failed;
+static bool am_detection_process_initialization_failed,am_detection_write_probes_ok=true;
+static AMDetectionSupportReason am_detection_write_probe_reason=AM_DETECTION_REASON_NONE;
 static AMDetectionSupportReason am_detection_fingerprint_reason=AM_DETECTION_REASON_NONE;
 static NSTimeInterval am_detection_started_at;
 static dispatch_source_t am_detection_report_timer;
@@ -64,6 +77,12 @@ static bool am_detection_entry_enabled(AMDetectionEntryID id) {
         case AM_DETECTION_ENTRY_DIRECTORY_URLS: return AM_DETECTION_API_FOUNDATION_DIRECTORY_URLS;
         case AM_DETECTION_ENTRY_ENUMERATOR_PATHS: return AM_DETECTION_API_FOUNDATION_ENUMERATOR_PATHS;
         case AM_DETECTION_ENTRY_ENUMERATOR_URLS: return AM_DETECTION_API_FOUNDATION_ENUMERATOR_URLS;
+        case AM_DETECTION_ENTRY_POSIX_SPAWN: return AM_DETECTION_API_POSIX_SPAWN;
+        case AM_DETECTION_ENTRY_SYSCTL: return AM_DETECTION_API_SYSCTL;
+        case AM_DETECTION_ENTRY_STRING_WRITE_PATH: return AM_DETECTION_API_FOUNDATION_STRING_WRITE_PATH;
+        case AM_DETECTION_ENTRY_STRING_WRITE_URL: return AM_DETECTION_API_FOUNDATION_STRING_WRITE_URL;
+        case AM_DETECTION_ENTRY_DATA_WRITE_PATH: return AM_DETECTION_API_FOUNDATION_DATA_WRITE_PATH;
+        case AM_DETECTION_ENTRY_DATA_WRITE_URL: return AM_DETECTION_API_FOUNDATION_DATA_WRITE_URL;
         default: return false;
     }
 }
@@ -77,6 +96,9 @@ static void *am_detection_native_replacement(AMDetectionEntryID id) {
         case AM_DETECTION_ENTRY_GETENV: return (void *)AMDetectionGetenv;
         case AM_DETECTION_ENTRY_READLINK: return (void *)AMDetectionReadlink;
         case AM_DETECTION_ENTRY_FSTATAT: return (void *)AMDetectionFstatat;
+#if AM_DETECTION_API_POSIX_SPAWN
+        case AM_DETECTION_ENTRY_POSIX_SPAWN: return (void *)AMDetectionPosixSpawn;
+#endif
 #if AM_DETECTION_API_OPENDIR || AM_DETECTION_API_READDIR || AM_DETECTION_API_CLOSEDIR
         case AM_DETECTION_ENTRY_OPENDIR: return (void *)AMDetectionOpendir;
         case AM_DETECTION_ENTRY_READDIR: return (void *)AMDetectionReaddir;
@@ -179,6 +201,9 @@ static BOOL am_detection_url(id self,SEL cmd,NSURL *url) {
 #if AM_DETECTION_API_FOUNDATION_DIRECTORY_PATHS || AM_DETECTION_API_FOUNDATION_DIRECTORY_URLS
 #include "AMDetectionDirectories.m"
 #endif
+#if AM_DETECTION_API_FOUNDATION_STRING_WRITE_PATH || AM_DETECTION_API_FOUNDATION_STRING_WRITE_URL || AM_DETECTION_API_FOUNDATION_DATA_WRITE_PATH || AM_DETECTION_API_FOUNDATION_DATA_WRITE_URL
+#include "AMDetectionWrites.m"
+#endif
 static BOOL am_detection_replace(Class cls,SEL sel,IMP replacement,IMP *original) {
     Method m=class_getInstanceMethod(cls,sel);
     if (!m) return NO;
@@ -205,6 +230,16 @@ static bool am_detection_objc_target(AMDetectionEntryID id,Class *cls,SEL *sel,I
             *cls=NSFileManager.class; *sel=@selector(contentsOfDirectoryAtPath:error:); *replacement=(IMP)am_detection_directory_paths; return true;
         case AM_DETECTION_ENTRY_DIRECTORY_URLS:
             *cls=NSFileManager.class; *sel=@selector(contentsOfDirectoryAtURL:includingPropertiesForKeys:options:error:); *replacement=(IMP)am_detection_directory_urls; return true;
+#endif
+#if AM_DETECTION_API_FOUNDATION_STRING_WRITE_PATH || AM_DETECTION_API_FOUNDATION_STRING_WRITE_URL || AM_DETECTION_API_FOUNDATION_DATA_WRITE_PATH || AM_DETECTION_API_FOUNDATION_DATA_WRITE_URL
+        case AM_DETECTION_ENTRY_STRING_WRITE_PATH:
+            *cls=NSString.class; *sel=@selector(writeToFile:atomically:encoding:error:); *replacement=(IMP)am_detection_string_write_path; return true;
+        case AM_DETECTION_ENTRY_STRING_WRITE_URL:
+            *cls=NSString.class; *sel=@selector(writeToURL:atomically:encoding:error:); *replacement=(IMP)am_detection_string_write_url; return true;
+        case AM_DETECTION_ENTRY_DATA_WRITE_PATH:
+            *cls=NSData.class; *sel=@selector(writeToFile:options:error:); *replacement=(IMP)am_detection_data_write_path; return true;
+        case AM_DETECTION_ENTRY_DATA_WRITE_URL:
+            *cls=NSData.class; *sel=@selector(writeToURL:options:error:); *replacement=(IMP)am_detection_data_write_url; return true;
 #endif
         default: return false;
     }
@@ -315,12 +350,16 @@ static bool am_detection_directory_path(int fd,char *out,size_t capacity) {
 #endif
 static AMDetectionSupportReason am_detection_module_prerequisite(AMDetectionModuleID module) {
     if (module==AM_DETECTION_MODULE_DIRECTORIES && am_detection_directory_initialization_failed) return AM_DETECTION_REASON_PREPARE_FAILED;
+    if (module==AM_DETECTION_MODULE_PROCESS && am_detection_process_initialization_failed) return AM_DETECTION_REASON_PREPARE_FAILED;
+    if (!am_detection_write_probes_ok && (module==AM_DETECTION_MODULE_FILES || module==AM_DETECTION_MODULE_WRITES)) return am_detection_write_probe_reason;
     for (size_t i=0;i<AMDetectionEntryCount();i++) {
         const AMDetectionEntry *entry=AMDetectionEntryAt(i);
         if (entry->module!=module || !AMDetectionEntrySelected(entry->id)) continue;
         if (!entry->implemented) return AM_DETECTION_REASON_CONTRACT_UNIMPLEMENTED;
         if ((entry->requirements&AM_DETECTION_REQUIRE_APPLE_CONTRACT) && module==AM_DETECTION_MODULE_DIRECTORIES &&
             !AM_DETECTION_APPLE_DIRECTORY_CONTRACTS_VERIFIED) return AM_DETECTION_REASON_APPLE_CONTRACT_UNVERIFIED;
+        if ((entry->requirements&AM_DETECTION_REQUIRE_APPLE_CONTRACT) && module==AM_DETECTION_MODULE_WRITES &&
+            !AM_DETECTION_APPLE_WRITE_CONTRACTS_VERIFIED) return AM_DETECTION_REASON_APPLE_CONTRACT_UNVERIFIED;
     }
     return AM_DETECTION_REASON_NONE;
 }
@@ -328,6 +367,32 @@ static AMDetectionSupportReason am_detection_module_prerequisite(AMDetectionModu
 static bool am_detection_directory_ready(AMDetectionEntryID entry) {
     (void)entry;return AMDetectionModuleActive(AM_DETECTION_MODULE_DIRECTORIES);
 }
+#endif
+static bool am_detection_expand_write_probes(void) {
+#if AM_DETECTION_WRITE_DYNAMIC_COUNT > 0
+    static char expanded[4096];
+    id label=[NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleDisplayName"];
+    if (![label isKindOfClass:NSString.class]) {am_detection_write_probe_reason=AM_DETECTION_REASON_WRITE_PROBE_UNAVAILABLE;return false;}
+    NSData *bytes=[label dataUsingEncoding:NSUTF8StringEncoding];
+    if (!bytes) {am_detection_write_probe_reason=AM_DETECTION_REASON_WRITE_PROBE_UNAVAILABLE;return false;}
+    if (!AMDetectionExpandWriteProbe(bytes.bytes,bytes.length,expanded,sizeof expanded)) {
+        am_detection_write_probe_reason=AM_DETECTION_REASON_WRITE_PROBE_INVALID;return false;
+    }
+    for (unsigned i=0;i<AM_DETECTION_WRITE_DYNAMIC_COUNT;i++) {
+        unsigned index=am_detection_write_dynamic_indices[i];
+        if (index>=AM_DETECTION_WRITE_PATHS_COUNT) {am_detection_write_probe_reason=AM_DETECTION_REASON_WRITE_PROBE_INVALID;return false;}
+        am_detection_write_paths[index]=expanded;
+    }
+#endif
+    for (unsigned i=0;i<AM_DETECTION_WRITE_PATHS_COUNT;i++) for (unsigned j=0;j<i;j++) {
+        if (am_detection_write_paths[i] && am_detection_write_paths[j] && !strcmp(am_detection_write_paths[i],am_detection_write_paths[j])) {
+            am_detection_write_probe_reason=AM_DETECTION_REASON_WRITE_PROBE_INVALID;return false;
+        }
+    }
+    return true;
+}
+#if AM_DETECTION_API_POSIX_SPAWN
+static bool am_detection_process_ready(AMDetectionEntryID entry) {(void)entry;return AMDetectionModuleActive(AM_DETECTION_MODULE_PROCESS);}
 #endif
 void AMDetectionStart(size_t compatibility_bindings) {
     if (am_detection_started) return;
@@ -344,6 +409,7 @@ void AMDetectionStart(size_t compatibility_bindings) {
         am_detection_version_ok=false; return;
     }
     memcpy(am_detection_app_path,bundle,strlen(bundle)+1); memcpy(am_detection_executable,exe,strlen(exe)+1);
+    am_detection_write_probes_ok=am_detection_expand_write_probes();
     AMDetectionEntryID selected[AM_DETECTION_MAX_ENTRYPOINTS]; size_t selected_count=0;
     for (size_t i=0;i<AMDetectionEntryCount();i++) {
         const AMDetectionEntry *entry=AMDetectionEntryAt(i);
@@ -382,6 +448,13 @@ void AMDetectionStart(size_t compatibility_bindings) {
 #endif
     };
     if (!AMDetectionConfigure(&am_detection_profile,&o)) { am_detection_version_ok=false; return; }
+#if AM_DETECTION_API_POSIX_SPAWN
+    if (am_detection_fingerprints_ok && am_detection_module_prerequisite(AM_DETECTION_MODULE_PROCESS)==AM_DETECTION_REASON_NONE &&
+        !AMDetectionConfigureProcess(&am_detection_profile,*AMDetectionEntryByID(AM_DETECTION_ENTRY_POSIX_SPAWN)->original,am_detection_process_ready)) {
+        am_detection_process_initialization_failed=true;
+        AMDetectionSetModuleUnsupported(AM_DETECTION_MODULE_PROCESS,AM_DETECTION_REASON_PREPARE_FAILED);
+    }
+#endif
 #if AM_DETECTION_API_OPENDIR || AM_DETECTION_API_READDIR || AM_DETECTION_API_CLOSEDIR
     AMDetectionDirectoryOriginals dirs={*AMDetectionEntryByID(AM_DETECTION_ENTRY_OPENDIR)->original,
         *AMDetectionEntryByID(AM_DETECTION_ENTRY_READDIR)->original,*AMDetectionEntryByID(AM_DETECTION_ENTRY_CLOSEDIR)->original};
@@ -403,6 +476,9 @@ void AMDetectionStart(size_t compatibility_bindings) {
     }
     am_detection_foundation_installed=AMDetectionPublishModule(AM_DETECTION_MODULE_FOUNDATION);
     am_detection_url_installed=AMDetectionPublishModule(AM_DETECTION_MODULE_URLS);
+#if AM_DETECTION_API_FOUNDATION_STRING_WRITE_PATH || AM_DETECTION_API_FOUNDATION_STRING_WRITE_URL || AM_DETECTION_API_FOUNDATION_DATA_WRITE_PATH || AM_DETECTION_API_FOUNDATION_DATA_WRITE_URL
+    AMDetectionPublishModule(AM_DETECTION_MODULE_WRITES);
+#endif
 #if AM_DETECTION_API_FOUNDATION_DIRECTORY_PATHS || AM_DETECTION_API_FOUNDATION_DIRECTORY_URLS
     AMDetectionPublishModule(AM_DETECTION_MODULE_DIRECTORIES);
 #endif

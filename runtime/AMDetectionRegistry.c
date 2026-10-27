@@ -30,7 +30,14 @@ static AMDetectionEntry am_registry_entries[]={
     {18,"foundation_enumerator_paths",AM_DETECTION_MODULE_DIRECTORIES,AM_DETECTION_ABI_OBJC,AM_DETECTION_RULE_PATH,30,
         AM_DETECTION_MODULE_DIRECTORIES,&am_registry_originals[18],NULL,NULL,NULL,"calls",false},
     {19,"foundation_enumerator_urls",AM_DETECTION_MODULE_DIRECTORIES,AM_DETECTION_ABI_OBJC,AM_DETECTION_RULE_PATH,30,
-        AM_DETECTION_MODULE_DIRECTORIES,&am_registry_originals[19],NULL,NULL,NULL,"calls",false}
+        AM_DETECTION_MODULE_DIRECTORIES,&am_registry_originals[19],NULL,NULL,NULL,"calls",false},
+    AM_ENTRY(20,"posix_spawn",AM_DETECTION_MODULE_PROCESS,AM_DETECTION_ABI_NATIVE,AM_DETECTION_RULE_SPAWN,13),
+    AM_ENTRY(21,"foundation_string_write_path",AM_DETECTION_MODULE_WRITES,AM_DETECTION_ABI_OBJC,AM_DETECTION_RULE_WRITE_PATH,30),
+    AM_ENTRY(22,"foundation_string_write_url",AM_DETECTION_MODULE_WRITES,AM_DETECTION_ABI_OBJC,AM_DETECTION_RULE_WRITE_PATH,30),
+    AM_ENTRY(23,"foundation_data_write_path",AM_DETECTION_MODULE_WRITES,AM_DETECTION_ABI_OBJC,AM_DETECTION_RULE_WRITE_PATH,30),
+    AM_ENTRY(24,"foundation_data_write_url",AM_DETECTION_MODULE_WRITES,AM_DETECTION_ABI_OBJC,AM_DETECTION_RULE_WRITE_PATH,30),
+    {25,"sysctl",AM_DETECTION_MODULE_PROCESS,AM_DETECTION_ABI_NATIVE,AM_DETECTION_RULE_NONE,13,
+        AM_DETECTION_MODULE_PROCESS,&am_registry_originals[25],NULL,NULL,NULL,"calls",false}
 };
 #undef AM_ENTRY
 static bool am_registry_configured;
@@ -47,7 +54,7 @@ const char *AMDetectionModuleName(AMDetectionModuleID module) {
     return module<AM_DETECTION_MODULE_COUNT ? names[module] : "unknown";
 }
 const char *AMDetectionSupportReasonName(AMDetectionSupportReason reason) {
-    static const char *const names[]={"none","not_selected","not_prepared","prepare_failed","publish_failed","fingerprint_mismatch","mode_off","fingerprint_unavailable","apple_contract_unverified","contract_unimplemented"};
+    static const char *const names[]={"none","not_selected","not_prepared","prepare_failed","publish_failed","fingerprint_mismatch","mode_off","fingerprint_unavailable","apple_contract_unverified","contract_unimplemented","write_probe_invalid","write_probe_unavailable"};
     return (unsigned)reason<sizeof names/sizeof *names ? names[reason] : "unknown";
 }
 const AMDetectionEntry *AMDetectionEntryAt(size_t index) {
@@ -111,7 +118,7 @@ void AMDetectionSetModuleUnsupported(AMDetectionModuleID module,AMDetectionSuppo
     if (module>=AM_DETECTION_MODULE_COUNT || !am_registry_configured || am_registry_modules[module].mode==AM_DETECTION_OFF) return;
     AMDetectionInvalidateModule(module);
     atomic_store(&am_registry_modules[module].state,AM_DETECTION_UNSUPPORTED);
-    atomic_store(&am_registry_modules[module].reason,(unsigned)reason<=AM_DETECTION_REASON_CONTRACT_UNIMPLEMENTED ? reason : AM_DETECTION_REASON_PREPARE_FAILED);
+    atomic_store(&am_registry_modules[module].reason,(unsigned)reason<=AM_DETECTION_REASON_WRITE_PROBE_UNAVAILABLE ? reason : AM_DETECTION_REASON_PREPARE_FAILED);
 }
 bool AMDetectionPrepareModule(AMDetectionModuleID module) {
     if (module>=AM_DETECTION_MODULE_COUNT || !am_registry_configured || am_registry_mode==AM_DETECTION_OFF) return false;

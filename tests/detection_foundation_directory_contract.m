@@ -20,6 +20,49 @@ static bool last_error_was_null;
 static unsigned original_calls;
 static bool am_detection_caller_selected(const void *caller) {(void)caller;return fixture_selected;}
 #include "AMDetectionDirectories.m"
+#include "AMDetectionWrites.m"
+
+static unsigned write_calls;
+static BOOL last_atomic;
+static NSStringEncoding last_encoding;
+static NSDataWritingOptions last_write_options;
+static BOOL original_string_path(id value,SEL sel,NSString *path,BOOL atomic,NSStringEncoding encoding,NSError **error) {
+    (void)sel;write_calls++;last_atomic=atomic;last_encoding=encoding;
+    return [value writeToFile:path atomically:atomic encoding:encoding error:error];
+}
+static BOOL original_string_url(id value,SEL sel,NSURL *url,BOOL atomic,NSStringEncoding encoding,NSError **error) {
+    (void)sel;write_calls++;last_atomic=atomic;last_encoding=encoding;
+    return [value writeToURL:url atomically:atomic encoding:encoding error:error];
+}
+static BOOL original_data_path(id value,SEL sel,NSString *path,NSDataWritingOptions options,NSError **error) {
+    (void)sel;write_calls++;last_write_options=options;return [value writeToFile:path options:options error:error];
+}
+static BOOL original_data_url(id value,SEL sel,NSURL *url,NSDataWritingOptions options,NSError **error) {
+    (void)sel;write_calls++;last_write_options=options;return [value writeToURL:url options:options error:error];
+}
+static void verify_writes(NSString *root,bool observing) {
+    NSString *probe=[root stringByAppendingPathComponent:@"probe"],*save=[root stringByAppendingPathComponent:@"save"];
+    NSURL *probeURL=[NSURL fileURLWithPath:probe],*saveURL=[NSURL fileURLWithPath:save];
+    NSString *value=@"payload";NSData *data=[value dataUsingEncoding:NSUTF8StringEncoding];NSError *error=nil;
+    unsigned before=write_calls;
+    assert(am_detection_string_write_path(value,@selector(writeToFile:atomically:encoding:error:),probe,YES,NSUTF8StringEncoding,&error)==observing);
+    if (!observing) assert([error.domain isEqualToString:NSCocoaErrorDomain] && error.code==NSFileWriteNoPermissionError);
+    assert(am_detection_string_write_url(value,@selector(writeToURL:atomically:encoding:error:),probeURL,NO,NSUTF8StringEncoding,NULL)==observing);
+    assert(am_detection_data_write_path(data,@selector(writeToFile:options:error:),probe,NSDataWritingAtomic,&error)==observing);
+    assert(am_detection_data_write_url(data,@selector(writeToURL:options:error:),probeURL,0,NULL)==observing);
+    assert(write_calls==before+(observing ? 4u : 0u));
+    assert([NSFileManager.defaultManager fileExistsAtPath:probe]==observing);
+    assert(am_detection_string_write_path(value,@selector(writeToFile:atomically:encoding:error:),save,YES,NSUTF8StringEncoding,&error));
+    assert(last_atomic && last_encoding==NSUTF8StringEncoding);
+    assert(am_detection_string_write_url(value,@selector(writeToURL:atomically:encoding:error:),saveURL,NO,NSUTF8StringEncoding,NULL));
+    assert(!last_atomic && last_encoding==NSUTF8StringEncoding);
+    assert(am_detection_data_write_path(data,@selector(writeToFile:options:error:),save,NSDataWritingAtomic,&error));assert(last_write_options==NSDataWritingAtomic);
+    assert(am_detection_data_write_url(data,@selector(writeToURL:options:error:),saveURL,0,NULL));assert(last_write_options==0);
+    assert([[NSData dataWithContentsOfFile:save] isEqualToData:data]);
+    fixture_selected=false;before=write_calls;
+    assert(am_detection_data_write_path(data,@selector(writeToFile:options:error:),probe,0,NULL));assert(write_calls==before+1);
+    fixture_selected=true;assert(am_detection_objc_depth==0);
+}
 
 static id original_paths(id manager,SEL selector,NSString *path,NSError **error) {
     (void)selector;original_calls++;
@@ -44,18 +87,27 @@ int AMDirectoryContractFixtureRun(const char *directory,bool observing) {
         assert([[@"hidden" dataUsingEncoding:NSUTF8StringEncoding] writeToFile:hidden options:0 error:&error]);
         assert([[@"visible" dataUsingEncoding:NSUTF8StringEncoding] writeToFile:visible options:0 error:&error]);
         char *owned_path=strdup(hidden.fileSystemRepresentation);assert(owned_path);
-        const char *paths[]={owned_path};
+        NSString *probe=[root stringByAppendingPathComponent:@"probe"];
+        char *owned_probe=strdup(probe.fileSystemRepresentation);assert(owned_probe);
+        const char *paths[]={owned_path},*write_paths[]={owned_probe};
         am_detection_profile=(AMDetectionProfile){.mode=observing ? AM_DETECTION_OBSERVE : AM_DETECTION_FILTER,
-            .rules={.paths=paths,.path_count=1}};
+            .rules={.paths=paths,.path_count=1,.write_paths=write_paths,.write_count=1}};
         const AMDetectionOriginals originals={.getcwd_fn=getcwd};
         assert(AMDetectionConfigure(&am_detection_profile,&originals));
-        AMDetectionEntryID ids[]={AM_DETECTION_ENTRY_DIRECTORY_PATHS,AM_DETECTION_ENTRY_DIRECTORY_URLS};
+        AMDetectionEntryID ids[]={AM_DETECTION_ENTRY_DIRECTORY_PATHS,AM_DETECTION_ENTRY_DIRECTORY_URLS,
+            AM_DETECTION_ENTRY_STRING_WRITE_PATH,AM_DETECTION_ENTRY_STRING_WRITE_URL,
+            AM_DETECTION_ENTRY_DATA_WRITE_PATH,AM_DETECTION_ENTRY_DATA_WRITE_URL};
         *AMDetectionEntryByID(ids[0])->original=(void *)original_paths;
         *AMDetectionEntryByID(ids[1])->original=(void *)original_urls;
-        for (unsigned i=0;i<2;i++) assert(AMDetectionSetInstaller(ids[i],prepare,publish,NULL));
-        assert(AMDetectionConfigureRegistry(ids,2,0,am_detection_profile.mode));
+        *AMDetectionEntryByID(ids[2])->original=(void *)original_string_path;
+        *AMDetectionEntryByID(ids[3])->original=(void *)original_string_url;
+        *AMDetectionEntryByID(ids[4])->original=(void *)original_data_path;
+        *AMDetectionEntryByID(ids[5])->original=(void *)original_data_url;
+        for (unsigned i=0;i<6;i++) assert(AMDetectionSetInstaller(ids[i],prepare,publish,NULL));
+        assert(AMDetectionConfigureRegistry(ids,6,0,am_detection_profile.mode));
         assert(AMDetectionPrepareModule(AM_DETECTION_MODULE_DIRECTORIES));
         assert(AMDetectionPublishModule(AM_DETECTION_MODULE_DIRECTORIES));
+        assert(AMDetectionPrepareModule(AM_DETECTION_MODULE_WRITES));assert(AMDetectionPublishModule(AM_DETECTION_MODULE_WRITES));
 
         error=[NSError errorWithDomain:@"fixture" code:1 userInfo:nil];
         unsigned before=original_calls;
@@ -101,7 +153,8 @@ int AMDirectoryContractFixtureRun(const char *directory,bool observing) {
         /* Enumerators remain unsupported; this fixture never substitutes a proxy. */
         assert(!AMDetectionEntryByID(AM_DETECTION_ENTRY_ENUMERATOR_PATHS)->implemented);
         assert(!AMDetectionEntryByID(AM_DETECTION_ENTRY_ENUMERATOR_URLS)->implemented);
-        free(owned_path);
+        fixture_selected=true;verify_writes(root,observing);
+        free(owned_path);free(owned_probe);
     }
     return 0;
 }
@@ -109,7 +162,7 @@ int AMDirectoryContractFixtureRun(const char *directory,bool observing) {
 int main(int argc,char **argv) {
     assert(argc==3 && (!strcmp(argv[1],"filter") || !strcmp(argv[1],"observe")));
     int result=AMDirectoryContractFixtureRun(argv[2],!strcmp(argv[1],"observe"));
-    if (!result) puts("PASS foundation-directory-contract-v1");
+    if (!result) puts("PASS foundation-file-contract-v2");
     return result;
 }
 #endif

@@ -20,7 +20,7 @@ handle retirement/reuse, original-result reporting after filtering and explicit 
 Task 5 now includes a runnable host Foundation fixture. Apple execution is still pending,
 so Foundation filtering remains unsupported and disabled.
 
-Latest verification: 283 tests ran without failures, with two skips. The native
+Latest verification: 288 tests ran without failures, with two skips. The native
 directory cases passed ASan/UBSan. Quiet-default and expanded arm64 builds succeeded.
 Apple Foundation execution and device behavior were not verified by these builds.
 
@@ -37,6 +37,16 @@ no account was touched, and no branch or IPA was published during these changes.
   `AM_DETECTION_APPLE_DIRECTORY_CONTRACTS_VERIFIED=0`. Do not change this without actual
   Apple contract execution. Enumeration entries explicitly report `implemented=false`;
   their concrete contract is unsupported rather than replaced by a guessed proxy.
+- Task 6 adds exact `posix_spawn` denials, four typed NSString/NSData write boundaries,
+  and constrained `/private/<CFBundleDisplayName>` expansion. Spawn denial returns EACCES
+  directly, preserves errno and PID storage, and never inspects argv/environment values.
+  Ordinary calls forward unchanged. Unknown `sysctl` query contracts remain unimplemented.
+  Invalid/missing display metadata or duplicate expanded probes keep affected modules
+  unsupported. No broad /private rule is generated.
+- Foundation writes remain unavailable behind `AM_DETECTION_APPLE_WRITE_CONTRACTS_VERIFIED=0`.
+  The host fixture now includes permission errors, null error outputs, atomic/options and
+  URL variants, ordinary saves and unselected writes. Its version is
+  `foundation-file-contract-v2`; both Foundation verification flags remain zero here.
 - Native symlink-parent, ambiguous normalization, cross-thread reuse and a blocked-read /
   concurrent-close case are covered. The concurrency regression found and fixed a close
   waiting on a stream while holding the global map lock; unrelated streams now proceed.
@@ -59,8 +69,8 @@ no account was touched, and no branch or IPA was published during these changes.
 
 ## Remaining plan
 
-Next implement Tasks 6–11: Foundation write probes/process boundaries;
-URL/environment/preferences; loader/class views; component manifests; SDK/ownership checks;
+Next implement Tasks 7–11: URL/environment/preferences; loader/class views;
+component manifests; SDK/ownership checks;
 then isolated verification, capability documentation and a fresh whole-branch review.
 Do not restart the completed implementation milestones or touch the dirty primary checkout.
 
