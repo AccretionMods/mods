@@ -167,6 +167,18 @@ class DetectionSession(unittest.TestCase):
             self.assertNotIn(self.SENTINEL, str(outcome))
             self.assertEqual(printed, "")
 
+    def test_validator_vocabularies_match_runtime_sources(self):
+        import re
+        registry = (ROOT / "runtime/AMDetectionRegistry.c").read_text(encoding="utf-8")
+        names = re.findall(r'(?:AM_ENTRY\(|\{)\s*\d+\s*,\s*"([a-z_0-9]+)"', registry)
+        self.assertGreaterEqual(len(names), 26)
+        expected = set(names) | {"image_concealment", "class_concealment"}
+        self.assertEqual(set(self.module.ADAPTER_NAMES), expected)
+        bindings = (ROOT / "runtime/AMImportBindings.c").read_text(encoding="utf-8")
+        block = re.search(r"AMImportFailureName.*?\n\}", bindings, re.S).group(0)
+        reasons = set(re.findall(r'"([a-z_]+)"', block)) - {"none"}
+        self.assertEqual(set(self.module.FAILURE_REASONS), reasons)
+
     def test_phase_requires_current_session_and_active_observation(self):
         report = {"schema_version": 3, "session_id": "a" * 32, "profile_mode": 1}
         request = self.module.phase_request(report, "fight")

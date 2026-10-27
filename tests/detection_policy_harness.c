@@ -38,7 +38,9 @@ int main(int argc, char **argv) {
                   .environment_allowlist = allowed, .allowlist_count = 1}};
     if (!strcmp(argv[1],"outcomes")) {
         p.mode=AM_DETECTION_OBSERVE;
-        AMDetectionOriginals original={.fopen_fn=fake_fopen};
+        AMDetectionOriginals missing={.fopen_fn=fake_fopen};
+        assert(!AMDetectionConfigure(&p,&missing)); /* environment rules need the real getenv */
+        AMDetectionOriginals original={.fopen_fn=fake_fopen,.getenv_fn=getenv};
         assert(AMDetectionConfigure(&p,&original));
         AMDetectionSetOriginResolver(origin); AMDetectionSetCallsiteResolver(callsite);
         assert(AMDetectionFopen(paths[0],"success")== (FILE *)(uintptr_t)1 && errno==E2BIG);

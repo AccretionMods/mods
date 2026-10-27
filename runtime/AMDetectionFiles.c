@@ -20,6 +20,8 @@ bool AMDetectionConfigureFiles(const AMDetectionProfile *p,const AMDetectionOrig
     const size_t counts[]={p->rules.path_count,p->rules.prefix_count,p->rules.environment_count,p->rules.allowlist_count,p->rules.scheme_count,p->rules.write_count,p->rules.spawn_count};
     const void *lists[]={p->rules.paths,p->rules.path_prefixes,p->rules.environment_names,p->rules.environment_allowlist,p->rules.url_schemes,p->rules.write_paths,p->rules.spawn_paths};
     for (size_t i=0;i<sizeof counts/sizeof *counts;i++) if (counts[i]>64 || (counts[i] && !lists[i])) return false;
+    /* Environment rules need the real getenv; without it the hook could only answer NULL. */
+    if ((p->rules.environment_count || p->rules.allowlist_count) && !o->getenv_fn) return false;
     am_file_originals=*o;am_file_ready=ready;am_file_profile=p;return true;
 }
 bool AMDetectionResolvePath(int dirfd,const char *path,char *out,size_t capacity) {
