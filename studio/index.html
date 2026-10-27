@@ -166,7 +166,7 @@ dialog h3 { margin: 0 0 6px; font-family: var(--display); font-weight: 600; }
 .jobprog-bar i { display: block; height: 100%; width: 0; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .6s ease; }
 .jobprog.going .jobprog-bar i { background-image: linear-gradient(90deg, var(--accent), var(--accent-2), var(--accent)); background-size: 200% 100%; animation: flow 2.4s linear infinite; }
 .jobprog.bad .jobprog-bar i { background: var(--bad); }
-/* Store tab */
+/* AccretionWeb tab (data-tab store) */
 .mod-item { border-top: 1px solid var(--line); padding: 10px 0; }
 .mod-item:first-child { border-top: 0; padding-top: 0; }
 .mod-reason { margin: 6px 0; font-size: 13.5px; }
@@ -215,6 +215,34 @@ h2, h3 { font-family: var(--display); }
 .game .name { font-family: var(--display); font-weight: 600; line-height: 1.25; overflow-wrap: anywhere; }
 .game .seller { color: var(--muted); font-size: 12.5px; overflow-wrap: anywhere; }
 .game .meta { color: var(--muted); font-size: 12px; font-family: var(--mono); }
+.game .top { cursor: pointer; }
+/* an app's details, laid out like its App Store page */
+dialog.appd { width: min(760px, 96vw); padding: 0; overflow: hidden; }
+.appd .scroll { max-height: min(86vh, 900px); overflow-y: auto; padding: 22px 24px 18px; }
+.appd .head { display: flex; gap: 16px; align-items: flex-start; }
+.appd .head img { width: 112px; height: 112px; border-radius: 23%; flex: none; background: var(--raised); border: 1px solid var(--line); }
+.appd .head h2 { margin: 2px 0 2px; font-family: var(--display); font-size: 22px; line-height: 1.2; overflow-wrap: anywhere; }
+.appd .head .seller { color: var(--link); font-size: 13.5px; }
+.appd .head .sub { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+.appd .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); margin: 18px 0 4px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.appd .stat { padding: 10px 8px; text-align: center; border-right: 1px solid var(--line); min-width: 0; }
+.appd .stat:last-child { border-right: 0; }
+.appd .stat .k { color: var(--muted); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; font-family: var(--mono); }
+.appd .stat .v { font-family: var(--display); font-size: 17px; font-weight: 600; margin-top: 3px; overflow-wrap: anywhere; }
+.appd .stat .s { color: var(--muted); font-size: 11px; }
+.appd h4 { font-family: var(--display); font-size: 16px; margin: 18px 0 8px; }
+.appd .shots { display: flex; gap: 10px; overflow-x: auto; scroll-snap-type: x mandatory; padding-bottom: 6px; }
+.appd .shots img { height: 300px; min-width: 140px; max-width: 80%; border-radius: 12px; border: 1px solid var(--line); scroll-snap-align: start; background: var(--raised); flex: none; }
+.appd .text { white-space: pre-wrap; line-height: 1.5; font-size: 13.5px; overflow-wrap: anywhere; }
+.appd .text.clip { max-height: 7.5em; overflow: hidden; -webkit-mask-image: linear-gradient(#000 60%, transparent); mask-image: linear-gradient(#000 60%, transparent); }
+.appd .more { background: none; border: 0; color: var(--link); padding: 2px 0; cursor: pointer; font: inherit; }
+.appd .ours { border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; background: var(--raised); margin-top: 16px; }
+.appd .ours .why { color: var(--muted); font-size: 12.5px; margin-top: 6px; }
+.appd .info { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; font-size: 13px; }
+.appd .info dt { color: var(--muted); }
+.appd .info dd { margin: 0; overflow-wrap: anywhere; }
+.appd .foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 24px; border-top: 1px solid var(--line); background: var(--surface); }
+@media (max-width: 560px) { .appd .head img { width: 84px; height: 84px; } .appd .shots img { height: 220px; } .appd .scroll { padding: 18px 16px 14px; } }
 .game .acts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: auto; }
 /* workspace: mods list | tabs and content | phone panel, jobs docked at the bottom */
 .layout { grid-template-columns: 290px minmax(0, 1fr) 300px; max-width: 1640px; padding-bottom: 76px; align-items: start; }
@@ -286,8 +314,8 @@ h2, h3 { font-family: var(--display); }
       <button data-tab="scan">Scan</button>
       <button data-tab="phone">Build &amp; Phone</button>
       <button data-tab="files">Files</button>
-      <button data-tab="games">Games</button>
-      <button data-tab="store">Store</button>
+      <button data-tab="games">AppStore</button>
+      <button data-tab="store">AccretionWeb</button>
       <button data-tab="console">Console</button>
     </div>
     <div class="status hidden" id="statusStrip" aria-label="This mod's state"></div>
@@ -607,7 +635,7 @@ const App = {
             more("Private download link (6 months)", "uploads the newest build to private storage and makes a dl.getaccretion.app/s/ link; renew or revoke it with am share", () => this.job("share", ["--months", "6"])),
             more("My download links", "every share link, its expiry and downloads", () => this.job("share", ["--list"])),
             more("Menu image for the post", "our menu drawn with this mod's switches: fill it in, then save a PNG or upload it as the post's link", () => window.open(`/menu-image?mod=${this.mod}`, "_blank")),
-            more("Phone screenshot for the post", "takes the phone's screen now, uploads it as a 1-year link (renew it on the Store tab) and puts it in this mod's post", () => this.phoneShot()),
+            more("Phone screenshot for the post", "takes the phone's screen now, uploads it as a 1-year link (renew it on the AccretionWeb tab) and puts it in this mod's post", () => this.phoneShot()),
             more("Release post", "from your template, once every switch is marked works; written locally, never posted", () => this.job("post", [])),
             more("Draft post", "the post now, marked DRAFT with what is not validated yet", () => this.job("post", ["--draft"])),
             more("Add a plain switch / slider", "a value for hand-written code in Tweak.x", () => this.plainSwitchDialog()),
@@ -981,7 +1009,7 @@ const App = {
       }
     }
   },
-  // a job's step from its "==> n/N what" lines (publishing from the Store tab)
+  // a job's step from its "==> n/N what" lines (publishing from the AccretionWeb tab)
   stepProgress(j, det, text) {
     let label = "Starting", pct = 0;
     for (const line of text.split("\n")) {
@@ -1349,7 +1377,7 @@ const App = {
         : t.read_only ? "Claude reads the repo and runs read-only am commands; it changes nothing." : "Asks first: Claude may edit files and run am commands (no push, no publish).";
       const missing = [];
       if ((t.needs || []).includes("ask") && !line) missing.push([`Type the one line: ${t.ask}`]);
-      if (t.id === "port" && line && !/^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+){2,}$/.test(line)) missing.push(["Use the game's bundle ID (Games tab or am games search shows it)."]);
+      if (t.id === "port" && line && !/^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+){2,}$/.test(line)) missing.push(["Use the game's bundle ID (AppStore tab or am games search shows it)."]);
       if ((t.needs || []).includes("dump") && !ctx.dump) missing.push(["No dump yet, so Claude can't look up classes.", "Dump now", `dump ${ctx.mod}`]);
       if ((t.needs || []).includes("log") && !ctx.log_seen) missing.push(["No device log in Studio yet, so the prompt can't carry the errors.", "Log 60 s", `log ${ctx.mod} --seconds 60 --launch`]);
       if (t.id === "update" && ctx.newer_bases.length) missing.push([`A newer copy is already waiting: ${ctx.newer_bases[0].version}.`]);
@@ -1660,11 +1688,11 @@ const App = {
     const draw = () => {
       const f = list.value === "search" ? "" : filter.value.trim().toLowerCase();  // a search list is already the answer
       const shown = rows.filter(g => (list.value === "search" || !offline.checked || !g.online) && (!f || [g.name, g.seller, g.bundle, ...g.genres].join(" ").toLowerCase().includes(f))
-        && (!compat.checked || g.mods.length || (g.engine && g.engine.compatible)));
+        && (!compat.checked || (g.verdict && g.verdict.moddable)));
       const hidden = rows.filter(g => g.online).length;
       note.textContent = (list.value === "search" ? `${shown.length} App Store results for "${filter.value.trim()}"` : list.value === "like" ? `${shown.length} games like ${likeName}` : `${shown.length} of ${rows.length} games`)
         + (list.value !== "search" && offline.checked && hidden ? ` · ${hidden} online or multiplayer hidden by your filter` : "")
-        + (compat.checked ? ` · compatible only: ${rows.filter(g => !g.engine && !g.mods.length).length} not checked yet` : "")
+        + (compat.checked ? ` · moddable only: ${rows.filter(g => !g.engine && !g.mods.length).length} not checked yet` : "")
         + (f && !shown.length ? " · press Enter to search the whole App Store" : "");
       grid.replaceChildren(...shown.map(g => this.gameCard(g, region.value)));
     };
@@ -1697,22 +1725,41 @@ const App = {
     box.append(
       this.el("div", { class: "row", style: "margin-bottom:10px" }, list, region, filter,
         this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center" }, offline, "single-player only"),
-        this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center", title: "Unity IL2CPP games (what our mods support), from an engine check or one of our mods" }, compat, "compatible only"),
+        this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center", title: "Games our switches can run on (Unity IL2CPP), from an engine check or one of our mods; online ones too, for offline play only" }, compat, "moddable only"),
         this.el("button", { class: "small", onclick: load }, "Refresh")),
       this.el("div", { class: "row", style: "margin-bottom:6px" }, account, checkAll, keepPick, keptBtn),
       this.el("p", { class: "hint", text: "From the App Store's public charts and search. Type in the box to filter this list; press Enter to search the whole App Store (a name or a bundle ID). \"Like the games we mod\" ranks games by the themes and genres they share with our mods' games; Like this on a card does the same for one game. Get .ipa looks the game up on the decrypt site; New mod starts a mod from a decrypted copy. Same lists from a console: am games (see am games --help)." }),
       note, grid);
     load();
   },
+  fmtCount(n) { return n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? Math.round(n / 1e3) + "K" : String(n); },
+  // the one verdict a game gets (dev.moddable): Modded, Moddable (· online / · hot-update code), not moddable, or
+  // not checked yet; the engine check's details in its tooltip
+  verdictBadge(g) {
+    const v = g.verdict || { label: "Engine not checked", tone: "unknown", why: "" };
+    const e = g.engine;
+    const tip = v.why + (e ? ` · ${e.engine}, ${e.files} files, version ${e.version}, checked ${e.checked}` : "");
+    return this.el("span", { class: "badge " + (v.tone === "unknown" ? "" : v.tone), title: tip, text: v.label });
+  },
   gameCard(g, region) {
-    const fmt = n => n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? Math.round(n / 1e3) + "K" : String(n);
+    const fmt = n => this.fmtCount(n);
     const badges = [
+      this.verdictBadge(g),
       ...g.mods.map(m => this.el("span", { class: "badge good", text: "our mod: " + m.title })),
       g.ipa ? this.el("span", { class: "badge accent", text: ".ipa " + (g.ipa.version || "") + " ready" }) : null,
-      g.online ? this.el("span", { class: "badge warn", text: "online" }) : null,
-      g.engine ? this.el("span", { class: "badge " + (g.engine.compatible ? "good" : "bad"), title: `${g.engine.files} files, version ${g.engine.version}, checked ${g.engine.checked}` + (g.engine.hot_update ? "; hot-update code (HybridCLR or similar)" : ""), text: g.engine.engine + (g.engine.hot_update ? " · hot-update" : "") }) : null,
       ...g.like.map(t => this.el("span", { class: "badge", text: "like " + t })),
     ];
+    return this.el("div", { class: "game" },
+      this.el("div", { class: "top", title: "Details", onclick: () => this.appDetails(g, region) },
+        this.el("img", { src: g.icon, alt: "", loading: "lazy" }),
+        this.el("div", { style: "min-width:0" }, this.el("div", { class: "name", text: g.name }), this.el("div", { class: "seller", text: g.seller }))),
+      this.el("div", { class: "meta", text: [g.rating ? `★ ${g.rating} (${fmt(g.ratings)})` : "no ratings", g.price, g.size ? this.mb(g.size) : null, g.updated ? "updated " + g.updated : null].filter(Boolean).join(" · ") }),
+      g.genres.length ? this.el("div", { class: "meta", text: g.genres.join(", ") }) : null,
+      this.el("div", { class: "badges" }, badges),
+      this.el("div", { class: "acts" }, this.gameActs(g, region)));
+  },
+  // a game's actions, on its card and on its details page
+  gameActs(g, region) {
     const engineBtn = g.engine || g.mods.length || !g.id ? null : this.el("button", { class: "small", title: "Reads this game's file list from the App Store (not the game): Unity IL2CPP or not", onclick: async () => {
       engineBtn.disabled = true; engineBtn.textContent = "Checking…";
       try {
@@ -1724,6 +1771,9 @@ const App = {
           r = await this.api("/api/games/engine", { id: g.id, bundle: g.bundle, license: true });
         }
         g.engine = r.verdict;
+        try {  // the card's verdict comes from the server (dev.moddable), which now knows the engine
+          g.verdict = (await this.api(`/api/games/info?bundle=${encodeURIComponent(g.bundle)}&region=${encodeURIComponent(region || "us")}`)).verdict || g.verdict;
+        } catch (e) { /* the engine badge still shows in the tooltip after a refresh */ }
         this.toast(`${g.name}: ${r.verdict.engine}` + (r.verdict.compatible ? " (compatible)" : ""), r.verdict.compatible ? "ok" : "bad");
         if (this.gamesRedraw) this.gamesRedraw();
       } catch (e) { this.toast(e.message, "bad"); engineBtn.disabled = false; engineBtn.textContent = "Check engine"; }
@@ -1734,21 +1784,78 @@ const App = {
           if (confirm(`Start a mod for ${g.name}? Studio gets a decrypted copy (if none is here), reports whether it can be modded, makes the mod folder and its dump, and opens the scan.`)) this.job("start", [g.bundle, "--region", ["us", "jp", "cn", "vn"].includes(region) ? region : "us"]);
         } }, "Start a mod");
     const report = g.ipa ? this.el("button", { class: "small", title: "engine, decrypted, online, ads and purchases", onclick: () => this.job("report", [g.ipa.path]) }, "Report") : null;
-    return this.el("div", { class: "game" },
-      this.el("div", { class: "top" },
-        this.el("img", { src: g.icon, alt: "", loading: "lazy" }),
-        this.el("div", { style: "min-width:0" }, this.el("div", { class: "name", text: g.name }), this.el("div", { class: "seller", text: g.seller }))),
-      this.el("div", { class: "meta", text: [g.rating ? `★ ${g.rating} (${fmt(g.ratings)})` : "no ratings", g.price, g.size ? this.mb(g.size) : null, g.updated ? "updated " + g.updated : null].filter(Boolean).join(" · ") }),
-      g.genres.length ? this.el("div", { class: "meta", text: g.genres.join(", ") }) : null,
-      this.el("div", { class: "badges" }, badges),
-      this.el("div", { class: "acts" },
-        this.el("button", { class: "small", onclick: () => this.getIpaDialog(g.bundle, region) }, "Get .ipa"),
-        newMod,
-        report,
-        engineBtn,
-        g.id ? this.el("button", { class: "small", title: "Where it's sold, its versions, and keeping the App Store .ipa", onclick: () => this.appStoreCopyDialog(g) }, "App Store copy") : null,
-        this.el("button", { class: "small", onclick: () => this.gamesLike && this.gamesLike(g.bundle, g.name) }, "Like this"),
-        g.url ? this.el("a", { href: g.url, target: "_blank", rel: "noopener", class: "small", style: "align-self:center" }, "App Store") : null));
+    return [
+      this.el("button", { class: "small", onclick: () => this.getIpaDialog(g.bundle, region) }, "Get .ipa"),
+      newMod,
+      report,
+      engineBtn,
+      g.id ? this.el("button", { class: "small", title: "Where it's sold, its versions, and keeping the App Store .ipa", onclick: () => this.appStoreCopyDialog(g) }, "App Store copy") : null,
+      this.el("button", { class: "small", onclick: () => this.gamesLike && this.gamesLike(g.bundle, g.name) }, "Like this"),
+      g.url ? this.el("a", { href: g.url, target: "_blank", rel: "noopener", class: "small", style: "align-self:center" }, "App Store") : null,
+    ];
+  },
+
+  // A game's details, laid out like its App Store page: icon, name and developer; ratings, age, size and version;
+  // screenshots; what's new; the description; the information list; and our verdict and actions. From the public
+  // lookup (/api/games/info), with our mods, .ipa and engine check marked in.
+  async appDetails(g, region) {
+    let dlg = this.byId("appd");
+    if (!dlg) { dlg = this.el("dialog", { id: "appd", class: "appd" }); document.body.append(dlg); dlg.addEventListener("click", ev => { if (ev.target === dlg) dlg.close(); }); }
+    const close = this.el("button", { onclick: () => dlg.close() }, "Close");
+    const show = (d, loading) => {
+      const fmt = n => this.fmtCount(n);
+      const stat = (k, v, s) => this.el("div", { class: "stat" }, this.el("div", { class: "k", text: k }), this.el("div", { class: "v", text: v || "–" }), s ? this.el("div", { class: "s", text: s }) : null);
+      const genre = (d.all_genres || d.genres || []).find(x => x !== "Games") || (d.genres || [])[0] || "Games";
+      const longText = (txt) => {
+        const box = this.el("div", { class: "text clip", text: txt });
+        const more = this.el("button", { class: "more", type: "button", onclick: () => { box.classList.remove("clip"); more.remove(); } }, "more");
+        return txt.length > 300 ? [box, more] : [this.el("div", { class: "text", text: txt })];
+      };
+      const v = d.verdict || g.verdict || {};
+      const langs = d.languages || [];
+      const info = [
+        ["Developer", d.seller], ["Size", d.size ? this.mb(d.size) : ""], ["Category", genre],
+        ["Compatibility", d.min_ios ? `iOS ${d.min_ios} or later` : ""], ["Languages", langs.length ? langs.slice(0, 8).join(", ") + (langs.length > 8 ? ` +${langs.length - 8}` : "") : ""],
+        ["Age rating", d.age], ["Content", (d.advisories || []).join("; ")], ["Price", d.price], ["Released", d.released],
+        ["Bundle ID", d.bundle],
+      ].filter(r => r[1]);
+      dlg.replaceChildren(
+        this.el("div", { class: "scroll" },
+          this.el("div", { class: "head" },
+            this.el("img", { src: d.icon || g.icon, alt: "" }),
+            this.el("div", { style: "min-width:0" },
+              this.el("h2", { text: d.name || g.name }),
+              d.seller_url ? this.el("a", { class: "seller", href: d.seller_url, target: "_blank", rel: "noopener", text: d.seller }) : this.el("div", { class: "seller", text: d.seller || g.seller }),
+              this.el("div", { class: "sub", text: [genre, d.price].filter(Boolean).join(" · ") }),
+              this.el("div", { class: "badges" }, this.verdictBadge(d.verdict ? d : g), ...(g.mods || []).map(m => this.el("span", { class: "badge good", text: "our mod: " + m.title }))))),
+          this.el("div", { class: "stats" },
+            stat(`${fmt(d.ratings || 0)} ratings`, d.rating ? `${d.rating} ★` : "–", d.ratings_now ? `${d.rating_now} ★ this version` : null),
+            stat("Age", d.age), stat("Category", genre), stat("Size", d.size ? this.mb(d.size) : ""), stat("Version", d.version, d.updated)),
+          loading ? this.el("p", { class: "hint", text: "Loading its App Store page…" }) : null,
+          (d.screenshots || []).length ? this.el("h4", { text: "Preview" }) : null,
+          (d.screenshots || []).length ? this.el("div", { class: "shots" }, d.screenshots.map(u => this.el("img", { src: u, alt: "", loading: "lazy" }))) : null,
+          d.notes ? this.el("h4", { text: "What's new" }) : null,
+          d.notes ? this.el("div", { class: "sub muted small", text: [d.version && "Version " + d.version, d.updated].filter(Boolean).join(" · ") }) : null,
+          ...(d.notes ? longText(d.notes) : []),
+          d.description ? this.el("h4", { text: "About" }) : null,
+          ...(d.description ? longText(d.description) : []),
+          this.el("div", { class: "ours" },
+            this.el("b", { text: "For modding: " }), this.el("span", { text: v.label || "Engine not checked" }),
+            v.why ? this.el("div", { class: "why", text: v.why }) : null,
+            (d.themes || []).length ? this.el("div", { class: "why", text: "Themes: " + d.themes.join(", ") }) : null,
+            this.el("div", { class: "acts", style: "margin-top:10px" }, this.gameActs(Object.assign({}, g, d), region))),
+          info.length ? this.el("h4", { text: "Information" }) : null,
+          info.length ? this.el("dl", { class: "info" }, info.flatMap(([k, val]) => [this.el("dt", { text: k }), this.el("dd", { text: String(val) })])) : null),
+        this.el("div", { class: "foot" }, d.url ? this.el("a", { href: d.url, target: "_blank", rel: "noopener", class: "small", style: "align-self:center" }, "Open in the App Store") : null, close));
+    };
+    show(g, true);
+    if (!dlg.open) dlg.showModal();
+    try {
+      const d = await this.api(`/api/games/info?bundle=${encodeURIComponent(g.bundle)}&region=${encodeURIComponent(region || "us")}`);
+      if (dlg.open) show(Object.assign({}, g, d), false);
+    } catch (e) {
+      if (dlg.open) { show(g, false); this.toast(e.message, "bad"); }
+    }
   },
 
   // A game's App Store copy: where it is sold (public lookup), the store's versions (signed in), and Keep, which
@@ -1778,7 +1885,7 @@ const App = {
     // the store's versions for this Apple ID; a version id's number is looked up when it is picked
     let account = { signed_in: false }, choice = "none";
     try { account = await this.api("/api/appstore/account"); choice = (await this.api("/api/appstore/prefs")).keep; } catch (e) { /* older server */ }
-    if (!account.signed_in) { versionsBox.append(this.el("p", { class: "hint", text: "Sign in to the App Store (Games tab) to see versions and keep a copy." })); keepRow.append(this.el("button", { type: "button", onclick: () => dlg.close() }, "Close")); return; }
+    if (!account.signed_in) { versionsBox.append(this.el("p", { class: "hint", text: "Sign in to the App Store (AppStore tab) to see versions and keep a copy." })); keepRow.append(this.el("button", { type: "button", onclick: () => dlg.close() }, "Close")); return; }
     const pick = this.el("select", { style: "width:100%" }), about = this.el("p", { class: "hint", text: "" });
     const license = async () => {
       const free = /free|^0/i.test(String(g.price || ""));
@@ -1806,7 +1913,7 @@ const App = {
     };
     pick.addEventListener("change", describe); describe();
     versionsBox.replaceChildren(this.el("h3", { text: `Versions (${ids.length})` }), pick, about);
-    const where = { none: "Keep is off (Games tab: Keep the .ipa)", pc: "Keeps it on this PC", servers: "Our servers aren't ready yet" }[choice];
+    const where = { none: "Keep is off (AppStore tab: Keep the .ipa)", pc: "Keeps it on this PC", servers: "Our servers aren't ready yet" }[choice];
     const keepBtn = this.el("button", { type: "button", class: "primary", disabled: choice !== "pc", title: where, onclick: async () => {
       keepBtn.disabled = true;
       try {

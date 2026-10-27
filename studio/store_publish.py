@@ -1,4 +1,4 @@
-"""Publish a mod's local version to the store, or take it out, from Mod Studio's Store tab (one Studio job).
+"""Publish a mod's local version to the store, or take it out, from Mod Studio's AccretionWeb tab (one Studio job).
 
   python studio/store_publish.py update <mod>
   python studio/store_publish.py remove <mod>
@@ -152,7 +152,7 @@ def update(mod):
         say(f"==> 2/{STEPS} app mod: the cloud build makes the .ipa after the merge")
     say(f"==> 3/{STEPS} pull request with auto-merge")
     if not pr_and_merge(wt, branch, f"Publish: {meta.get('name', mod)} {version}",
-                        f"From Mod Studio's Store tab: {meta.get('name', mod)} {version} from the local checkout."):
+                        f"From Mod Studio's AccretionWeb tab: {meta.get('name', mod)} {version} from the local checkout."):
         return 1
     say(f"==> 4/{STEPS} " + ("the old release" if is_tweak else "Mods: build a mod, with Publish on"))
     if is_tweak:
@@ -174,7 +174,7 @@ def update(mod):
                 run_id = latest
                 break
         if not run_id:
-            say("==> done: the cloud build was started; it didn't show up to watch (Store tab, Publishing)")
+            say("==> done: the cloud build was started; it didn't show up to watch (AccretionWeb tab, Publishing)")
             return 0
         say(f"    watching the cloud build (about 10 minutes): https://github.com/{REPO}/actions/runs/{run_id}")
         subprocess.run(["gh", "run", "watch", run_id, "-R", REPO, "--interval", "30"], capture_output=True)
@@ -207,7 +207,7 @@ def remove(mod):
         path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
         run(sys.executable, wt / "scripts" / "update_source.py", cwd=wt)
     say(f"==> 3/{STEPS} pull request with auto-merge")
-    if not pr_and_merge(wt, branch, f"Store: remove {mod}", f"From Mod Studio's Store tab: {mod} taken out of the store."):
+    if not pr_and_merge(wt, branch, f"Store: remove {mod}", f"From Mod Studio's AccretionWeb tab: {mod} taken out of the store."):
         return 1
     say(f"==> 4/{STEPS} " + ("its GitHub releases" if is_tweak else "done"))
     if is_tweak:

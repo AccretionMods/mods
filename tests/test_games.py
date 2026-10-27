@@ -100,8 +100,29 @@ class Games(unittest.TestCase):
         g = games.info("com.ours.wander", opener=op)
         self.assertIn("wasteland", g["themes"])
         self.assertTrue(g["description"].startswith("A wasteland"))
+        for key in ("screenshots", "advisories", "seller_url", "all_genres", "rating_now", "ratings_now"):
+            self.assertIn(key, g)  # what the details page shows besides the card's fields
         with self.assertRaises(games.GamesError):
             games.info("com.nobody.here", opener=op)
+
+    def test_one_verdict_per_game(self):
+        import dev
+
+        il2cpp = {"engine": "Unity IL2CPP", "compatible": True}
+        cases = [
+            ({"mods": [{"title": "X+"}]}, "Modded", True),
+            ({"mods": []}, "Engine not checked", False),
+            ({"mods": [], "engine": il2cpp}, "Moddable", True),
+            ({"mods": [], "engine": il2cpp, "online": True}, "Moddable · online", True),
+            ({"mods": [], "engine": dict(il2cpp, hot_update=True)}, "Moddable · hot-update code", True),
+            ({"mods": [], "engine": {"engine": "Unity IL2CPP, old (code in the main app)", "compatible": False}},
+             "Old Unity: no switches", False),
+            ({"mods": [], "engine": {"engine": "Native or other", "compatible": False}}, "Not moddable: Native or other", False),
+        ]
+        for game, label, ok in cases:
+            v = dev.moddable(game)
+            self.assertEqual((v["label"], v["moddable"]), (label, ok), game)
+            self.assertTrue(v["why"])
 
     def test_dev_cli_games_commands(self):
         import contextlib

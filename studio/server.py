@@ -1114,7 +1114,7 @@ def store_apps():
 
 
 def store_get(rest):
-    """The Store tab's reads: public, admin, endpoints, keys, runs, link, moderation."""
+    """The AccretionWeb tab's reads: public, admin, endpoints, keys, runs, link, moderation."""
     root = dev.am_root()
     if rest == ["public"]:
         return store_view.public(ROOT)
@@ -1658,7 +1658,7 @@ class Handler(BaseHTTPRequestHandler):
             self.local_only()
             fetch_client().logout()
             return self.send_json({"ok": True})
-        # App Store sign-in for the Games tab's engine check: the password and code go to Apple, never saved
+        # App Store sign-in for the AppStore tab's engine check: the password and code go to Apple, never saved
         if parts == ["api", "appstore", "login"]:
             self.local_only()
             try:

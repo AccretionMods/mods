@@ -2698,7 +2698,38 @@ def mark_games(rows):
         r["mods"] = mods.get(r["bundle"], [])
         r["ipa"] = have.get(r["bundle"])
         r["engine"] = engines.get(r["bundle"])
+        r["verdict"] = moddable(r)
     return rows
+
+
+def moddable(game):
+    """One verdict for a game card and its details page, from what we know: {label, tone (good, warn, bad,
+    unknown), moddable, why}. Moddable means our runtime can run switches on it; online games are moddable but
+    only for offline play (our mods policy: no online or store cheats)."""
+    engine, online = game.get("engine") or {}, game.get("online")
+
+    def verdict(label, tone, ok, why):
+        return {"label": label, "tone": tone, "moddable": ok, "why": why}
+
+    if game.get("mods"):
+        return verdict("Modded", "good", True, "we have a mod of it")
+    if not engine:
+        return verdict("Engine not checked", "unknown", False, "Check engine reads its App Store file list")
+    name = engine.get("engine", "")
+    if not engine.get("compatible"):
+        if name.startswith("Unity IL2CPP, old"):
+            return verdict("Old Unity: no switches", "bad", False,
+                           "the game is built into the main app without its IL2CPP functions exported")
+        return verdict(f"Not moddable: {name}", "bad", False, "our scan and switches need a Unity IL2CPP game")
+    if engine.get("hot_update"):
+        return verdict("Moddable · hot-update code", "warn", True,
+                       "Unity IL2CPP, but part of its code may load at run time (HybridCLR or similar), which the dump "
+                       "doesn't see")
+    if online:
+        return verdict("Moddable · online", "warn", True,
+                       "Unity IL2CPP, but online: switches only for offline single-player parts, nothing for "
+                       "accounts, purchases or other players")
+    return verdict("Moddable", "good", True, "Unity IL2CPP: the scan and switches work on it")
 
 
 def games_engine(app_id, bundle, license_ok=False):

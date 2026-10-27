@@ -1,4 +1,4 @@
-"""Mod Studio's Store tab: the store, our mods in it, the admin numbers, our endpoints and our keys, in one place.
+"""Mod Studio's AccretionWeb tab: the store, our mods in it, the admin numbers, our endpoints and our keys, in one place.
 
 - Admin link: Studio links once like a game's cloud saves (the store's `saves` function, bundle "accretion.studio";
   the owner approves the code at getaccretion.app/#/link signed in as an admin). The token stays in
@@ -140,7 +140,7 @@ def admin_summary(root, apps):
 def _studio(root, op, body, timeout=40):
     token = admin_state(root).get("token")
     if not token:
-        raise RuntimeError("Link Mod Studio first (Store tab)")
+        raise RuntimeError("Link Mod Studio first (AccretionWeb tab)")
     status, _, answer = _http("POST", f"{FUNCTIONS}/studio?op={op}", body, {"x-save-token": token}, timeout=timeout)
     if status != 200 or not isinstance(answer, dict):
         raise RuntimeError((answer.get("error") if isinstance(answer, dict) else None) or f"Accretion answered {status}")
@@ -306,7 +306,7 @@ def keys(root, repo_root, plumesign_path=None, fetch_account=None):
         status, _, body = _http("POST", FUNCTIONS + "/studio?op=summary", {"apps": []}, {"x-save-token": state["token"]}, timeout=40)
         check("Accretion admin link", status == 200, f"{state.get('account')} · {'admin' if status == 200 else (body.get('error') if isinstance(body, dict) else status)}")
     else:
-        check("Accretion admin link", False, "not linked: Link on the Store tab")
+        check("Accretion admin link", False, "not linked: Link on the AccretionWeb tab")
     return out
 
 

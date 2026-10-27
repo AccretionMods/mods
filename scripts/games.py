@@ -139,6 +139,14 @@ def info(bundle, region="us", opener=None):
             "notes": r.get("releaseNotes", ""),
             "languages": r.get("languageCodesISO2A", []),
             "themes": theme_words(r)[:8],
+            # what the App Store page shows besides: its screenshots (iPhone first, iPad when it has none), the
+            # content warnings, the developer's site and this version's ratings
+            "screenshots": (r.get("screenshotUrls") or r.get("ipadScreenshotUrls") or [])[:10],
+            "advisories": r.get("advisories", []),
+            "seller_url": r.get("sellerUrl", ""),
+            "all_genres": r.get("genres", []),
+            "rating_now": round(r.get("averageUserRatingForCurrentVersion") or 0, 1),
+            "ratings_now": r.get("userRatingCountForCurrentVersion") or 0,
         }
     )
     return out
