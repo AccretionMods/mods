@@ -7,7 +7,7 @@ bool AMDetectionEventKeyEqual(const AMDetectionEventKey *a,const AMDetectionEven
 }
 #if AM_DETECTION_DIAGNOSTICS_ENABLED
 static atomic_bool am_diag_enabled,am_diag_saturated;
-static atomic_uint am_diag_phase,am_diag_attribution_dropped,am_diag_callsite_dropped,am_diag_allocation_failures;
+static atomic_uint am_diag_phase,am_diag_attribution_dropped,am_diag_callsite_dropped,am_diag_allocation_failures,am_diag_operational_gaps;
 static struct { atomic_uint calls,matched,filtered; } am_diag_entry_counts[AM_DETECTION_REGISTRY_ID_LIMIT];
 /* state 0=empty, 1=initializing, 2=immutable identity published. */
 static struct { atomic_uint state; AMDetectionEventKey key;
@@ -49,12 +49,12 @@ AMDetectionCounters AMDetectionReadEntryCounters(AMDetectionEntryID entry) {
     return (AMDetectionCounters){calls>UINT32_MAX ? UINT32_MAX : (uint32_t)calls,
         matched>UINT32_MAX ? UINT32_MAX : (uint32_t)matched,filtered>UINT32_MAX ? UINT32_MAX : (uint32_t)filtered};
 }
-void AMDetectionRecordEvent(AMDetectionEventKey key,uint64_t token,bool filtered,AMDetectionResult result) {
+static void am_diag_record_event(AMDetectionEventKey key,uint64_t token,bool filtered,AMDetectionResult result,bool original_called,bool count_entry) {
     if (!atomic_load_explicit(&am_diag_enabled,memory_order_relaxed)) return;
     if (key.entry>=AM_DETECTION_REGISTRY_ID_LIMIT || key.image>AM_DETECTION_UNKNOWN_IMAGE ||
         (unsigned)key.phase>=AM_DETECTION_PHASE_COUNT || (unsigned)key.rule.kind>255 || key.rule.index>=64) return;
     bool matched=key.rule.kind!=AM_DETECTION_RULE_NONE;
-    AMDetectionCountEntry(key.entry,matched,filtered);
+    if (count_entry) AMDetectionCountEntry(key.entry,matched,filtered);
     uint32_t hash=am_diag_hash(key); bool recorded=false;
     for (unsigned probe=0;probe<AM_DETECTION_ATTRIBUTION_CAPACITY;probe++) {
         unsigned i=(hash+probe)%AM_DETECTION_ATTRIBUTION_CAPACITY;
@@ -78,7 +78,7 @@ void AMDetectionRecordEvent(AMDetectionEventKey key,uint64_t token,bool filtered
     if (!recorded) am_diag_increment(&am_diag_attribution_dropped);
     if (!matched) return;
     if ((unsigned)result>=AM_DETECTION_RESULT_COUNT) result=AM_DETECTION_RESULT_UNKNOWN;
-    if (filtered) result=AM_DETECTION_RESULT_NOT_CALLED;
+    if (filtered && !original_called) result=AM_DETECTION_RESULT_NOT_CALLED;
     hash^=(uint32_t)token^(uint32_t)(token>>32);recorded=false;
     for (unsigned probe=0;probe<AM_DETECTION_CALLSITE_CAPACITY;probe++) {
         unsigned i=(hash+probe)%AM_DETECTION_CALLSITE_CAPACITY;
@@ -96,6 +96,15 @@ void AMDetectionRecordEvent(AMDetectionEventKey key,uint64_t token,bool filtered
         }
     }
     if (!recorded) am_diag_increment(&am_diag_callsite_dropped);
+}
+void AMDetectionRecordEvent(AMDetectionEventKey key,uint64_t token,bool filtered,AMDetectionResult result) {
+    am_diag_record_event(key,token,filtered,result,false,true);
+}
+void AMDetectionRecordPostEvent(AMDetectionEventKey key,uint64_t token,bool filtered,AMDetectionResult result) {
+    am_diag_record_event(key,token,filtered,result,true,true);
+}
+void AMDetectionRecordPostDetailEvent(AMDetectionEventKey key,uint64_t token,bool filtered,AMDetectionResult result) {
+    am_diag_record_event(key,token,filtered,result,true,false);
 }
 size_t AMDetectionReadEvents(AMDetectionEventRow *out,size_t capacity) {
     if (!out) return 0;
@@ -123,10 +132,11 @@ size_t AMDetectionReadEventCallsites(AMDetectionEventCallsite *out,size_t capaci
 AMDetectionCoverage AMDetectionReadCoverage(void) {
     AMDetectionCoverage c={.attribution_dropped=atomic_load(&am_diag_attribution_dropped),
         .callsite_dropped=atomic_load(&am_diag_callsite_dropped),.allocation_failures=atomic_load(&am_diag_allocation_failures),
-        .saturated=atomic_load(&am_diag_saturated)};
-    c.incomplete=c.attribution_dropped || c.callsite_dropped || c.allocation_failures || c.saturated;return c;
+        .saturated=atomic_load(&am_diag_saturated),.operational_gaps=atomic_load(&am_diag_operational_gaps)};
+    c.incomplete=c.attribution_dropped || c.callsite_dropped || c.allocation_failures || c.operational_gaps || c.saturated;return c;
 }
 void AMDetectionRecordAllocationFailure(void) { if (atomic_load(&am_diag_enabled)) am_diag_increment(&am_diag_allocation_failures); }
+void AMDetectionRecordCoverageGap(void) { if (atomic_load(&am_diag_enabled)) am_diag_increment(&am_diag_operational_gaps); }
 bool AMDetectionSetPhase(AMDetectionPhase phase) {
     if (!atomic_load(&am_diag_enabled) || (unsigned)phase>=AM_DETECTION_PHASE_COUNT) return false;
     atomic_store(&am_diag_phase,(unsigned)phase);return true;
@@ -137,10 +147,13 @@ void AMDetectionDiagnosticsConfigure(bool enabled) { (void)enabled; }
 void AMDetectionCountEntry(AMDetectionEntryID entry,bool matched,bool filtered) { (void)entry;(void)matched;(void)filtered; }
 AMDetectionCounters AMDetectionReadEntryCounters(AMDetectionEntryID entry) { (void)entry;return (AMDetectionCounters){0}; }
 void AMDetectionRecordEvent(AMDetectionEventKey key,uint64_t token,bool filtered,AMDetectionResult result) { (void)key;(void)token;(void)filtered;(void)result; }
+void AMDetectionRecordPostEvent(AMDetectionEventKey key,uint64_t token,bool filtered,AMDetectionResult result) { (void)key;(void)token;(void)filtered;(void)result; }
+void AMDetectionRecordPostDetailEvent(AMDetectionEventKey key,uint64_t token,bool filtered,AMDetectionResult result) { (void)key;(void)token;(void)filtered;(void)result; }
 size_t AMDetectionReadEvents(AMDetectionEventRow *out,size_t capacity) { (void)out;(void)capacity;return 0; }
 size_t AMDetectionReadEventCallsites(AMDetectionEventCallsite *out,size_t capacity) { (void)out;(void)capacity;return 0; }
 AMDetectionCoverage AMDetectionReadCoverage(void) { return (AMDetectionCoverage){0}; }
 void AMDetectionRecordAllocationFailure(void) {}
+void AMDetectionRecordCoverageGap(void) {}
 bool AMDetectionSetPhase(AMDetectionPhase phase) { (void)phase;return false; }
 AMDetectionPhase AMDetectionCurrentPhase(void) { return AM_DETECTION_PHASE_STARTUP; }
 #endif

@@ -24,6 +24,8 @@ typedef struct { AMDetectionAttribution origin; uint64_t token;
 void AMDetectionSetCallsiteResolver(uint64_t (*resolver)(const void *));
 void AMDetectionRecordOutcome(AMDetectionAPI,AMDetectionRuleRef,bool,const void *,AMDetectionResult);
 void AMDetectionRecordEntryOutcome(AMDetectionEntryID,AMDetectionRuleRef,bool,const void *,AMDetectionResult);
+void AMDetectionRecordEntryPostOutcome(AMDetectionEntryID,AMDetectionRuleRef,bool,const void *,AMDetectionResult);
+void AMDetectionRecordEntryDetailOutcome(AMDetectionEntryID,AMDetectionRuleRef,bool,const void *,AMDetectionResult);
 size_t AMDetectionReadCallsites(AMDetectionCallsite *,size_t);
 unsigned AMDetectionCallsitesDropped(void);
 /* Startup only, before hooks are published. Profile/original storage must outlive the hooks. */

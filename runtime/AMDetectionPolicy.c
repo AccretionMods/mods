@@ -69,6 +69,13 @@ AMDetectionRuleRef AMDetectionWriteRule(const AMDetectionProfile *p,const char *
             return (AMDetectionRuleRef){AM_DETECTION_RULE_WRITE_PATH,(unsigned)i};
     return (AMDetectionRuleRef){0};
 }
+AMDetectionRuleRef AMDetectionChildRule(const AMDetectionProfile *p,const char *parent,const char *child) {
+    if (!path_valid(parent)) return (AMDetectionRuleRef){0};
+    size_t n=bounded_length(child,4096),base=strlen(parent),separator=base>1 ? 1 : 0;
+    if (!n || n==4096 || base+separator+n>=4096 || strchr(child,'/')) return (AMDetectionRuleRef){0};
+    char path[4096];memcpy(path,parent,base);if (separator) path[base++]='/';memcpy(path+base,child,n+1);
+    return AMDetectionPathRule(p,path);
+}
 bool AMDetectionMatchPath(const AMDetectionProfile *p,const char *s) { return AMDetectionPathRule(p,s).kind!=AM_DETECTION_RULE_NONE; }
 bool AMDetectionMatchScheme(const AMDetectionProfile *p,const char *s) { return AMDetectionSchemeRule(p,s).kind!=AM_DETECTION_RULE_NONE; }
 bool AMDetectionMatchEnvironment(const AMDetectionProfile *p,const char *s) { return AMDetectionEnvironmentRule(p,s).kind!=AM_DETECTION_RULE_NONE; }

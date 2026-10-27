@@ -27,6 +27,7 @@ AMDetectionRuleRef AMDetectionSchemeRule(const AMDetectionProfile *,const char *
 AMDetectionRuleRef AMDetectionEnvironmentRule(const AMDetectionProfile *,const char *);
 AMDetectionRuleRef AMDetectionWriteRule(const AMDetectionProfile *,const char *);
 bool AMDetectionPathValid(const char *);
+AMDetectionRuleRef AMDetectionChildRule(const AMDetectionProfile *,const char *parent,const char *child);
 
 bool AMDetectionMatchPath(const AMDetectionProfile *profile, const char *path);
 bool AMDetectionMatchScheme(const AMDetectionProfile *profile, const char *scheme);

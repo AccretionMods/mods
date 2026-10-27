@@ -3,7 +3,7 @@
 
 static void *am_registry_originals[AM_DETECTION_REGISTRY_ID_LIMIT];
 #define AM_ENTRY(id,name,module,abi,rule,requirements) \
-    {id,name,module,abi,rule,requirements,module,&am_registry_originals[id],NULL,NULL,NULL}
+    {id,name,module,abi,rule,requirements,module,&am_registry_originals[id],NULL,NULL,NULL,"calls",true}
 /* Append-only wire IDs: 6/7 remain historical aggregates, never concrete hooks. */
 static AMDetectionEntry am_registry_entries[]={
     AM_ENTRY(0,"access",AM_DETECTION_MODULE_FILES,AM_DETECTION_ABI_NATIVE,AM_DETECTION_RULE_PATH,5),
@@ -18,7 +18,19 @@ static AMDetectionEntry am_registry_entries[]={
     AM_ENTRY(9,"foundation_attributes",AM_DETECTION_MODULE_FOUNDATION,AM_DETECTION_ABI_OBJC,AM_DETECTION_RULE_PATH,6),
     AM_ENTRY(10,"can_open_url",AM_DETECTION_MODULE_URLS,AM_DETECTION_ABI_OBJC,AM_DETECTION_RULE_SCHEME,6),
     AM_ENTRY(11,"readlink",AM_DETECTION_MODULE_FILES,AM_DETECTION_ABI_NATIVE,AM_DETECTION_RULE_PATH,13),
-    AM_ENTRY(12,"fstatat",AM_DETECTION_MODULE_FILES,AM_DETECTION_ABI_NATIVE,AM_DETECTION_RULE_PATH,13)
+    AM_ENTRY(12,"fstatat",AM_DETECTION_MODULE_FILES,AM_DETECTION_ABI_NATIVE,AM_DETECTION_RULE_PATH,13),
+    AM_ENTRY(13,"opendir",AM_DETECTION_MODULE_DIRECTORIES,AM_DETECTION_ABI_NATIVE,AM_DETECTION_RULE_PATH,13),
+    {14,"readdir",AM_DETECTION_MODULE_DIRECTORIES,AM_DETECTION_ABI_NATIVE,AM_DETECTION_RULE_PATH,13,
+        AM_DETECTION_MODULE_DIRECTORIES,&am_registry_originals[14],NULL,NULL,NULL,"rule_observations",true},
+    AM_ENTRY(15,"closedir",AM_DETECTION_MODULE_DIRECTORIES,AM_DETECTION_ABI_NATIVE,AM_DETECTION_RULE_NONE,13),
+    {16,"foundation_directory_paths",AM_DETECTION_MODULE_DIRECTORIES,AM_DETECTION_ABI_OBJC,AM_DETECTION_RULE_PATH,30,
+        AM_DETECTION_MODULE_DIRECTORIES,&am_registry_originals[16],NULL,NULL,NULL,"rule_observations",true},
+    {17,"foundation_directory_urls",AM_DETECTION_MODULE_DIRECTORIES,AM_DETECTION_ABI_OBJC,AM_DETECTION_RULE_PATH,30,
+        AM_DETECTION_MODULE_DIRECTORIES,&am_registry_originals[17],NULL,NULL,NULL,"rule_observations",true},
+    {18,"foundation_enumerator_paths",AM_DETECTION_MODULE_DIRECTORIES,AM_DETECTION_ABI_OBJC,AM_DETECTION_RULE_PATH,30,
+        AM_DETECTION_MODULE_DIRECTORIES,&am_registry_originals[18],NULL,NULL,NULL,"calls",false},
+    {19,"foundation_enumerator_urls",AM_DETECTION_MODULE_DIRECTORIES,AM_DETECTION_ABI_OBJC,AM_DETECTION_RULE_PATH,30,
+        AM_DETECTION_MODULE_DIRECTORIES,&am_registry_originals[19],NULL,NULL,NULL,"calls",false}
 };
 #undef AM_ENTRY
 static bool am_registry_configured;
@@ -35,7 +47,7 @@ const char *AMDetectionModuleName(AMDetectionModuleID module) {
     return module<AM_DETECTION_MODULE_COUNT ? names[module] : "unknown";
 }
 const char *AMDetectionSupportReasonName(AMDetectionSupportReason reason) {
-    static const char *const names[]={"none","not_selected","not_prepared","prepare_failed","publish_failed","fingerprint_mismatch","mode_off","fingerprint_unavailable"};
+    static const char *const names[]={"none","not_selected","not_prepared","prepare_failed","publish_failed","fingerprint_mismatch","mode_off","fingerprint_unavailable","apple_contract_unverified","contract_unimplemented"};
     return (unsigned)reason<sizeof names/sizeof *names ? names[reason] : "unknown";
 }
 const AMDetectionEntry *AMDetectionEntryAt(size_t index) {
@@ -99,7 +111,7 @@ void AMDetectionSetModuleUnsupported(AMDetectionModuleID module,AMDetectionSuppo
     if (module>=AM_DETECTION_MODULE_COUNT || !am_registry_configured || am_registry_modules[module].mode==AM_DETECTION_OFF) return;
     AMDetectionInvalidateModule(module);
     atomic_store(&am_registry_modules[module].state,AM_DETECTION_UNSUPPORTED);
-    atomic_store(&am_registry_modules[module].reason,(unsigned)reason<=AM_DETECTION_REASON_FINGERPRINT_UNAVAILABLE ? reason : AM_DETECTION_REASON_PREPARE_FAILED);
+    atomic_store(&am_registry_modules[module].reason,(unsigned)reason<=AM_DETECTION_REASON_CONTRACT_UNIMPLEMENTED ? reason : AM_DETECTION_REASON_PREPARE_FAILED);
 }
 bool AMDetectionPrepareModule(AMDetectionModuleID module) {
     if (module>=AM_DETECTION_MODULE_COUNT || !am_registry_configured || am_registry_mode==AM_DETECTION_OFF) return false;

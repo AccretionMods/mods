@@ -48,15 +48,27 @@ AMDetectionCounters AMDetectionReadCounters(AMDetectionAPI api) {
 }
 unsigned AMDetectionCallsitesDropped(void) { return AMDetectionReadCoverage().callsite_dropped; }
 unsigned AMDetectionAttributionDropped(void) { return AMDetectionReadCoverage().attribution_dropped; }
-void AMDetectionRecordEntryOutcome(AMDetectionEntryID entry,AMDetectionRuleRef rule,bool filtered,const void *caller,AMDetectionResult result) {
+static void am_detection_record_entry(AMDetectionEntryID entry,AMDetectionRuleRef rule,bool filtered,const void *caller,AMDetectionResult result,bool original_called,bool count_entry) {
     if (!AM_DETECTION_DIAGNOSTICS_ENABLED || !profile || profile->mode==AM_DETECTION_OFF) return;
     int saved=errno;
     if ((unsigned)rule.kind>=AM_DETECTION_RULE_COUNT || rule.index>=64) rule=(AMDetectionRuleRef){0};
     unsigned image=origin_resolver ? origin_resolver(caller) : AM_DETECTION_UNKNOWN_IMAGE;
     if (image>AM_DETECTION_UNKNOWN_IMAGE) image=AM_DETECTION_UNKNOWN_IMAGE;
     uint64_t token=rule.kind!=AM_DETECTION_RULE_NONE && callsite_resolver ? callsite_resolver(caller) : 0;
-    AMDetectionRecordEvent((AMDetectionEventKey){entry,(uint16_t)image,rule,AMDetectionCurrentPhase()},token,filtered,result);
+    AMDetectionEventKey key={entry,(uint16_t)image,rule,AMDetectionCurrentPhase()};
+    if (!count_entry) AMDetectionRecordPostDetailEvent(key,token,filtered,result);
+    else if (original_called) AMDetectionRecordPostEvent(key,token,filtered,result);
+    else AMDetectionRecordEvent(key,token,filtered,result);
     errno=saved;
+}
+void AMDetectionRecordEntryOutcome(AMDetectionEntryID entry,AMDetectionRuleRef rule,bool filtered,const void *caller,AMDetectionResult result) {
+    am_detection_record_entry(entry,rule,filtered,caller,result,false,true);
+}
+void AMDetectionRecordEntryPostOutcome(AMDetectionEntryID entry,AMDetectionRuleRef rule,bool filtered,const void *caller,AMDetectionResult result) {
+    am_detection_record_entry(entry,rule,filtered,caller,result,true,true);
+}
+void AMDetectionRecordEntryDetailOutcome(AMDetectionEntryID entry,AMDetectionRuleRef rule,bool filtered,const void *caller,AMDetectionResult result) {
+    am_detection_record_entry(entry,rule,filtered,caller,result,true,false);
 }
 void AMDetectionRecordOutcome(AMDetectionAPI api,AMDetectionRuleRef rule,bool filtered,const void *caller,AMDetectionResult result) {
     if ((unsigned)api<AM_DETECTION_API_COUNT) AMDetectionRecordEntryOutcome((AMDetectionEntryID)api,rule,filtered,caller,result);

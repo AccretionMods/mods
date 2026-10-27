@@ -11,6 +11,19 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class DetectionProfile(unittest.TestCase):
+    def test_directory_native_group_requires_all_lifetime_entrypoints(self):
+        identity = {"algorithm": "sha256-executable-sections-v1", "uuid": "a" * 32,
+                    "sha256": "b" * 64, "ranges": [{"offset": 512, "size": 64}]}
+        p = dict(self.profile, schema_version=2, adapters=["directories"],
+                 apis=["opendir", "readdir", "closedir"],
+                 image_fingerprints={name: identity for name in self.profile["images"]})
+        self.assertEqual(self.module.problems(p), [])
+        for apis in (["opendir"], ["readdir", "closedir"]):
+            self.assertTrue(self.module.problems(dict(p, apis=apis)))
+        self.assertTrue(self.module.problems(dict(p, schema_version=1)))
+        legacy = self.module.render(self.profile)
+        self.assertIn("#define AM_DETECTION_API_OPENDIR 0", legacy)
+
     def test_new_file_apis_require_schema2_fingerprints_and_are_never_implicit(self):
         p = dict(self.profile, schema_version=2, adapters=["filesystem"], apis=["readlink", "fstatat"])
         self.assertTrue(self.module.problems(p))
@@ -190,6 +203,9 @@ class DetectionProfile(unittest.TestCase):
         )
 
     def setUp(self):
+        original_path = sys.path.copy()
+        sys.path.insert(0, str(ROOT / "scripts"))
+        self.addCleanup(lambda: sys.path.__setitem__(slice(None), original_path))
         file = ROOT / "scripts/detection_profile.py"
         self.assertTrue(file.exists(), "profile generator missing")
         spec = importlib.util.spec_from_file_location("detection_profile", file)

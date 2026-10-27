@@ -13,7 +13,7 @@ LISTS = (
     "environment_names",
     "image_basenames",
 )
-FEATURES = ("filesystem", "foundation", "urls", "environment", "images")
+FEATURES = ("filesystem", "foundation", "urls", "environment", "images", "directories")
 MODULES = ("filesystem", "environment", "foundation", "urls", "directories", "writes",
            "preferences", "loader", "objc", "process", "sdk")
 ADVANCED_FIELDS = {"image_fingerprints", "module_modes", "write_probes", "preference_domains",
@@ -30,7 +30,10 @@ APIS = {
     "urls": "urls",
 }
 LEGACY_APIS = frozenset(APIS)
-APIS.update({"readlink": "filesystem", "fstatat": "filesystem"})
+APIS.update({"readlink": "filesystem", "fstatat": "filesystem",
+             "opendir": "directories", "readdir": "directories", "closedir": "directories",
+             "foundation_directory_paths": "directories", "foundation_directory_urls": "directories",
+             "foundation_enumerator_paths": "directories", "foundation_enumerator_urls": "directories"})
 FIELDS = {
     "schema_version",
     "game_version",
@@ -226,6 +229,8 @@ def problems(data, app_version=None):
                 errors.append("image_basenames cannot contain paths")
             elif key == "adapters" and value not in FEATURES:
                 errors.append("unknown adapter")
+            elif key == "adapters" and value == "directories" and schema != 2:
+                errors.append("advanced adapter requires schema 2")
             elif (
                 key == "images"
                 and value != "@executable"
@@ -298,6 +303,9 @@ def advanced_problems(data):
             if problems(base):
                 errors.append("broad, ambiguous or protected write probe")
     selected = {api for api in selected_apis(data) if isinstance(api, str)}
+    directory_group = {"opendir", "readdir", "closedir"}
+    if selected & directory_group and not directory_group <= selected:
+        errors.append("native directory filtering requires opendir, readdir and closedir together")
     if probes and not selected.intersection(("open", "fopen")):
         errors.append("write probes require an explicit write-capable entry point")
     if (selected - LEGACY_APIS or probes) and data.get("mode") != "off":
