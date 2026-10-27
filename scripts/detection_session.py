@@ -8,12 +8,19 @@ import time
 import uuid
 
 PHASES = ("startup", "login", "menu", "fight", "results")
+MAX_REPORT_BYTES = 8 * 1024 * 1024
+
+
+def validate_report(report):
+    if not isinstance(report, dict) or report.get("schema_version") not in (2, 3, 4):
+        raise ValueError("unsupported diagnostic report schema; update the local client/runtime")
+    return report
 
 
 def phase_request(report, phase):
     session = report.get("session_id")
     if (
-        report.get("schema_version") not in (2, 3)
+        report.get("schema_version") not in (2, 3, 4)
         or report.get("profile_mode") not in (1, 2)
         or not isinstance(session, str)
         or not re.fullmatch(r"[0-9a-f]{32}", session)
@@ -72,7 +79,7 @@ def command(dev, args):
 
     def read():
         result = transfer(["pull", bundle, "Documents/am_detection.json", str(local)])
-        if result.returncode or not local.exists() or local.stat().st_size > 512 * 1024:
+        if result.returncode or not local.exists() or local.stat().st_size > MAX_REPORT_BYTES:
             raise dev.DevError(
                 "bounded local diagnostic report unavailable; enable diagnostics in the profile, rebuild and keep the game open"
             )
@@ -80,9 +87,10 @@ def command(dev, args):
             report = json.loads(local.read_text(encoding="utf-8"))
         except (ValueError, OSError) as error:
             raise dev.DevError("local diagnostic report unreadable") from error
-        if not isinstance(report, dict):
-            raise dev.DevError("invalid local diagnostic report")
-        return report
+        try:
+            return validate_report(report)
+        except ValueError as error:
+            raise dev.DevError(str(error)) from error
 
     report = read()
     if args.action == "report":

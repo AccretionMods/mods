@@ -60,4 +60,6 @@ bool AMDetectionPublishModule(AMDetectionModuleID);
 void AMDetectionInvalidateModule(AMDetectionModuleID);
 bool AMDetectionModuleActive(AMDetectionModuleID);
 AMDetectionModuleResult AMDetectionModuleStatus(AMDetectionModuleID);
+const char *AMDetectionModuleName(AMDetectionModuleID);
+const char *AMDetectionSupportReasonName(AMDetectionSupportReason);
 #endif

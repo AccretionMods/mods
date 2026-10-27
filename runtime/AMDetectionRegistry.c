@@ -26,6 +26,15 @@ static bool am_registry_selected[AM_DETECTION_REGISTRY_ID_LIMIT];
 static struct { atomic_bool active; bool prepared; atomic_uint state,reason; } am_registry_modules[AM_DETECTION_MODULE_COUNT];
 
 size_t AMDetectionEntryCount(void) { return sizeof am_registry_entries/sizeof *am_registry_entries; }
+const char *AMDetectionModuleName(AMDetectionModuleID module) {
+    static const char *const names[]={"filesystem","environment","foundation","urls","directories",
+        "writes","preferences","loader","objc","process","sdk"};
+    return module<AM_DETECTION_MODULE_COUNT ? names[module] : "unknown";
+}
+const char *AMDetectionSupportReasonName(AMDetectionSupportReason reason) {
+    static const char *const names[]={"none","not_selected","not_prepared","prepare_failed","publish_failed"};
+    return (unsigned)reason<sizeof names/sizeof *names ? names[reason] : "unknown";
+}
 const AMDetectionEntry *AMDetectionEntryAt(size_t index) {
     return index<AMDetectionEntryCount() ? &am_registry_entries[index] : NULL;
 }

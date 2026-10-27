@@ -119,7 +119,7 @@ static BOOL am_detection_exists(id self,SEL cmd,NSString *path) {
     bool match=rule.kind!=AM_DETECTION_RULE_NONE;
     bool block=match && AMDetectionModuleActive(AM_DETECTION_MODULE_FOUNDATION);
     BOOL value=block ? NO : am_detection_file_exists(self,cmd,path);
-    if (selected) AMDetectionRecordOutcome(AM_DETECTION_FOUNDATION,rule,block,__builtin_return_address(0),value ? AM_DETECTION_RESULT_SUCCESS : AM_DETECTION_RESULT_NEGATIVE);
+    if (selected) AMDetectionRecordEntryOutcome(AM_DETECTION_ENTRY_FOUNDATION_EXISTS,rule,block,__builtin_return_address(0),value ? AM_DETECTION_RESULT_SUCCESS : AM_DETECTION_RESULT_NEGATIVE);
     am_detection_objc_depth--; return value;
 }
 static id am_detection_attrs(id self,SEL cmd,NSString *path,NSError **error) {
@@ -133,7 +133,7 @@ static id am_detection_attrs(id self,SEL cmd,NSString *path,NSError **error) {
     if (block) {
         if (error) *error=[NSError errorWithDomain:NSCocoaErrorDomain code:NSFileReadNoSuchFileError userInfo:nil];
     } else value=am_detection_attributes(self,cmd,path,error);
-    if (selected) AMDetectionRecordOutcome(AM_DETECTION_FOUNDATION,rule,block,__builtin_return_address(0),value ? AM_DETECTION_RESULT_SUCCESS : AM_DETECTION_RESULT_NEGATIVE);
+    if (selected) AMDetectionRecordEntryOutcome(AM_DETECTION_ENTRY_FOUNDATION_ATTRIBUTES,rule,block,__builtin_return_address(0),value ? AM_DETECTION_RESULT_SUCCESS : AM_DETECTION_RESULT_NEGATIVE);
     am_detection_objc_depth--; return value;
 }
 static BOOL am_detection_url(id self,SEL cmd,NSURL *url) {
@@ -144,7 +144,7 @@ static BOOL am_detection_url(id self,SEL cmd,NSURL *url) {
     bool match=rule.kind!=AM_DETECTION_RULE_NONE;
     bool block=match && AMDetectionModuleActive(AM_DETECTION_MODULE_URLS);
     BOOL value=block ? NO : am_detection_can_open(self,cmd,url);
-    if (selected) AMDetectionRecordOutcome(AM_DETECTION_URL,rule,block,__builtin_return_address(0),value ? AM_DETECTION_RESULT_SUCCESS : AM_DETECTION_RESULT_NEGATIVE);
+    if (selected) AMDetectionRecordEntryOutcome(AM_DETECTION_ENTRY_CAN_OPEN_URL,rule,block,__builtin_return_address(0),value ? AM_DETECTION_RESULT_SUCCESS : AM_DETECTION_RESULT_NEGATIVE);
     am_detection_objc_depth--; return value;
 }
 static BOOL am_detection_replace(Class cls,SEL sel,IMP replacement,IMP *original) {
@@ -319,61 +319,87 @@ AMImportBindResult AMDetectionBindImage(const void *header,size_t bytes,intptr_t
     return result;
 }
 NSDictionary *AMDetectionReport(void) {
-    static NSString *const states[]={@"disabled",@"observation-only",@"filtering",@"unsupported",@"failed"};
-    static NSString *const names[]={@"access",@"stat",@"lstat",@"open",@"fopen",@"getenv",@"foundation",@"urls"};
-    AMImportBindResult results[AM_DETECTION_REGISTRY_ID_LIMIT]; size_t failures,reasons[AM_IMPORT_FAILURE_COUNT];
+    if (!AM_DETECTION_DIAGNOSTICS_ENABLED) return nil;
+#if defined(__aarch64__)
+    bool arm64=true;
+#else
+    bool arm64=false;
+#endif
+    static NSString *const states[]={@"disabled",@"observing",@"filtering",@"unsupported",@"failed"};
+    size_t failures,reasons[AM_IMPORT_FAILURE_COUNT];
     os_unfair_lock_lock(&am_detection_lock);
-    memcpy(results,am_detection_results,sizeof results); failures=am_detection_image_failures;
-    memcpy(reasons,am_detection_image_failure_reasons,sizeof reasons);
+    failures=am_detection_image_failures;memcpy(reasons,am_detection_image_failure_reasons,sizeof reasons);
     os_unfair_lock_unlock(&am_detection_lock);
     NSMutableDictionary *adapters=[NSMutableDictionary dictionary];
-    for (size_t i=0;i<8;i++) {
-        const AMDetectionEntry *entry=AMDetectionEntryByID((AMDetectionEntryID)i);
-        bool native=entry->abi==AM_DETECTION_ABI_NATIVE;
-        bool selected=native ? AMDetectionEntrySelected(entry->id) : i==AM_DETECTION_FOUNDATION ? (AM_DETECTION_API_FOUNDATION_EXISTS || AM_DETECTION_API_FOUNDATION_ATTRIBUTES) : AM_DETECTION_API_URLS;
-        size_t installed=i<6 ? results[i].applied+results[i].already_owned : i==6 ? am_detection_foundation_installed : am_detection_url_installed;
-        size_t errors=i<6 ? failures+results[i].conflicts+results[i].failed : 0;
-        AMDetectionState state=AMDetectionAdapterState(am_detection_profile.mode,selected,installed,errors,am_detection_version_ok);
-        if (selected && am_detection_version_ok && am_detection_profile.mode!=AM_DETECTION_OFF) state=AMDetectionModuleStatus(entry->module).state;
-        AMDetectionCounters counters=AMDetectionReadCounters((AMDetectionAPI)i);
-        adapters[names[i]]=@{@"state":states[state],@"calls":@(counters.calls),@"matched":@(counters.matched),@"filtered":@(counters.filtered)};
+    NSMutableArray *entries=[NSMutableArray array];
+    for (size_t i=0;i<AMDetectionEntryCount();i++) {
+        const AMDetectionEntry *entry=AMDetectionEntryAt(i);
+        AMDetectionModuleResult status=AMDetectionModuleStatus(entry->module);
+        bool selected=am_detection_entry_enabled(entry->id);
+        if (entry->abi==AM_DETECTION_ABI_AGGREGATE) {
+            for (size_t j=0;j<AMDetectionEntryCount();j++) {
+                const AMDetectionEntry *child=AMDetectionEntryAt(j);
+                if (child->module==entry->module && am_detection_entry_enabled(child->id)) selected=true;
+            }
+        }
+        if (!selected || am_detection_profile.mode==AM_DETECTION_OFF) status=(AMDetectionModuleResult){AM_DETECTION_DISABLED,AM_DETECTION_REASON_NOT_SELECTED};
+        else if (!am_detection_version_ok) status=(AMDetectionModuleResult){AM_DETECTION_UNSUPPORTED,AM_DETECTION_REASON_PREPARE_FAILED};
+        AMDetectionCounters counters=AMDetectionReadEntryCounters(entry->id);
+        NSDictionary *value=@{@"entry_id":@(entry->id),@"name":@(entry->name),@"module":@(AMDetectionModuleName(entry->module)),
+            @"state":states[status.state],@"reason":@(AMDetectionSupportReasonName(status.reason)),
+            @"calls":@(counters.calls),@"matched":@(counters.matched),@"filtered":@(counters.filtered),
+            @"aggregate":@(entry->abi==AM_DETECTION_ABI_AGGREGATE),
+            @"evidence":@{@"implemented":@YES,@"statically_supported":@"not_recorded",
+                @"host_contract_tested":@"not_recorded",@"arm64_built":@(arm64),
+                @"device_compatible":@"not_verified",@"positive_artifact_filtering":@"not_verified"}};
+        adapters[@(entry->name)]=value;
+        if (entry->abi!=AM_DETECTION_ABI_AGGREGATE) [entries addObject:value];
     }
     adapters[@"image_concealment"]=@{@"state":@"unsupported"};
     adapters[@"class_concealment"]=@{@"state":@"unsupported"};
     NSMutableDictionary *failureReasons=[NSMutableDictionary dictionary];
-    for (unsigned i=1;i<AM_IMPORT_FAILURE_COUNT;i++)
-        failureReasons[@(AMImportFailureName((AMImportFailure)i))]=@(reasons[i]);
-    AMDetectionAttribution rows[AM_DETECTION_ATTRIBUTION_CAPACITY];
-    size_t rowCount=AMDetectionReadAttribution(rows,AM_DETECTION_ATTRIBUTION_CAPACITY);
-    NSMutableArray *attributed=[NSMutableArray array];
+    for (unsigned i=1;i<AM_IMPORT_FAILURE_COUNT;i++) failureReasons[@(AMImportFailureName((AMImportFailure)i))]=@(reasons[i]);
+    NSMutableArray *attributed=[NSMutableArray array],*siteRows=[NSMutableArray array];
+    AMDetectionEventRow *rows=calloc(AM_DETECTION_ATTRIBUTION_CAPACITY,sizeof *rows);
+    if (!rows) AMDetectionRecordAllocationFailure();
+    size_t rowCount=AMDetectionReadEvents(rows,AM_DETECTION_ATTRIBUTION_CAPACITY);
     for (size_t i=0;i<rowCount;i++) {
-        AMDetectionAttribution row=rows[i];
-        const char *rule=row.rule.kind<=AM_DETECTION_RULE_ENVIRONMENT && row.rule.index<64 ? am_detection_rule_ids[row.rule.kind][row.rule.index] : NULL;
-        NSString *image=row.image<AM_DETECTION_IMAGES_COUNT ? @(am_detection_image_ids[row.image]) : @"unattributed";
-        [attributed addObject:@{@"image_id":image,@"phase":am_detection_phases[row.phase],@"api":names[row.api],
+        AMDetectionEventRow row=rows[i];const AMDetectionEntry *entry=AMDetectionEntryByID(row.key.entry);
+        if (!entry) continue;
+        const char *rule=row.key.rule.kind<=AM_DETECTION_RULE_ENVIRONMENT && row.key.rule.index<64 ? am_detection_rule_ids[row.key.rule.kind][row.key.rule.index] : NULL;
+        NSString *image=row.key.image<AM_DETECTION_IMAGES_COUNT ? @(am_detection_image_ids[row.key.image]) : @"unattributed";
+        [attributed addObject:@{@"entry_id":@(entry->id),@"module":@(AMDetectionModuleName(entry->module)),
+            @"image_id":image,@"phase":am_detection_phases[row.key.phase],@"api":@(entry->name),
             @"rule_id":rule ? @(rule) : (id)NSNull.null,@"calls":@(row.counts.calls),
             @"matched":@(row.counts.matched),@"filtered":@(row.counts.filtered)}];
     }
-    AMDetectionCallsite sites[AM_DETECTION_CALLSITE_CAPACITY];
-    size_t siteCount=AMDetectionReadCallsites(sites,AM_DETECTION_CALLSITE_CAPACITY);
-    NSMutableArray *siteRows=[NSMutableArray array];
+    free(rows);
+    AMDetectionEventCallsite *sites=calloc(AM_DETECTION_CALLSITE_CAPACITY,sizeof *sites);
+    if (!sites) AMDetectionRecordAllocationFailure();
+    size_t siteCount=AMDetectionReadEventCallsites(sites,AM_DETECTION_CALLSITE_CAPACITY);
     for (size_t i=0;i<siteCount;i++) {
-        AMDetectionCallsite site=sites[i]; AMDetectionAttribution row=site.origin;
-        const char *rule=am_detection_rule_ids[row.rule.kind][row.rule.index];
-        NSString *image=row.image<AM_DETECTION_IMAGES_COUNT ? @(am_detection_image_ids[row.image]) : @"unattributed";
+        AMDetectionEventCallsite site=sites[i];AMDetectionEventKey key=site.key;
+        const AMDetectionEntry *entry=AMDetectionEntryByID(key.entry);if (!entry) continue;
+        const char *rule=key.rule.kind<=AM_DETECTION_RULE_ENVIRONMENT && key.rule.index<64 ? am_detection_rule_ids[key.rule.kind][key.rule.index] : NULL;
+        NSString *image=key.image<AM_DETECTION_IMAGES_COUNT ? @(am_detection_image_ids[key.image]) : @"unattributed";
         NSString *token=site.token ? [NSString stringWithFormat:@"%016llx",(unsigned long long)site.token] : @"unavailable";
-        [siteRows addObject:@{@"image_id":image,@"build_uuid":am_detection_build_uuid(row.image),@"caller_id":token,
-            @"api":names[row.api],@"phase":am_detection_phases[row.phase],@"rule_id":rule ? @(rule) : (id)NSNull.null,
+        [siteRows addObject:@{@"entry_id":@(entry->id),@"module":@(AMDetectionModuleName(entry->module)),
+            @"image_id":image,@"build_uuid":am_detection_build_uuid(key.image),@"caller_id":token,
+            @"api":@(entry->name),@"phase":am_detection_phases[key.phase],@"rule_id":rule ? @(rule) : (id)NSNull.null,
             @"results":@{@"unknown":@(site.results[AM_DETECTION_RESULT_UNKNOWN]),@"success":@(site.results[AM_DETECTION_RESULT_SUCCESS]),
                 @"negative":@(site.results[AM_DETECTION_RESULT_NEGATIVE]),@"error":@(site.results[AM_DETECTION_RESULT_ERROR]),
                 @"original_not_called":@(site.results[AM_DETECTION_RESULT_NOT_CALLED])}}];
     }
-    return @{@"schema_version":@3,@"profile_mode":@(am_detection_profile.mode),@"profile_id":@AM_DETECTION_PROFILE_ID,
-        @"callsite_id_algorithm":@"fnv1a64-uuid-return-offset-le-v1",@"callsites":siteRows,
-        @"callsite_capacity":@AM_DETECTION_CALLSITE_CAPACITY,@"callsites_dropped":@(AMDetectionCallsitesDropped()),
+    free(sites);
+    AMDetectionCoverage coverage=AMDetectionReadCoverage();
+    return @{@"schema_version":@4,@"profile_mode":@(am_detection_profile.mode),@"profile_id":@AM_DETECTION_PROFILE_ID,
+        @"callsite_id_algorithm":@"fnv1a64-uuid-return-offset-le-v1",@"callsites":siteRows,@"entries":entries,
+        @"coverage":@{@"incomplete":@(coverage.incomplete),@"saturated":@(coverage.saturated),
+            @"allocation_failures":@(coverage.allocation_failures)},
+        @"callsite_capacity":@AM_DETECTION_CALLSITE_CAPACITY,@"callsites_dropped":@(coverage.callsite_dropped),
         @"session_id":am_detection_session ?: @"",@"phase":am_detection_phases[AMDetectionCurrentPhase()],
         @"phase_request_id":am_detection_phase_request ?: @"",@"attribution":attributed,
-        @"attribution_capacity":@AM_DETECTION_ATTRIBUTION_CAPACITY,@"attribution_dropped":@(AMDetectionAttributionDropped()),
+        @"attribution_capacity":@AM_DETECTION_ATTRIBUTION_CAPACITY,@"attribution_dropped":@(coverage.attribution_dropped),
         @"elapsed_ms":@((NSProcessInfo.processInfo.systemUptime-am_detection_started_at)*1000.0),@"version_match":@(am_detection_version_ok),
         @"image_layout_failures":@(failures),@"image_layout_failure_reasons":failureReasons,
         @"loaded_image_count":@(_dyld_image_count()),@"adapters":adapters};

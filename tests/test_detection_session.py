@@ -20,6 +20,18 @@ class DetectionSession(unittest.TestCase):
         cls.module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.module)
 
+    def test_schema4_supports_phase_and_preserves_capability_evidence(self):
+        report = {"schema_version": 4, "session_id": "a" * 32, "profile_mode": 1,
+                  "entries": [{"entry_id": 9, "module": "foundation", "state": "unsupported",
+                               "reason": "fingerprint_mismatch", "evidence": {"arm64_built": True,
+                                                                            "device_compatible": False}}]}
+        self.assertEqual(self.module.phase_request(report, "fight")["phase"], "fight")
+        self.assertEqual(self.module.validate_report(report), report)
+        for version in (2, 3):
+            self.assertEqual(self.module.validate_report(dict(report, schema_version=version))["schema_version"], version)
+        with self.assertRaisesRegex(ValueError, "schema"):
+            self.module.validate_report(dict(report, schema_version=5))
+
     def test_phase_requires_current_session_and_active_observation(self):
         report = {"schema_version": 3, "session_id": "a" * 32, "profile_mode": 1}
         request = self.module.phase_request(report, "fight")

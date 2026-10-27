@@ -6,7 +6,8 @@
 #include <string.h>
 #include <unistd.h>
 
-static unsigned origin(const void *caller) { (void)caller; errno=EDOM; return 2; }
+static unsigned image_value=2;
+static unsigned origin(const void *caller) { (void)caller; errno=EDOM; return image_value; }
 static uint64_t token_value=123;
 static uint64_t callsite(const void *caller) { (void)caller; errno=EDOM; return token_value; }
 static FILE *fake_fopen(const char *path,const char *mode) {
@@ -93,7 +94,7 @@ int main(int argc, char **argv) {
     AMDetectionSetOriginResolver(origin);
     assert(AMDetectionCurrentPhase()==AM_DETECTION_PHASE_STARTUP);
     assert(!AMDetectionSetPhase(AM_DETECTION_PHASE_COUNT));
-    assert(AMDetectionSetPhase(AM_DETECTION_PHASE_LOGIN));
+    assert(AMDetectionSetPhase(AM_DETECTION_PHASE_LOGIN)==(p.mode!=AM_DETECTION_OFF));
     assert(setenv("AM_PROBE_ENV", "probe-value", 1) == 0);
     struct stat st, before; memset(&st, 0x51, sizeof st); before=st;
     if (p.mode == AM_DETECTION_FILTER) {
@@ -144,7 +145,7 @@ int main(int argc, char **argv) {
         bool fight=false;
         for (size_t i=0;i<n;i++) if (rows[i].phase==AM_DETECTION_PHASE_FIGHT && rows[i].rule.kind==AM_DETECTION_RULE_PATH) fight=true;
         assert(fight);
-        for (unsigned phase=0;phase<AM_DETECTION_PHASE_COUNT;phase++) {
+        for (image_value=2;image_value<4;image_value++) for (unsigned phase=0;phase<AM_DETECTION_PHASE_COUNT;phase++) {
             AMDetectionSetPhase((AMDetectionPhase)phase);
             for (unsigned index=0;index<64;index++) for (unsigned api=0;api<AM_DETECTION_API_COUNT;api++)
                 AMDetectionRecordRule((AMDetectionAPI)api,(AMDetectionRuleRef){AM_DETECTION_RULE_PATH,index},false,NULL);
