@@ -921,7 +921,7 @@ const App = {
           btn("Run: build, sign, install, open, log", "run", () => [...extra(), "--seconds", String(Number(secs.value) || 75)], "primary"),
           btn("Log", "log", () => ["--seconds", String(Number(secs.value) || 60), ...(launch.checked ? ["--launch"] : [])]),
           this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center" }, launch, "open the app first"), this.el("span", { class: "muted small", text: "seconds" }), secs),
-          this.el("p", { class: "hint", text: "The first Apple ID sign-in asks for a 2FA code: type it in the answer box under the job (or run scripts\\am.ps1 sign <ipa> --install once in a console). After that plumesign keeps the session." })),
+          this.el("p", { class: "hint", text: "Signs with your certificate (zsign in WSL), keeping the game's own app ID, so logins tied to it keep working; push, Sign in with Apple and JIT hooks don't work this way. For JIT, sign with the Apple ID: am sign <ipa> --install --apple-id (its first sign-in asks for a 2FA code in the answer box under the job)." })),
         this.el("div", { class: "sec", id: "updateSec" }));
     }
     this.byId("buildInfo").textContent = (d.last_dylib ? "Last dylib: " + d.last_dylib : "No build yet") + (d.last_ipa ? "   ·   Last ipa: " + d.last_ipa : "");

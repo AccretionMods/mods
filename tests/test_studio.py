@@ -40,6 +40,7 @@ class Api(unittest.TestCase):
         from unittest import mock
         with mock.patch.object(server, "claude_exe", return_value="claude"), \
                 mock.patch.object(server, "aider_exe", return_value="aider"), \
+                mock.patch.object(server.shutil, "which", side_effect=lambda name: "codex" if name == "codex" else None), \
                 mock.patch.object(server, "gemini_key", return_value="test-key"):
             self.assertEqual(server.claude_command("x", True, "high")[-2:], ["--effort", "high"])
             self.assertNotIn("--effort", server.claude_command("x", True))
@@ -401,7 +402,8 @@ public class OnlineState : MonoBehaviour // TypeDefIndex: 111
 
         status, _data = self.post("/api/jobs", {"command": "rm", "mod": "game-plus"})
         self.assertEqual(status, 400)
-        # sign and install take a file: the mod name must not be put in front of it
+        # sign and install take a file: the mod name must not be put in front of it; sign gets it as --mod (its
+        # install mode and installed ID guard the install)
         status, job = self.post(
             "/api/jobs",
             {
@@ -411,7 +413,7 @@ public class OnlineState : MonoBehaviour // TypeDefIndex: 111
             },
         )
         self.assertEqual(status, 200, job)
-        self.assertEqual(job["args"], ["C:/no/such.ipa", "--install"])
+        self.assertEqual(job["args"], ["C:/no/such.ipa", "--install", "--mod", "game-plus"])
         self.post(f"/api/jobs/{job['id']}/stop", {})
         # Claude Code runs: read-only gets reading tools and read-only dev commands only
         old_exe = server.claude_exe

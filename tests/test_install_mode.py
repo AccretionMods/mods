@@ -93,7 +93,8 @@ class InstallModes(unittest.TestCase):
                 mock.patch.object(dev.subprocess, "run", run), redirect_stdout(io.StringIO()) as out:
             try:
                 dev.cmd_sign(argparse.Namespace(ipa=str(self.root / "a.ipa"), install=True, out=None, launch=False,
-                                                mod="game-plus", replace_original=replace))
+                                                mod="game-plus", replace_original=replace,
+                                                apple_id=True))  # these cases are the Apple ID signer's
                 error = None
             except dev.DevError as e:
                 error = str(e)

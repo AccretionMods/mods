@@ -519,7 +519,7 @@ def main(argv=None):
         say(f"==> done: {added} new switches built. Run installs it on the phone; the dots show which ones work.")
         return 0
     say("==> 5/5 install on the phone and watch the new switches")
-    if not dev_py("sign", ipa, "--install"):
+    if not dev_py("sign", ipa, "--install", "--mod", mod):
         say(f"==> built but not installed (is the phone on USB and unlocked?): {ipa}. Run installs it.")
         return 1
     stream_log(mod, 45)

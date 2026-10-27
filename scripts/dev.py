@@ -2,7 +2,8 @@
 
 Runs on Windows (uv run --no-project --python 3.12 scripts/dev.py ...  or  py -3 scripts/dev.py ...) and in
 WSL/Linux (python3 scripts/dev.py ...). Theos builds run in WSL either way; dumping needs .NET (Windows has
-it); signing and device logs need the phone on USB and run on Windows (plumesign, pymobiledevice3).
+it); signing uses the owner's certificate with zsign in WSL (keeps each app's own ID), or the Apple ID with
+plumesign (--apple-id, Windows); installs and device logs need the phone on USB (pymobiledevice3).
 
   dev.py new <name> <base.ipa> [--title T] [--category games]   personal mod folder from a decrypted .ipa
   dev.py dump <mod> [--base file.ipa] [--force]                  Il2CppDumper -> work/dump-<mod>-<ver>/dump.cs
@@ -22,7 +23,7 @@ it); signing and device logs need the phone on USB and run on Windows (plumesign
   dev.py gen <mod>                                               regenerate AMTweaks.gen.m from tweaks.json
   dev.py check <mod>                                             hooks.json against the current dump
   dev.py build <mod> [--ipa] [--bump] [--base file.ipa]          .dylib (and .ipa) in C:\\AccretionMods\\builds
-  dev.py sign <file.ipa> [--install] [-o out.ipa]                Apple ID signing with plumesign (Windows)
+  dev.py sign <file.ipa> [--install] [--mod M] [--apple-id]      certificate signing (zsign, keeps the ID); --apple-id: plumesign
   dev.py install <signed.ipa>                                    pymobiledevice3 apps install (USB)
   dev.py log <mod> [--seconds 60]                                device log lines of the mod and the runtime
   dev.py status <mod>                                            base, dump, tweaks, hooks, last build
@@ -1570,11 +1571,53 @@ def replacing_original(mod, bundle, apps):
     return bundle in apps and bundle != load_state(mod).get("installed_bundle")
 
 
+# The owner's distribution certificate (INVENTORY.yaml signing.own_certificate). zsign without -b keeps each app's
+# own bundle ID, so games tied to it (Firebase, a vendor login) keep working; Apple ID signing appends the team and
+# broke Last Day on Earth's account switch (playbook/ios.md). Neither gives push or Sign in with Apple; only Apple ID
+# signing gives get-task-allow (JIT).
+CERT_DIR = "~/.accretion-signing"
+
+
+def bash(script, *args):
+    """bash -lc script with positional arguments ($1, $2...): through WSL on Windows, directly elsewhere."""
+    cmd = ["bash", "-lc", script, "_", *args]
+    return ["wsl", "-e", *cmd] if WINDOWS else cmd
+
+
+def certificate_ready():
+    """Whether the certificate, its password file, its profile and zsign are all there."""
+    script = f"cd {CERT_DIR} 2>/dev/null && test -f cert.p12 -a -f password -a -f profile.mobileprovision && command -v zsign"
+    return subprocess.run(bash(script), capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                          check=False).returncode == 0
+
+
+def signer_for(args):
+    """"certificate" (the default) or "apple-id": --apple-id, or no certificate set up."""
+    if getattr(args, "apple_id", False):
+        return "apple-id"
+    if certificate_ready():
+        return "certificate"
+    print(f"==> no certificate in WSL {CERT_DIR} (cert.p12, password, profile.mobileprovision) or no zsign: "
+          "signing with the Apple ID instead")
+    return "apple-id"
+
+
+def certificate_sign(ipa, out):
+    """zsign with the owner's certificate, keeping the app's bundle ID. The password goes from its file straight to
+    zsign: it is never printed or passed through this process."""
+    script = f'cd {CERT_DIR} && zsign -k cert.p12 -p "$(cat password)" -m profile.mobileprovision -o "$1" "$2"'
+    print(f"==> zsign with the certificate in {CERT_DIR} (keeps the app's own ID)")
+    r = subprocess.run(bash(script, wsl_path(out), wsl_path(ipa)), capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL, check=False)
+    if r.returncode != 0 or not Path(out).is_file():
+        tail = [line for line in (r.stdout + r.stderr).splitlines() if line.strip()][-3:]
+        raise DevError(f"zsign failed ({r.returncode}): {' / '.join(tail)}")
+
+
 def cmd_sign(args):
-    if not WINDOWS:
-        raise DevError(
-            "sign runs on Windows (plumesign with the saved Apple ID); from WSL use scripts/sign.sh with a certificate"
-        )
+    signer = signer_for(args)
+    if signer == "apple-id" and not WINDOWS:
+        raise DevError("Apple ID signing runs on Windows (plumesign with the saved Apple ID)")
     ipa = Path(args.ipa)
     if not ipa.is_file():
         raise DevError(f"no file at {ipa}")
@@ -1585,17 +1628,23 @@ def cmd_sign(args):
     )
     mod = getattr(args, "mod", None)
     chosen = ipa_info(ipa)[0]["CFBundleIdentifier"]
-    # "original" installs can replace the game: sign first, look at the phone, then install (no plumesign install)
-    careful = bool(args.install and mod and install_mode(mod) == "original")
-    cmd = [plumesign(), "sign", "-p", str(ipa), "--apple-id", "-o", str(out)]
-    if args.install and not careful:
-        cmd += ["--register-and-install", "--udid", usbmux_device_id()]
-    print("==> " + " ".join(cmd))
-    r = subprocess.run(
-        cmd, check=False
-    )  # interactive: Apple ID prompts (2FA) go to this console
-    if r.returncode != 0:
-        raise DevError(f"plumesign failed ({r.returncode})")
+    if mod and signer == "certificate" and any(h.get("needs_jit") for h in load_hooks(mod_dir(mod))["hooks"]):
+        print("==> note: this mod has hooks that need JIT; a distribution certificate can't give get-task-allow, so "
+              "they won't run (pins do). --apple-id signs for JIT.")
+    # a kept ID can replace the game, and so can an "original" install: sign first, look at the phone, then install
+    careful = bool(args.install and (signer == "certificate" or (mod and install_mode(mod) == "original")))
+    if signer == "certificate":
+        certificate_sign(ipa, out)
+    else:
+        cmd = [plumesign(), "sign", "-p", str(ipa), "--apple-id", "-o", str(out)]
+        if args.install and not careful:
+            cmd += ["--register-and-install", "--udid", usbmux_device_id()]
+        print("==> " + " ".join(cmd))
+        r = subprocess.run(
+            cmd, check=False
+        )  # interactive: Apple ID prompts (2FA) go to this console
+        if r.returncode != 0:
+            raise DevError(f"plumesign failed ({r.returncode})")
     print(f"==> {out}")
     bundle = ipa_info(out)[0]["CFBundleIdentifier"]
     if bundle != chosen:
@@ -1609,11 +1658,14 @@ def cmd_sign(args):
         save_state(mod, state)
     if args.install:
         apps = phone_apps()
-        if careful and replacing_original(mod, bundle, apps) and not getattr(args, "replace_original", False):
+        # without --mod there's no record of what Studio installed: an app already under this ID counts as the game
+        theirs = bundle in apps and (not mod or replacing_original(mod, bundle, apps))
+        if careful and theirs and not getattr(args, "replace_original", False):
             raise DevError(
                 f"{bundle} is already on the phone and Studio did not install it: this is the original game. "
                 "Installing replaces it (its app and possibly its data). Run again with --replace-original to "
-                "replace it, or choose \"separate\" (dev.py install-mode " + mod + " separate)."
+                "replace it" + (f", or choose \"separate\" (dev.py install-mode {mod} separate)." if mod else
+                                ", or pass --mod so Studio knows its own install.")
             )
         if careful or bundle not in apps:
             if not careful:
@@ -1624,8 +1676,11 @@ def cmd_sign(args):
                 print(f"==> replacing {bundle} on the phone (confirmed)")
             if subprocess.run([pymobiledevice3_cli(), "apps", "install", str(out)],
                               stdin=subprocess.DEVNULL, check=False).returncode != 0:
-                raise DevError("pymobiledevice3 apps install failed (a phone the Apple ID has not registered yet: "
-                               "install once with install-mode separate, or plumesign --register-and-install)")
+                raise DevError("pymobiledevice3 apps install failed (" + (
+                    "is this phone in the certificate's profile? --apple-id signs with the Apple ID instead)"
+                    if signer == "certificate" else
+                    "a phone the Apple ID has not registered yet: install once with install-mode separate, or "
+                    "plumesign --register-and-install)"))
             apps = phone_apps()
         if bundle not in apps:
             raise DevError(f"{bundle} is not on the phone after the install")
@@ -1690,7 +1745,8 @@ def cmd_run(args):
     if not ipa:
         raise DevError("no .ipa from the build")
     cmd_sign(argparse.Namespace(ipa=ipa, install=True, out=None, launch=False, mod=args.mod,
-                                replace_original=getattr(args, "replace_original", False)))
+                                replace_original=getattr(args, "replace_original", False),
+                                apple_id=getattr(args, "apple_id", False)))
     launch_app(load_state(args.mod)["installed_bundle"])  # the ID sign verified on the phone
     return cmd_log(argparse.Namespace(mod=args.mod, seconds=args.seconds, launch=False))
 
@@ -3139,6 +3195,9 @@ def build_parser():
     s.add_argument("--mod", help="the mod this build is from: its install mode, signed and installed IDs")
     s.add_argument("--replace-original", action="store_true",
                    help="install even though the original game (an app Studio did not install) has this ID")
+    s.add_argument("--apple-id", action="store_true",
+                   help="sign with the Apple ID (plumesign) instead of the certificate: appends the team to the app "
+                        "ID, but gives JIT")
     s.add_argument(
         "--launch", action="store_true", help="with --install: open the app afterwards"
     )
@@ -3161,14 +3220,15 @@ def build_parser():
 
     s = sub.add_parser(
         "run",
-        help="build .ipa, sign + install with the Apple ID, open it, read the log",
+        help="build .ipa, sign (certificate, keeps the app's ID) + install, open it, read the log",
     )
     s.add_argument("mod")
     s.add_argument("--bump", action="store_true")
     s.add_argument("--base")
     s.add_argument("--seconds", type=int, default=60)
     s.add_argument("--replace-original", action="store_true",
-                   help="original-ID mode: replace the original game on the phone (asked for when it is there)")
+                   help="replace the original game on the phone when it has the same ID (asked for when it is there)")
+    s.add_argument("--apple-id", action="store_true", help="sign with the Apple ID instead (team-suffixed ID, JIT)")
     s.set_defaults(fn=cmd_run)
 
     s = sub.add_parser("install-mode", help="how the mod installs: original (the game's ID) or separate (its own)")

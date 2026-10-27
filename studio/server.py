@@ -1644,6 +1644,8 @@ class Handler(BaseHTTPRequestHandler):
             if command not in ("new", "sign", "install", "fetch", "start", "report"):
                 argv.append(self.mod_name(str(body.get("mod", ""))))
             argv += [str(a) for a in body.get("args", [])]
+            if command == "sign" and body.get("mod") and "--mod" not in argv:  # its install mode and installed ID
+                argv += ["--mod", self.mod_name(str(body["mod"]))]
             job = start_job(command, argv)
             return self.send_json(job.view())
         if parts == ["api", "fetch", "login"]:
