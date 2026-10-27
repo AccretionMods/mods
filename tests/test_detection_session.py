@@ -167,6 +167,35 @@ class DetectionSession(unittest.TestCase):
             self.assertNotIn(self.SENTINEL, str(outcome))
             self.assertEqual(printed, "")
 
+    def test_summary_names_states_and_gaps_without_raw_fields(self):
+        report = self.schema4_report()
+        lines = self.module.summarize(report)
+        self.assertEqual(lines[0], "schema 4, mode observe, phase menu, elapsed 31 s")
+        self.assertIn("unsupported: stat (fingerprint_mismatch)", lines)
+        self.assertIn("matched calls 1, filtered 0", lines)
+        self.assertFalse(any("gap" in line or "dropped" in line for line in lines))
+        report["version_match"] = False
+        report["coverage"]["incomplete"] = True
+        report["callsites_dropped"] = 3
+        report["fingerprints_status"] = "fingerprint_unavailable"
+        lines = self.module.summarize(report)
+        self.assertIn(
+            "game version mismatch: modules disabled; fingerprints fingerprint_unavailable; "
+            "telemetry incomplete; rows dropped 3",
+            lines,
+        )
+        self.assertEqual(self.module.summarize({"schema_version": 3})[0],
+                         "schema 3, mode unknown, phase unknown, elapsed 0 s")
+
+    def test_report_command_keeps_json_on_stdout_and_summary_on_stderr(self):
+        clean = self.schema4_report()
+        with contextlib.redirect_stderr(io.StringIO()) as errors:
+            code, printed = self.report_command(clean)
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(printed), clean)
+        self.assertIn("schema 4, mode observe", errors.getvalue())
+        self.assertNotIn("schema 4, mode observe", printed)
+
     def test_validator_vocabularies_match_runtime_sources(self):
         import re
         registry = (ROOT / "runtime/AMDetectionRegistry.c").read_text(encoding="utf-8")

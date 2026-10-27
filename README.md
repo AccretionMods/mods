@@ -559,6 +559,8 @@ profile identity before treating an old file as a new observation.
 `am detection report` validates the file against a per-schema field allowlist (shape and
 bounds at every nesting level) and refuses it, naming only the field path, if it holds any
 field the runtime is not known to emit. Raw report files remain private.
+After the JSON it prints a short verdict on standard error: mode, phase, elapsed time,
+version and fingerprint problems, telemetry gaps, and each entry's state with its reason.
 Image/class concealment, kernel helpers, executable patches, attestation and server acceptance
 are unsupported. A local filter test does not prove that a game accepts modified gameplay.
 

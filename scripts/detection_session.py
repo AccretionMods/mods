@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import subprocess
+import sys
 import time
 import uuid
 
@@ -215,6 +216,45 @@ def acknowledged(report, request):
     )
 
 
+def summarize(report):
+    """Short human verdict for a validated report; one fact per line."""
+    modes = {0: "off", 1: "observe", 2: "filter"}
+    lines = [
+        "schema " + str(report.get("schema_version", "?"))
+        + ", mode " + modes.get(report.get("profile_mode"), "unknown")
+        + ", phase " + str(report.get("phase", "unknown"))
+        + ", elapsed " + str(int(report.get("elapsed_ms", 0) // 1000)) + " s"
+    ]
+    facts = []
+    if report.get("version_match") is False:
+        facts.append("game version mismatch: modules disabled")
+    status = report.get("fingerprints_status")
+    if status not in (None, "not_requested", "matched"):
+        facts.append("fingerprints " + status)
+    coverage = report.get("coverage") or {}
+    if coverage.get("incomplete") or coverage.get("saturated"):
+        facts.append("telemetry incomplete")
+    dropped = report.get("attribution_dropped", 0) + report.get("callsites_dropped", 0)
+    if dropped:
+        facts.append("rows dropped " + str(dropped))
+    if facts:
+        lines.append("; ".join(facts))
+    by_state = {}
+    for entry in report.get("entries") or []:
+        state = entry.get("state", "unknown")
+        label = entry.get("name", str(entry.get("entry_id", "?")))
+        if state in ("unsupported", "failed") and entry.get("reason", "none") != "none":
+            label += " (" + entry["reason"] + ")"
+        by_state.setdefault(state, []).append(label)
+    for state in ("filtering", "observing", "unsupported", "failed", "disabled"):
+        if state in by_state:
+            lines.append(state + ": " + ", ".join(by_state[state]))
+    matched = sum(entry.get("matched", 0) for entry in report.get("entries") or [])
+    filtered = sum(entry.get("filtered", 0) for entry in report.get("entries") or [])
+    lines.append("matched calls " + str(matched) + ", filtered " + str(filtered))
+    return lines
+
+
 def command(dev, args):
     if args.action == "preflight":
         import detection_preflight
@@ -266,6 +306,7 @@ def command(dev, args):
     report = read()
     if args.action == "report":
         print(json.dumps(report, indent=2))
+        print("\n".join(summarize(report)), file=sys.stderr)
         return 0
     try:
         request = phase_request(report, args.phase)
