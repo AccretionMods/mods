@@ -2535,12 +2535,29 @@ def cmd_fetch(args):
     return 0
 
 
+def cmd_detection(args):
+    import detection_session
+
+    if not 1 <= args.wait <= 60:
+        raise DevError("diagnostic wait must be between 1 and 60 seconds")
+    return detection_session.command(sys.modules[__name__], args)
+
+
 def build_parser():
     """dev.py's argument parser (Mod Studio's Console reads the command list from it)."""
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     sub = p.add_subparsers(dest="cmd", required=True)
+
+    s = sub.add_parser("detection", help="static import preflight, local reports and explicit diagnostic phases")
+    s.add_argument("action", choices=("preflight", "report", "phase"))
+    s.add_argument("target", help="mod name or private trial folder; an IPA path for preflight")
+    s.add_argument("phase", nargs="?", choices=("startup", "login", "menu", "fight", "results"))
+    s.add_argument("--profile", help="new observation profile path; refuses overwrite")
+    s.add_argument("--output", help="private preflight report path")
+    s.add_argument("--wait", type=int, default=20, help="phase acknowledgement timeout, 1-60 seconds")
+    s.set_defaults(fn=cmd_detection)
 
     s = sub.add_parser("new")
     s.add_argument("name")

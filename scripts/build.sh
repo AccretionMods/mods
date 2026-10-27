@@ -18,6 +18,15 @@ if [ -f "$dir/hooks.json" ]; then
     cp -R "$root/runtime" "$dir/runtime"
     python3 "$root/scripts/embed_hooks.py" "$dir/hooks.json" "$dir/runtime/am_hooks_data.c" >&2
 fi
+if [ -f "$dir/detection.json" ] && [ ! -f "$dir/hooks.json" ]; then
+    cp -R "$root/runtime" "$dir/runtime"
+fi
+if [ ! -d "$dir/runtime" ] && grep -q 'SideloadCompat.m' "$dir/Makefile"; then
+    cp -R "$root/runtime" "$dir/runtime"
+fi
+if [ -d "$dir/runtime" ]; then
+    python3 "$root/scripts/detection_profile.py" "$dir" >&2
+fi
 
 # A mod whose menu is declared in tweaks.json gets its AMTweaks.gen.h/.m regenerated (scripts/gen_tweaks.py).
 if [ -f "$dir/tweaks.json" ]; then
@@ -27,12 +36,17 @@ fi
 # Game names a hand-written Tweak.x writes as AMS("Name") are encoded in a copy that is compiled instead
 # (scripts/hide_strings.py, runtime/am_hide.h); the source keeps them plain.
 files_override=()
+name="$(sed -n -e 's/^TWEAK_NAME *= *//p' -e 's/^LIBRARY_NAME *= *//p' "$dir/Makefile" | head -1 | tr -d '[:space:]')"
+files="$(sed -n "s/^${name}_FILES *= *//p" "$dir/Makefile" | head -1)"
+original_files="$files"
+files="$(python3 "$root/scripts/detection_profile.py" --build-sources "$dir" "$files")"
 rm -f "$dir/Tweak.hidden.x"
 if [ -f "$dir/Tweak.x" ] && grep -q 'AMS("' "$dir/Tweak.x"; then
     python3 "$root/scripts/hide_strings.py" "$dir/Tweak.x" "$dir/Tweak.hidden.x" >&2
-    name="$(sed -n 's/^TWEAK_NAME *= *//p' "$dir/Makefile" | head -1 | tr -d '[:space:]')"
-    files="$(sed -n "s/^${name}_FILES *= *//p" "$dir/Makefile" | head -1)"
-    files_override=("${name}_FILES=${files/Tweak.x/Tweak.hidden.x}")
+    files="${files/Tweak.x/Tweak.hidden.x}"
+fi
+if [ -n "$name" ] && [ "$files" != "$original_files" ]; then
+    files_override=("${name}_FILES=$files")
 fi
 
 rm -rf "$dir/.theos" "$dir/packages"
