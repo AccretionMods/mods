@@ -80,6 +80,12 @@ else
     echo "==> Note: mod.json has no base.sha256; this base .ipa's is $got_sha" >&2
 fi
 
+if [ -f "$root/mods/$mod/detection.json" ]; then
+    echo '==> Checking local observation coverage before packaging'
+    python3 "$root/scripts/detection_preflight.py" "$work/base.ipa" \
+        --check-profile "$root/mods/$mod/detection.json" --output "$work/detection-preflight.json"
+fi
+
 # Same checks as the workflow, without macOS tools: right app, not FairPlay-encrypted.
 # Prints the app version on stdout; everything else goes to stderr.
 version="$(python3 - "$work/base.ipa" "$(field target_bundle_id)" <<'PY'
