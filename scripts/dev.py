@@ -751,6 +751,18 @@ def cmd_pin(args):
         )
         pin["setter"] = member
         what = f"{m.full_name}({', '.join(m.params)})"
+    elif "." in cls and not fields_of(args.mod, cls) and fields_of(args.mod, cls.rpartition(".")[0]):
+        # Class.outer.inner: a value inside a struct field; the runtime adds the two offsets
+        cls, _, outer = cls.rpartition(".")
+        member = f"{outer}.{member}"
+        data = dump_classes(args.mod, assemblies=meta.get("scan_assemblies"), bundle_id=meta.get("target_bundle_id"))
+        resolve = dump_scan._type_resolver(data)
+        decl = dump_scan._declaration(data, resolve, resolve(cls, cls) or cls, member)
+        if not decl:
+            raise DevError(f"{cls}.{member}: {outer} is not a struct field with a number or bool {member.split('.')[1]}")
+        cs_type = ctype_ = decl[2].rpartition(":")[2]
+        pin["field"] = member
+        what = f"{cls}.{member} ({ctype_} inside the {decl[2].rpartition('.')[0]} struct; read by name at run time)"
     else:
         rows = [f for f in fields_of(args.mod, cls) if f[3] == member]
         if not rows:
