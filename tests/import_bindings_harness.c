@@ -55,6 +55,15 @@ static AMImportHeader *chained_fixture(void) {
     return h;
 }
 int main(void) {
+    AMImportBinding maximum[65];
+    for (unsigned i=0;i<65;i++) maximum[i]=(AMImportBinding){"unused",(void *)original,(void *)replacement,NULL};
+    maximum[0].symbol="access";
+    AMImportHeader *limit_header=fixture();
+    AMImportBindResult limit_result=AMImportBindImage(limit_header,1024,0,maximum,64,writer,NULL);
+    assert(limit_result.applied==1 && writes==1 && !limit_result.malformed);
+    limit_header=fixture();
+    limit_result=AMImportBindImage(limit_header,1024,0,maximum,65,writer,NULL);
+    assert(limit_result.malformed && writes==0 && *(void **)(storage.data+1024)==(void *)original);
     AMImportHeader *h=fixture(); AMImportBindResult r=bind(h,1024);
     assert(r.applied==1 && !r.failed && !r.unsupported && writes==1 && r.reason==AM_IMPORT_FAILURE_NONE);
     r=bind(h,1024); assert(r.already_owned==1 && writes==1);

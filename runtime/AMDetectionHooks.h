@@ -43,6 +43,7 @@ typedef struct {
 /* Startup only, before hooks are published. Profile/original storage must outlive the hooks. */
 bool AMDetectionConfigure(const AMDetectionProfile *, const AMDetectionOriginals *);
 void AMDetectionSetAdapterReady(AMDetectionAPI, bool ready);
+void AMDetectionSetReadinessResolver(bool (*resolver)(AMDetectionAPI));
 void AMDetectionRecord(AMDetectionAPI, bool matched, bool filtered);
 AMDetectionCounters AMDetectionReadCounters(AMDetectionAPI);
 int AMDetectionAccess(const char *,int);

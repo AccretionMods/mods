@@ -244,7 +244,7 @@ static void am_sideload_compat_init(void) {
         const char *bundle = NSBundle.mainBundle.bundlePath.fileSystemRepresentation;
         if (bundle) snprintf(am_bundle_path, sizeof am_bundle_path, "%s/", bundle);
 #if AM_DETECTION_ENABLED
-        AMDetectionStart();
+        AMDetectionStart(sizeof am_rebindings/sizeof *am_rebindings);
 #endif
         _dyld_register_func_for_add_image(am_image_added);
 

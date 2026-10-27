@@ -12,6 +12,7 @@ static AMDetectionOriginals originals;
 static _Thread_local unsigned depth;
 static atomic_uint calls[AM_DETECTION_API_COUNT], matches[AM_DETECTION_API_COUNT], filtered[AM_DETECTION_API_COUNT];
 static atomic_bool ready[AM_DETECTION_API_COUNT];
+static bool (*readiness_resolver)(AMDetectionAPI);
 static unsigned (*origin_resolver)(const void *);
 static uint64_t (*callsite_resolver)(const void *);
 static atomic_uint callsites_dropped;
@@ -32,6 +33,10 @@ bool AMDetectionConfigure(const AMDetectionProfile *p, const AMDetectionOriginal
 }
 void AMDetectionSetAdapterReady(AMDetectionAPI api,bool value) {
     if ((unsigned)api<AM_DETECTION_API_COUNT) atomic_store(&ready[api],value);
+}
+void AMDetectionSetReadinessResolver(bool (*resolver)(AMDetectionAPI)) { readiness_resolver=resolver; }
+static bool am_detection_api_ready(AMDetectionAPI api) {
+    return atomic_load(&ready[api]) && (!readiness_resolver || readiness_resolver(api));
 }
 void AMDetectionRecord(AMDetectionAPI api, bool match, bool block) {
     if (!AM_DETECTION_DIAGNOSTICS_ENABLED) return;
@@ -138,7 +143,7 @@ size_t AMDetectionReadAttribution(AMDetectionAttribution *out,size_t capacity) {
 static bool block_path(AMDetectionAPI api, const char *path) {
     AMDetectionRuleRef rule=AMDetectionPathRule(profile,path);
     bool match=rule.kind!=AM_DETECTION_RULE_NONE;
-    bool block=profile && profile->mode==AM_DETECTION_FILTER && match && atomic_load(&ready[api]);
+    bool block=profile && profile->mode==AM_DETECTION_FILTER && match && am_detection_api_ready(api);
     return block;
 }
 static AMDetectionResult file_result(bool success) {
@@ -191,7 +196,7 @@ char *AMDetectionGetenv(const char *name) {
     if (depth) return originals.getenv_fn(name);
         AMDetectionRuleRef rule=AMDetectionEnvironmentRule(profile,name);
         bool match=rule.kind!=AM_DETECTION_RULE_NONE;
-        bool block=profile && profile->mode==AM_DETECTION_FILTER && match && atomic_load(&ready[AM_DETECTION_GETENV]);
+        bool block=profile && profile->mode==AM_DETECTION_FILTER && match && am_detection_api_ready(AM_DETECTION_GETENV);
     depth++; char *r=block ? NULL : originals.getenv_fn(name);
     AMDetectionRecordOutcome(AM_DETECTION_GETENV,rule,block,__builtin_return_address(0),r ? AM_DETECTION_RESULT_SUCCESS : AM_DETECTION_RESULT_NEGATIVE);
     depth--; return r;

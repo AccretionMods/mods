@@ -9,11 +9,10 @@
 #include "AMDetectionProfile.gen.h"
 #include "AMDetectionPolicy.c"
 #include "AMDetectionHooks.c"
+#include "AMDetectionRegistry.c"
 
-static AMImportBinding am_detection_bindings[6];
-static const bool am_detection_native_selected[6]={AM_DETECTION_API_ACCESS,AM_DETECTION_API_STAT,
-    AM_DETECTION_API_LSTAT,AM_DETECTION_API_OPEN,AM_DETECTION_API_FOPEN,AM_DETECTION_API_GETENV};
-static AMImportBindResult am_detection_results[6];
+static AMImportBinding am_detection_bindings[AM_DETECTION_MAX_NATIVE_BINDINGS];
+static AMImportBindResult am_detection_results[AM_DETECTION_REGISTRY_ID_LIMIT];
 static size_t am_detection_binding_count;
 static bool am_detection_started,am_detection_version_ok;
 static NSTimeInterval am_detection_started_at;
@@ -30,6 +29,37 @@ static _Thread_local unsigned am_detection_objc_depth;
 static BOOL (*am_detection_file_exists)(id,SEL,NSString *);
 static id (*am_detection_attributes)(id,SEL,NSString *,NSError **);
 static BOOL (*am_detection_can_open)(id,SEL,NSURL *);
+static bool am_detection_entry_installed[AM_DETECTION_REGISTRY_ID_LIMIT];
+
+static bool am_detection_entry_enabled(AMDetectionEntryID id) {
+    switch (id) {
+        case AM_DETECTION_ENTRY_ACCESS: return AM_DETECTION_API_ACCESS;
+        case AM_DETECTION_ENTRY_STAT: return AM_DETECTION_API_STAT;
+        case AM_DETECTION_ENTRY_LSTAT: return AM_DETECTION_API_LSTAT;
+        case AM_DETECTION_ENTRY_OPEN: return AM_DETECTION_API_OPEN;
+        case AM_DETECTION_ENTRY_FOPEN: return AM_DETECTION_API_FOPEN;
+        case AM_DETECTION_ENTRY_GETENV: return AM_DETECTION_API_GETENV;
+        case AM_DETECTION_ENTRY_FOUNDATION_EXISTS: return AM_DETECTION_API_FOUNDATION_EXISTS;
+        case AM_DETECTION_ENTRY_FOUNDATION_ATTRIBUTES: return AM_DETECTION_API_FOUNDATION_ATTRIBUTES;
+        case AM_DETECTION_ENTRY_CAN_OPEN_URL: return AM_DETECTION_API_URLS;
+        default: return false;
+    }
+}
+static void *am_detection_native_replacement(AMDetectionEntryID id) {
+    switch (id) {
+        case AM_DETECTION_ENTRY_ACCESS: return (void *)AMDetectionAccess;
+        case AM_DETECTION_ENTRY_STAT: return (void *)AMDetectionStat;
+        case AM_DETECTION_ENTRY_LSTAT: return (void *)AMDetectionLstat;
+        case AM_DETECTION_ENTRY_OPEN: return (void *)AMDetectionOpen;
+        case AM_DETECTION_ENTRY_FOPEN: return (void *)AMDetectionFopen;
+        case AM_DETECTION_ENTRY_GETENV: return (void *)AMDetectionGetenv;
+        default: return NULL;
+    }
+}
+static bool am_detection_module_ready(AMDetectionAPI api) {
+    const AMDetectionEntry *entry=AMDetectionEntryByID((AMDetectionEntryID)api);
+    return entry && AMDetectionModuleActive(entry->module);
+}
 
 static unsigned am_detection_image_index(const char *path) {
     if (!path || !am_detection_app_path[0]) return AM_DETECTION_UNKNOWN_IMAGE;
@@ -87,7 +117,7 @@ static BOOL am_detection_exists(id self,SEL cmd,NSString *path) {
     bool selected=am_detection_caller_selected(__builtin_return_address(0));
     AMDetectionRuleRef rule=selected ? AMDetectionPathRule(&am_detection_profile,path.fileSystemRepresentation) : (AMDetectionRuleRef){0};
     bool match=rule.kind!=AM_DETECTION_RULE_NONE;
-    bool block=match && am_detection_profile.mode==AM_DETECTION_FILTER && am_detection_foundation_installed;
+    bool block=match && AMDetectionModuleActive(AM_DETECTION_MODULE_FOUNDATION);
     BOOL value=block ? NO : am_detection_file_exists(self,cmd,path);
     if (selected) AMDetectionRecordOutcome(AM_DETECTION_FOUNDATION,rule,block,__builtin_return_address(0),value ? AM_DETECTION_RESULT_SUCCESS : AM_DETECTION_RESULT_NEGATIVE);
     am_detection_objc_depth--; return value;
@@ -98,7 +128,7 @@ static id am_detection_attrs(id self,SEL cmd,NSString *path,NSError **error) {
     bool selected=am_detection_caller_selected(__builtin_return_address(0));
     AMDetectionRuleRef rule=selected ? AMDetectionPathRule(&am_detection_profile,path.fileSystemRepresentation) : (AMDetectionRuleRef){0};
     bool match=rule.kind!=AM_DETECTION_RULE_NONE;
-    bool block=match && am_detection_profile.mode==AM_DETECTION_FILTER && am_detection_foundation_installed;
+    bool block=match && AMDetectionModuleActive(AM_DETECTION_MODULE_FOUNDATION);
     id value=nil;
     if (block) {
         if (error) *error=[NSError errorWithDomain:NSCocoaErrorDomain code:NSFileReadNoSuchFileError userInfo:nil];
@@ -112,7 +142,7 @@ static BOOL am_detection_url(id self,SEL cmd,NSURL *url) {
     bool selected=am_detection_caller_selected(__builtin_return_address(0));
     AMDetectionRuleRef rule=selected ? AMDetectionSchemeRule(&am_detection_profile,url.scheme.UTF8String) : (AMDetectionRuleRef){0};
     bool match=rule.kind!=AM_DETECTION_RULE_NONE;
-    bool block=match && am_detection_profile.mode==AM_DETECTION_FILTER;
+    bool block=match && AMDetectionModuleActive(AM_DETECTION_MODULE_URLS);
     BOOL value=block ? NO : am_detection_can_open(self,cmd,url);
     if (selected) AMDetectionRecordOutcome(AM_DETECTION_URL,rule,block,__builtin_return_address(0),value ? AM_DETECTION_RESULT_SUCCESS : AM_DETECTION_RESULT_NEGATIVE);
     am_detection_objc_depth--; return value;
@@ -129,6 +159,57 @@ static BOOL am_detection_replace(Class cls,SEL sel,IMP replacement,IMP *original
     IMP prior=method_setImplementation(m,replacement);
     if (prior==current) return YES;
     method_setImplementation(m,prior); return NO;
+}
+static bool am_detection_objc_target(AMDetectionEntryID id,Class *cls,SEL *sel,IMP *replacement) {
+    switch (id) {
+        case AM_DETECTION_ENTRY_FOUNDATION_EXISTS:
+            *cls=NSFileManager.class; *sel=@selector(fileExistsAtPath:); *replacement=(IMP)am_detection_exists; return true;
+        case AM_DETECTION_ENTRY_FOUNDATION_ATTRIBUTES:
+            *cls=NSFileManager.class; *sel=@selector(attributesOfItemAtPath:error:); *replacement=(IMP)am_detection_attrs; return true;
+        case AM_DETECTION_ENTRY_CAN_OPEN_URL:
+            *cls=UIApplication.class; *sel=@selector(canOpenURL:); *replacement=(IMP)am_detection_url; return true;
+        default: return false;
+    }
+}
+static bool am_detection_prepare_entry(const AMDetectionEntry *entry,void *context) {
+    (void)context;
+    if (entry->abi==AM_DETECTION_ABI_NATIVE) {
+        if (!*entry->original) *entry->original=dlsym(RTLD_DEFAULT,entry->name);
+        return *entry->original && am_detection_native_replacement(entry->id);
+    }
+    Class cls; SEL sel; IMP replacement;
+    if (!am_detection_objc_target(entry->id,&cls,&sel,&replacement)) return false;
+    Method method=class_getInstanceMethod(cls,sel);
+    if (!method) return false;
+    IMP current=method_getImplementation(method); Dl_info owner;
+    if (am_detection_entry_installed[entry->id]) return current==replacement;
+    if (!dladdr((const void *)current,&owner) || !owner.dli_fname || strncmp(owner.dli_fname,"/System/Library/",16)) return false;
+    *entry->original=(void *)current;
+    switch (entry->id) {
+        case AM_DETECTION_ENTRY_FOUNDATION_EXISTS: am_detection_file_exists=(void *)current; break;
+        case AM_DETECTION_ENTRY_FOUNDATION_ATTRIBUTES: am_detection_attributes=(void *)current; break;
+        case AM_DETECTION_ENTRY_CAN_OPEN_URL: am_detection_can_open=(void *)current; break;
+        default: return false;
+    }
+    return true;
+}
+static bool am_detection_publish_entry(const AMDetectionEntry *entry,void *context) {
+    (void)context;
+    if (entry->abi==AM_DETECTION_ABI_NATIVE) {
+        AMImportBindResult result=am_detection_results[entry->id];
+        return !am_detection_image_failures && !result.conflicts && !result.failed &&
+            !result.unsupported && (result.applied || result.already_owned);
+    }
+    Class cls; SEL sel; IMP replacement;
+    if (!am_detection_objc_target(entry->id,&cls,&sel,&replacement)) return false;
+    Method method=class_getInstanceMethod(cls,sel);
+    if (!method) return false;
+    if (am_detection_entry_installed[entry->id]) return method_getImplementation(method)==replacement;
+    if ((void *)method_getImplementation(method)!=*entry->original) return false;
+    IMP original=NULL;
+    bool installed=am_detection_replace(cls,sel,replacement,&original);
+    am_detection_entry_installed[entry->id]=installed;
+    return installed && (void *)original==*entry->original;
 }
 static void am_detection_read_phase(void) {
     NSString *path=[NSHomeDirectory() stringByAppendingPathComponent:@"Documents/am_detection_phase.json"];
@@ -147,7 +228,7 @@ static void am_detection_read_phase(void) {
         AMDetectionSetPhase((AMDetectionPhase)i); am_detection_phase_request=[request copy]; AMDetectionWriteReport(); return;
     }
 }
-void AMDetectionStart(void) {
+void AMDetectionStart(size_t compatibility_bindings) {
     if (am_detection_started) return;
     am_detection_started=true;
     am_detection_session=[[NSUUID.UUID.UUIDString stringByReplacingOccurrencesOfString:@"-" withString:@""] lowercaseString];
@@ -162,29 +243,40 @@ void AMDetectionStart(void) {
         am_detection_version_ok=false; return;
     }
     memcpy(am_detection_app_path,bundle,strlen(bundle)+1); memcpy(am_detection_executable,exe,strlen(exe)+1);
+    AMDetectionEntryID selected[AM_DETECTION_MAX_ENTRYPOINTS]; size_t selected_count=0;
+    for (size_t i=0;i<AMDetectionEntryCount();i++) {
+        const AMDetectionEntry *entry=AMDetectionEntryAt(i);
+        if (!am_detection_entry_enabled(entry->id)) continue;
+        if (selected_count==AM_DETECTION_MAX_ENTRYPOINTS ||
+            !AMDetectionSetInstaller(entry->id,am_detection_prepare_entry,am_detection_publish_entry,NULL)) {
+            am_detection_version_ok=false; return;
+        }
+        selected[selected_count++]=entry->id;
+    }
+    if (AM_DETECTION_IMAGES_COUNT>AM_DETECTION_MAX_CALLER_IMAGES ||
+        !AMDetectionConfigureRegistry(selected,selected_count,compatibility_bindings,am_detection_profile.mode)) {
+        am_detection_version_ok=false; return;
+    }
+    for (unsigned m=0;m<AM_DETECTION_MODULE_COUNT;m++) AMDetectionPrepareModule((AMDetectionModuleID)m);
     AMDetectionOriginals o={
-        .access_fn=AM_DETECTION_API_ACCESS ? dlsym(RTLD_DEFAULT,"access") : NULL,
-        .stat_fn=AM_DETECTION_API_STAT ? dlsym(RTLD_DEFAULT,"stat") : NULL,
-        .lstat_fn=AM_DETECTION_API_LSTAT ? dlsym(RTLD_DEFAULT,"lstat") : NULL,
-        .open_fn=AM_DETECTION_API_OPEN ? dlsym(RTLD_DEFAULT,"open") : NULL,
-        .fopen_fn=AM_DETECTION_API_FOPEN ? dlsym(RTLD_DEFAULT,"fopen") : NULL,
-        .getenv_fn=AM_DETECTION_API_GETENV ? dlsym(RTLD_DEFAULT,"getenv") : NULL};
+        .access_fn=*AMDetectionEntryByID(AM_DETECTION_ENTRY_ACCESS)->original,
+        .stat_fn=*AMDetectionEntryByID(AM_DETECTION_ENTRY_STAT)->original,
+        .lstat_fn=*AMDetectionEntryByID(AM_DETECTION_ENTRY_LSTAT)->original,
+        .open_fn=*AMDetectionEntryByID(AM_DETECTION_ENTRY_OPEN)->original,
+        .fopen_fn=*AMDetectionEntryByID(AM_DETECTION_ENTRY_FOPEN)->original,
+        .getenv_fn=*AMDetectionEntryByID(AM_DETECTION_ENTRY_GETENV)->original};
     if (!AMDetectionConfigure(&am_detection_profile,&o)) { am_detection_version_ok=false; return; }
     AMDetectionSetOriginResolver(am_detection_origin);
     AMDetectionSetCallsiteResolver(am_detection_callsite);
-    for (unsigned i=0;i<6;i++) AMDetectionSetAdapterReady((AMDetectionAPI)i,false);
-    const char *names[]={"access","stat","lstat","open","fopen","getenv"};
-    void *originals[]={(void *)o.access_fn,(void *)o.stat_fn,(void *)o.lstat_fn,(void *)o.open_fn,(void *)o.fopen_fn,(void *)o.getenv_fn};
-    void *replacements[]={(void *)AMDetectionAccess,(void *)AMDetectionStat,(void *)AMDetectionLstat,(void *)AMDetectionOpen,(void *)AMDetectionFopen,(void *)AMDetectionGetenv};
-    for (size_t i=0;i<6;i++) if (am_detection_native_selected[i] && originals[i])
-        am_detection_bindings[am_detection_binding_count++]=(AMImportBinding){names[i],originals[i],replacements[i],&am_detection_results[i]};
-    if (AM_DETECTION_API_FOUNDATION_EXISTS || AM_DETECTION_API_FOUNDATION_ATTRIBUTES) {
-        BOOL a=!AM_DETECTION_API_FOUNDATION_EXISTS || am_detection_replace(NSFileManager.class,@selector(fileExistsAtPath:),(IMP)am_detection_exists,(IMP *)&am_detection_file_exists);
-        BOOL b=!AM_DETECTION_API_FOUNDATION_ATTRIBUTES || am_detection_replace(NSFileManager.class,@selector(attributesOfItemAtPath:error:),(IMP)am_detection_attrs,(IMP *)&am_detection_attributes);
-        am_detection_foundation_installed=a && b;
+    AMDetectionSetReadinessResolver(am_detection_module_ready);
+    for (size_t i=0;i<AMDetectionEntryCount();i++) {
+        const AMDetectionEntry *entry=AMDetectionEntryAt(i);
+        if (entry->abi!=AM_DETECTION_ABI_NATIVE || !AMDetectionEntrySelected(entry->id) || !*entry->original) continue;
+        am_detection_bindings[am_detection_binding_count++]=(AMImportBinding){entry->name,*entry->original,
+            am_detection_native_replacement(entry->id),&am_detection_results[entry->id]};
     }
-    if (AM_DETECTION_API_URLS)
-        am_detection_url_installed=am_detection_replace(UIApplication.class,@selector(canOpenURL:),(IMP)am_detection_url,(IMP *)&am_detection_can_open);
+    am_detection_foundation_installed=AMDetectionPublishModule(AM_DETECTION_MODULE_FOUNDATION);
+    am_detection_url_installed=AMDetectionPublishModule(AM_DETECTION_MODULE_URLS);
     // One bounded file, refreshed while this opted-in diagnostic session runs.
     if (!AM_DETECTION_DIAGNOSTICS_ENABLED) return;
     am_detection_report_timer=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,dispatch_get_main_queue());
@@ -198,44 +290,51 @@ void AMDetectionStart(void) {
 }
 AMImportBindResult AMDetectionBindImage(const void *header,size_t bytes,intptr_t slide,
     const AMImportBinding *compat,size_t count,AMImportWriter writer,void *context) {
-    AMImportBinding combined[16];
-    if (count>10) return (AMImportBindResult){.malformed=true};
-    memcpy(combined,compat,count*sizeof *combined);
+    AMImportBinding combined[AM_DETECTION_MAX_NATIVE_BINDINGS];
+    if (count>AM_DETECTION_MAX_NATIVE_BINDINGS || (!compat && count)) return (AMImportBindResult){.malformed=true};
     Dl_info image;
     bool selected=am_detection_version_ok && am_detection_profile.mode!=AM_DETECTION_OFF &&
         dladdr(header,&image) && am_detection_image_selected(image.dli_fname);
-    if (selected) memcpy(combined+count,am_detection_bindings,am_detection_binding_count*sizeof *combined);
+    if (selected && am_detection_binding_count>AM_DETECTION_MAX_NATIVE_BINDINGS-count) return (AMImportBindResult){.malformed=true};
+    if (count) memcpy(combined,compat,count*sizeof *combined);
+    if (selected && am_detection_binding_count) memcpy(combined+count,am_detection_bindings,am_detection_binding_count*sizeof *combined);
     size_t total=count+(selected ? am_detection_binding_count : 0);
     if (!total) return (AMImportBindResult){0};
     os_unfair_lock_lock(&am_detection_lock);
-    if (selected) for (unsigned i=0;i<6;i++) AMDetectionSetAdapterReady((AMDetectionAPI)i,false);
+    bool native_modules[AM_DETECTION_MODULE_COUNT]={0};
+    if (selected) for (size_t i=0;i<AMDetectionEntryCount();i++) {
+        const AMDetectionEntry *entry=AMDetectionEntryAt(i);
+        if (entry->abi==AM_DETECTION_ABI_NATIVE && AMDetectionEntrySelected(entry->id)) native_modules[entry->module]=true;
+    }
+    for (unsigned m=0;m<AM_DETECTION_MODULE_COUNT;m++) if (native_modules[m]) AMDetectionInvalidateModule((AMDetectionModuleID)m);
     AMImportBindResult result=AMImportBindImage(header,bytes,slide,combined,total,writer,context);
     if (selected && (result.malformed || result.unsupported)) {
         if (am_detection_image_failures<SIZE_MAX) am_detection_image_failures++;
         if (result.reason>AM_IMPORT_FAILURE_NONE && result.reason<AM_IMPORT_FAILURE_COUNT &&
             am_detection_image_failure_reasons[result.reason]<SIZE_MAX) am_detection_image_failure_reasons[result.reason]++;
     }
-    if (selected) for (unsigned i=0;i<6;i++) {
-        AMImportBindResult s=am_detection_results[i];
-        AMDetectionSetAdapterReady((AMDetectionAPI)i,!am_detection_image_failures && !s.conflicts && !s.failed && (s.applied || s.already_owned));
-    }
+    for (unsigned m=0;m<AM_DETECTION_MODULE_COUNT;m++) if (native_modules[m] && AMDetectionPrepareModule((AMDetectionModuleID)m))
+        AMDetectionPublishModule((AMDetectionModuleID)m);
     os_unfair_lock_unlock(&am_detection_lock);
     return result;
 }
 NSDictionary *AMDetectionReport(void) {
     static NSString *const states[]={@"disabled",@"observation-only",@"filtering",@"unsupported",@"failed"};
     static NSString *const names[]={@"access",@"stat",@"lstat",@"open",@"fopen",@"getenv",@"foundation",@"urls"};
-    AMImportBindResult results[6]; size_t failures,reasons[AM_IMPORT_FAILURE_COUNT];
+    AMImportBindResult results[AM_DETECTION_REGISTRY_ID_LIMIT]; size_t failures,reasons[AM_IMPORT_FAILURE_COUNT];
     os_unfair_lock_lock(&am_detection_lock);
     memcpy(results,am_detection_results,sizeof results); failures=am_detection_image_failures;
     memcpy(reasons,am_detection_image_failure_reasons,sizeof reasons);
     os_unfair_lock_unlock(&am_detection_lock);
     NSMutableDictionary *adapters=[NSMutableDictionary dictionary];
     for (size_t i=0;i<8;i++) {
-        bool selected=i<6 ? am_detection_native_selected[i] : i==6 ? (AM_DETECTION_API_FOUNDATION_EXISTS || AM_DETECTION_API_FOUNDATION_ATTRIBUTES) : AM_DETECTION_API_URLS;
+        const AMDetectionEntry *entry=AMDetectionEntryByID((AMDetectionEntryID)i);
+        bool native=entry->abi==AM_DETECTION_ABI_NATIVE;
+        bool selected=native ? AMDetectionEntrySelected(entry->id) : i==AM_DETECTION_FOUNDATION ? (AM_DETECTION_API_FOUNDATION_EXISTS || AM_DETECTION_API_FOUNDATION_ATTRIBUTES) : AM_DETECTION_API_URLS;
         size_t installed=i<6 ? results[i].applied+results[i].already_owned : i==6 ? am_detection_foundation_installed : am_detection_url_installed;
         size_t errors=i<6 ? failures+results[i].conflicts+results[i].failed : 0;
         AMDetectionState state=AMDetectionAdapterState(am_detection_profile.mode,selected,installed,errors,am_detection_version_ok);
+        if (selected && am_detection_version_ok && am_detection_profile.mode!=AM_DETECTION_OFF) state=AMDetectionModuleStatus(entry->module).state;
         AMDetectionCounters counters=AMDetectionReadCounters((AMDetectionAPI)i);
         adapters[names[i]]=@{@"state":states[state],@"calls":@(counters.calls),@"matched":@(counters.matched),@"filtered":@(counters.filtered)};
     }

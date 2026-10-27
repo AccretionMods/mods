@@ -2,7 +2,7 @@
 
 Date: 2026-10-27
 
-Status: written specification approved; implementation plan awaiting owner review.
+Status: specification and implementation plan approved; implementation in progress.
 
 Base: `codex/minimal-path-filters` at `d9878b4`. This document is on a separate
 local design branch. It does not change draft PR #85 or activate additional hooks.
