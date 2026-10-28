@@ -76,8 +76,11 @@ def worktree(branch):
 
 
 def copy_mod(mod, wt):
-    """The mod's tracked files as they are in this checkout (its version bump included)."""
-    files = run("git", "ls-files", "--cached", "--others", "--exclude-standard", f"mods/{mod}", cwd=ROOT).splitlines()
+    """The mod's tracked files as they are in this checkout (its version bump included). Only the repository's
+    .gitignore files decide what is left out: a personal mod's folder is also in .git/info/exclude (dev.py
+    keep_out_of_git), which must not empty it once it is made public."""
+    files = run("git", "ls-files", "--cached", "--others", "--exclude-per-directory=.gitignore", f"mods/{mod}",
+                cwd=ROOT).splitlines()
     for rel in files:
         src, dst = ROOT / rel, wt / rel
         if src.is_file():

@@ -121,6 +121,20 @@ class Cli(unittest.TestCase):
     def hooks(self):
         return json.loads((self.mod / "hooks.json").read_text())["hooks"]
 
+    def test_changes_from_the_command_line_are_snapshotted_and_can_be_restored(self):
+        code, out = run(["pin", "game-plus", "StatHandler.set_Hunger", "--value", "100", "--as", "keep", "--title", "Keep"])
+        self.assertEqual(code, 0, out)
+        code, out = run(["pin", "game-plus", "Enemy.EnemyDamage", "--object", "Enemy[]", "--value", "0", "--to", "keep"])
+        self.assertEqual(code, 0, out)
+        self.assertEqual(len(self.tweaks()["tweaks"][0]["pins"]), 2)
+        code, out = run(["snapshots", "game-plus"])
+        rows = [line.split()[0] for line in out.splitlines()]
+        self.assertEqual(len(rows), 2, out)  # before each pin: no tweaks.json yet, then one pin
+        code, out = run(["snapshots", "game-plus", "--restore", rows[0]])  # newest: the one-pin menu
+        self.assertEqual(code, 0, out)
+        self.assertIn("restored", out)
+        self.assertEqual(len(self.tweaks()["tweaks"][0]["pins"]), 1)
+
     def test_add_needs_an_overload_choice_then_writes_both_files(self):
         code, out = run(["add", "game-plus", "Enemy.DamagePlayer", "--as", "noDamage", "--title", "No damage"])
         self.assertEqual(code, 1)
