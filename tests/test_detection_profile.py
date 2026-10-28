@@ -110,53 +110,6 @@ class DetectionProfile(unittest.TestCase):
         for value in (1, "false", None):
             self.assertTrue(self.module.problems(dict(self.profile, diagnostics=value)))
 
-    def test_explicit_profile_accepts_recognized_legacy_source_override(self):
-        sys.path.insert(0, str(ROOT / "scripts"))
-        import validate_mods
-
-        with tempfile.TemporaryDirectory() as d:
-            folder = Path(d)
-            (folder / "detection.json").write_text(
-                json.dumps(dict(self.profile, mode="off"))
-            )
-            (folder / "Makefile").write_text(
-                "TWEAK_NAME = Test\nTest_FILES = SideloadCompat.m\n"
-            )
-            shutil.copyfile(
-                ROOT / "tests/fixtures/legacy_sideload_compat.m",
-                folder / "SideloadCompat.m",
-            )
-            self.assertEqual(
-                validate_mods.detection_problems(
-                    folder, {"tested_app_version": "1.2.0"}
-                ),
-                [],
-            )
-
-    def test_known_legacy_build_sources_migrate_without_writing_the_mod(self):
-        with tempfile.TemporaryDirectory() as d:
-            folder = Path(d)
-            original = (ROOT / "tests/fixtures/legacy_sideload_compat.m").read_bytes()
-            legacy = folder / "SideloadCompat.m"
-            legacy.write_bytes(original)
-            sources = "Tweak.x SideloadCompat.m menu/AMMenu.m"
-            self.assertEqual(
-                self.module.build_sources(folder, sources),
-                "Tweak.x runtime/SideloadCompat.m menu/AMMenu.m",
-            )
-            self.assertEqual(legacy.read_bytes(), original)
-            legacy.write_bytes(original.replace(b"\n", b"\r\n"))
-            self.assertEqual(
-                self.module.build_sources(folder, sources),
-                "Tweak.x runtime/SideloadCompat.m menu/AMMenu.m",
-            )
-            legacy.write_text("// custom compatibility code\n")
-            self.assertEqual(self.module.build_sources(folder, sources), sources)
-            self.assertEqual(
-                self.module.build_sources(folder, "runtime/SideloadCompat.m"),
-                "runtime/SideloadCompat.m",
-            )
-
     def test_shared_default_is_version_bound_minimal_and_not_game_specific(self):
         for version in ("1.7.5", "2.3"):
             p = self.module.default_profile({"tested_app_version": version})

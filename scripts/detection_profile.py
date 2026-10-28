@@ -118,23 +118,6 @@ def default_profile(meta):
     }
 
 
-def build_sources(folder, sources):
-    """Migrate only the known uncustomized legacy implementation at build time."""
-    tokens = sources.split()
-    legacy = Path(folder) / "SideloadCompat.m"
-    if "SideloadCompat.m" not in tokens or not legacy.is_file():
-        return sources
-    if (
-        hashlib.sha256(legacy.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
-        != "0ac7bf91a8594e540813290758370b07c0a70cb82d9e0640832eb07946b6c888"
-    ):
-        return sources
-    return " ".join(
-        "runtime/SideloadCompat.m" if token == "SideloadCompat.m" else token
-        for token in tokens
-    )
-
-
 def problems(data, app_version=None):
     if not isinstance(data, dict):
         return ["profile must be an object"]
@@ -519,9 +502,6 @@ def generate(folder):
 
 def main(argv=None):
     args = sys.argv[1:] if argv is None else argv
-    if len(args) == 3 and args[0] == "--build-sources":
-        print(build_sources(args[1], args[2]))
-        return
     if len(args) != 1:
         raise SystemExit("usage: detection_profile.py <mod folder>")
     try:
