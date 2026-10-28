@@ -850,7 +850,7 @@ def mod_summary(name):
     meta = dev.read_json(folder / "mod.json")
     state = dev.load_state(name)
     tweaks = (
-        dev.read_json(folder / "tweaks.json")
+        dev.mod_tweaks.load(folder)
         if (folder / "tweaks.json").is_file()
         else None
     )
@@ -897,7 +897,7 @@ def mod_detail(name):
     meta = dev.read_json(folder / "mod.json")
     data = mod_summary(name)
     data["tweaks_json"] = (
-        dev.read_json(folder / "tweaks.json")
+        dev.mod_tweaks.load(folder)
         if (folder / "tweaks.json").is_file()
         else None
     )
