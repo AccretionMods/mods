@@ -1,0 +1,1781 @@
+"use strict";
+const App = {
+  mods: [], mod: null, detail: null, tab: "switches", jobs: {}, pollers: {}, findRows: [],
+  async api(path, body) {
+    const r = await fetch(path, body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    let data = {};
+    try { data = await r.json(); } catch (e) { data = { error: "no JSON from the server" }; }
+    if (!r.ok) throw new Error(data.output || data.error || `HTTP ${r.status}`);
+    return data;
+  },
+  el(tag, attrs, ...children) {
+    const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (k === "class") e.className = v; else if (k === "text") e.textContent = v; else if (k.startsWith("on")) e.addEventListener(k.slice(2), v); else if (typeof v === "boolean") { if (v) e.setAttribute(k, ""); } else if (v !== null && v !== undefined) e.setAttribute(k, v);
+    }
+    for (const c of children.flat()) if (c !== null && c !== undefined) e.append(c.nodeType ? c : document.createTextNode(String(c)));
+    return e;
+  },
+  toast(text, kind) {
+    document.querySelectorAll(".toast").forEach(t => t.remove());
+    const t = this.el("div", { class: "toast " + (kind || ""), text: String(text).trim().split("\n").slice(0, 3).join("\n") });
+    document.body.append(t);
+    setTimeout(() => t.remove(), kind === "bad" ? 9000 : 4500);
+  },
+  byId(id) { return document.getElementById(id); },
+  hex(n) { return "0x" + Number(n).toString(16).toUpperCase(); },
+  mb(n) { return (n / 1e6).toFixed(1) + " MB"; },
+
+  async loadMods() {
+    const data = await this.api("/api/mods");
+    this.mods = data.mods.slice();
+    this.byId("amRoot").textContent = "Workspace: " + data.am_root;
+    this.modsControls();
+    this.drawMods();
+    if (!this.mod && this.mods.length) this.select(localStorage.getItem("studio.mod") || this.mods[0].name);
+  },
+  // the Mods list's search, filter, sort and density, kept in this browser (studio.mods.*)
+  modsPref(key, fallback) { try { return localStorage.getItem("studio.mods." + key) || fallback; } catch (e) { return fallback; } },
+  modsSave(key, value) { try { localStorage.setItem("studio.mods." + key, value); } catch (e) { /* private window */ } },
+  modsControls() {
+    if (this.byId("modsTools")) return;
+    const search = this.el("input", { id: "modsSearch", placeholder: "Filter: name, game or bundle ID", style: "width:100%" });
+    search.value = this.modsPref("q", "");
+    search.addEventListener("input", () => { this.modsSave("q", search.value); this.drawMods(); });
+    const sort = this.el("select", { id: "modsSort", title: "Order of the list" },
+      [["built", "Last built"], ["name", "Name"], ["letter", "Name, grouped A–Z"], ["game", "By game"], ["switches", "Most switches"]].map(o => this.el("option", { value: o[0], text: o[1] })));
+    sort.value = this.modsPref("sort", "built");
+    sort.addEventListener("change", () => { this.modsSave("sort", sort.value); this.drawMods(); });
+    const compact = this.el("input", { type: "checkbox", id: "modsCompact" });
+    compact.checked = this.modsPref("compact", "0") === "1";
+    compact.addEventListener("change", () => { this.modsSave("compact", compact.checked ? "1" : "0"); this.drawMods(); });
+    const chips = this.el("div", { id: "modsChips", class: "badges", style: "margin:8px 0 2px" });
+    for (const [key, label] of [["all", "All"], ["personal", "Personal"], ["public", "Public"], ["switches", "Switches"], ["hand", "Hand-written"], ["nodump", "No dump"]]) {
+      chips.append(this.el("button", { class: "small", "data-filter": key, type: "button", onclick: () => { this.modsSave("filter", key); this.drawMods(); } }, label));
+    }
+    const tools = this.el("div", { id: "modsTools", style: "margin-bottom:10px" }, search, chips,
+      this.el("div", { class: "row", style: "margin-top:6px;gap:8px;align-items:center" }, sort,
+        this.el("label", { class: "muted small", style: "margin:0;display:inline-flex;gap:6px;align-items:center" }, compact, "compact"),
+        this.el("span", { id: "modsCount", class: "muted small grow", style: "text-align:right" })));
+    this.byId("mods").before(tools);
+  },
+  drawMods() {
+    const box = this.byId("mods"); box.replaceChildren();
+    const q = (this.byId("modsSearch").value || "").trim().toLowerCase();
+    const filter = this.modsPref("filter", "all"), sort = this.byId("modsSort").value, compact = this.byId("modsCompact").checked;
+    this.byId("modsChips").querySelectorAll("button").forEach(b => b.classList.toggle("primary", b.dataset.filter === filter));
+    const keep = {
+      all: () => true, personal: m => m.personal, public: m => !m.personal,
+      switches: m => m.has_tweaks, hand: m => !m.has_tweaks, nodump: m => !m.dump,
+    }[filter] || (() => true);
+    const shown = this.mods.filter(m => keep(m) && (!q || [m.title, m.name, m.target].some(t => String(t || "").toLowerCase().includes(q))));
+    const byName = (a, b) => a.title.localeCompare(b.title);
+    shown.sort({
+      built: (a, b) => (b.built || 0) - (a.built || 0) || byName(a, b),  // latest build first, never built last
+      name: byName,
+      letter: byName,
+      game: (a, b) => a.target.localeCompare(b.target) || byName(a, b),
+      switches: (a, b) => (b.tweaks || 0) - (a.tweaks || 0) || byName(a, b),
+    }[sort] || byName);
+    this.byId("modsCount").textContent = shown.length === this.mods.length ? `${shown.length} mods` : `${shown.length} of ${this.mods.length}`;
+    const when = t => { const d = new Date(t * 1000), today = new Date().toDateString() === d.toDateString();
+      return "built " + (today ? "today " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                               : d.toLocaleDateString([], { month: "short", day: "numeric", year: d.getFullYear() === new Date().getFullYear() ? undefined : "numeric" })); };
+    let game = null, letter = null;
+    // "Name, grouped A–Z": a letter header over the mods whose name starts with it (digits and signs under #)
+    const initial = m => { const c = (String(m.title).match(/[A-Za-z0-9]/) || ["#"])[0].toUpperCase(); return /[A-Z]/.test(c) ? c : "#"; };
+    for (const m of shown) {
+      if (sort === "letter" && initial(m) !== letter) {
+        letter = initial(m);
+        box.append(this.el("div", { class: "label", style: "margin:10px 2px 2px;font-size:11px", text: letter }));
+      }
+      if (sort === "game" && m.target !== game) {  // one header per game: its mods together (Wanderer Dev beside The Wanderer+)
+        game = m.target;
+        box.append(this.el("div", { class: "label", style: "margin:10px 2px 2px;font-size:11px", text: `${m.target} ${m.app_version}`.trim() }));
+      }
+      const badges = [
+        m.personal ? this.el("span", { class: "badge", text: "personal" }) : null,
+        this.el("span", { class: "badge accent", text: `${m.hooks} hooks${m.hooks_jit ? ", " + m.hooks_jit + " JIT" : ""}` }),
+        m.has_tweaks ? this.el("span", { class: "badge", text: m.tweaks + " switches" }) : this.el("span", { class: "badge warn", text: "hand-written" }),
+        this.el("span", { class: "badge " + (m.dump ? "good" : "bad"), text: m.dump ? "dump" : "no dump" }),
+      ];
+      box.append(this.el("div", { class: "mod" + (m.name === this.mod ? " active" : "") + (compact ? " compact" : ""), "data-name": m.name, onclick: () => this.select(m.name),
+                                  title: compact ? `${m.target} ${m.app_version} · ${m.built ? when(m.built) : "never built"}` : null },
+        // the game's App Store icon, cached by Studio (/api/icons: one lookup for every mod, kept on disk a month)
+        this.el("div", { class: "head" },
+          this.el("img", { class: "icon", src: `/api/icons/${encodeURIComponent(m.target)}`, alt: "", loading: "lazy", decoding: "async",
+                           onerror: ev => { ev.target.style.visibility = "hidden"; } }),
+          this.el("div", {},
+            this.el("div", { class: "t", text: `${m.title} ${m.version}` }),
+            compact ? null : this.el("div", { class: "s", text: `${m.target} ${m.app_version}` }),
+            compact ? null : this.el("div", { class: "s", text: m.built ? when(m.built) : "never built" }))),
+        this.el("div", { class: "badges" }, badges)));
+    }
+    if (!shown.length) box.append(this.el("p", { class: "hint", text: "No mod matches. Clear the filter or pick All." }));
+  },
+  async select(name) {
+    if (!this.mods.some(m => m.name === name)) name = this.mods[0] && this.mods[0].name;
+    if (!name) return;
+    this.mod = name; localStorage.setItem("studio.mod", name);
+    await this.refresh();
+    document.querySelectorAll(".mod[data-name]").forEach(e => e.classList.toggle("active", e.dataset.name === name));
+    // the work area from its top (tabs, status): the list keeps its own scroll position beside it
+    if (window.scrollY > 0) window.scrollTo({ top: 0, behavior: "smooth" });
+  },
+  async refresh(detail) {
+    this.detail = detail || await this.api(`/api/mods/${this.mod}`);
+    const d = this.detail;
+    // Accretion's branding in the mod menu (the getaccretion.app link, the mark by the title, "Made by Accretion."):
+    // and the Accretion account (Log in, Cloud saves): mod.json "branding", used by this mod's next build
+    const branding = this.el("input", { type: "checkbox" });
+    branding.checked = d.branding !== false;
+    branding.addEventListener("change", async () => {
+      try {
+        await this.api(`/api/mods/${this.mod}/branding`, { on: branding.checked });
+        this.toast(branding.checked ? "Next build: Accretion's link, mark and wording are back in the menu" : "Next build: no Accretion link, mark, wording, Log in or Cloud saves in the menu: only the switches and Display", "ok");
+      } catch (e) { branding.checked = !branding.checked; this.toast(e.message, "bad"); }
+    });
+    this.byId("sel").replaceChildren(this.el("b", { text: `${d.title} ${d.version}` }), ` · ${d.target} ${d.app_version}`,
+      this.el("label", { class: "muted small", style: "margin:0 0 0 12px;display:inline-flex;gap:6px;align-items:center", title: "The mod menu's \"More at getaccretion.app ›\" link, the Accretion mark by the title and \"Made by Accretion.\" Off: this mod's next build has none of them and no Accretion account either: no Log in, no Cloud saves (mod.json branding: false). The switches and Display stay." }, branding, "Accretion branding in the menu"));
+    // how this mod installs on the phone: the game's own ID (recommended) or a separate copy beside it. Local
+    // builds only (dev state): store entries and releases keep mod.json's bundle_id
+    const mode = this.el("select", { title: `Install ID for local builds: ${d.install_bundle}`, "aria-label": "Install as" },
+      [["original", "Original game ID"], ["separate", "Separate copy"]].map(o => this.el("option", { value: o[0], text: o[1] })));
+    mode.value = d.install_mode;
+    mode.addEventListener("change", async () => {
+      try {
+        const r = await this.api(`/api/mods/${this.mod}/install-mode`, { mode: mode.value });
+        this.detail.install_mode = r.install_mode; this.detail.install_bundle = r.install_bundle;
+        mode.title = `Install ID for local builds: ${r.install_bundle}`;
+        this.toast(r.install_mode === "original" ? `Next build installs as the game itself (${r.install_bundle}); recommended for compatibility`
+                                                 : `Next build installs as a separate copy (${r.install_bundle}) beside the original`, "ok");
+      } catch (e) { mode.value = this.detail.install_mode; this.toast(e.message, "bad"); }
+    });
+    this.byId("sel").append(this.el("label", { class: "muted small", style: "margin:0 0 0 12px;display:inline-flex;gap:6px;align-items:center" }, "Install as", mode));
+    this.byId("runPhone").disabled = false;
+    const tweaks = (d.tweaks_json || {}).tweaks || [];
+    this.byId("navCount").textContent = tweaks.length ? String(tweaks.length) : "";
+    if (this.liveFor !== this.mod) this.live = null;
+    this.renderStatus();
+    this.render();
+    this.refreshLive();
+  },
+
+  // ---------------------------------------------------------------- workspace: status strip, phone panel, jobs dock
+  renderStatus() {
+    const box = this.byId("statusStrip"), d = this.detail;
+    if (!d) { box.classList.add("hidden"); return; }
+    const tweaks = (d.tweaks_json || {}).tweaks || [];
+    const all = [...tweaks, ...(d.features || [])];
+    const works = all.filter(t => t.verification_state === "works").length;
+    const live = this.live || {};
+    const cell = (label, cls, text, extra) => this.el("div", { class: "box" }, this.el("div", { class: "l", text: label }),
+      this.el("div", { class: "v " + cls }, this.el("span", { text, title: text }), extra || null));
+    const ipa = d.last_ipa ? d.last_ipa.split(/[\\/]/).pop() : "";
+    const runtime = live.runtime === "attached" ? ["good", "Attached"] : live.runtime === "not found" ? ["bad", "Not found"] : ["muted", "Not seen yet"];
+    box.replaceChildren(
+      d.dump ? cell("Dump", "good", "Ready · " + (d.app_version || "?"))
+        : cell("Dump", "warn", "Not made yet", this.el("button", { class: "small", onclick: () => this.job("dump", []) }, "Dump")),
+      cell("Last build", ipa ? "" : "muted", ipa ? `${d.version} · ${ipa}` : "No build yet"),
+      cell("Runtime on the phone", runtime[0], runtime[1] + (live.watching ? " · watching" : "")),
+      cell("Switches confirmed", all.length && works === all.length ? "good" : all.length ? "warn" : "muted", all.length ? `${works} of ${all.length}` : "No switches yet"));
+    box.classList.remove("hidden");
+  },
+  renderPhonePanel() {
+    const box = this.byId("phoneLines"), live = this.live || { switches: {} };
+    this.byId("phoneLive").classList.toggle("hidden", !live.watching);
+    const titles = new Map((((this.detail || {}).tweaks_json || {}).tweaks || []).map(t => [t.key, t.title]));
+    const rows = Object.entries(live.switches || {}).filter(([, st]) => st.state !== "off");
+    if (!rows.length) {
+      box.replaceChildren(this.el("p", { class: "hint", style: "margin:0", text: "Switch states show here once the game logs them: Build and run, or Watch the phone, then turn switches on in the game." }));
+      return;
+    }
+    box.replaceChildren(...rows.map(([key, st]) => this.el("div", { class: "line" },
+      this.el("span", { class: "badge " + (st.state === "ok" ? "good" : "bad"), text: st.state === "ok" ? "working" : "waiting" }), " ",
+      this.el("span", { text: titles.get(key) || key }),
+      st.reason ? this.el("span", { class: "r", text: st.reason }) : null)));
+  },
+  // Build and run; in original-ID mode, asks first when the phone has the original game (an app Studio did not
+  // install) under that ID: installing replaces it, so it needs an explicit yes (--replace-original)
+  async runOnPhone(args) {
+    if (this.detail && this.detail.install_mode === "original") {
+      let check = null;
+      try { check = await this.api(`/api/mods/${this.mod}/install-check`); } catch (e) { check = null; }
+      if (check && check.replaces_original) {
+        const yes = confirm(`The original game (${check.bundle}) is installed on the phone and Studio did not install it.\n\n`
+          + "If the signer keeps the game's ID, installing this build replaces the original app (its data may be replaced too).\n\n"
+          + "Replace it? Cancel keeps the original: switch Install as to Separate copy to install beside it.");
+        if (!yes) { this.toast("Not installed: the original game stays", "ok"); return; }
+        args = [...args, "--replace-original"];
+      }
+    }
+    return this.job("run", args);
+  },
+  openJobs(open = true) {
+    const dock = this.byId("jobsPanel");
+    dock.classList.toggle("open", open);
+    const t = this.byId("jobsToggle"); t.textContent = open ? "Hide" : "Show"; t.setAttribute("aria-expanded", String(open));
+    try { localStorage.setItem("studio.jobs.open", open ? "1" : "0"); } catch (e) { /* private window */ }
+    if (open) { const first = this.byId("jobs").firstElementChild; if (first) first.scrollIntoView({ block: "nearest" }); }
+  },
+  drawJobChips() {
+    const box = this.byId("jobChips"); if (!box) return;
+    box.replaceChildren(...[...this.byId("jobs").children].slice(0, 3).map(det => {
+      const st = det.querySelector("[id^=jobst-]"), status = st ? st.textContent : "";
+      const dot = ["queued", "running", "stopping"].includes(status) ? "run" : status === "done" ? "ok" : "bad";
+      const name = det.querySelector("summary .mono");
+      return this.el("button", { class: "jchip", type: "button", title: status, onclick: () => { this.openJobs(true); det.open = true; det.scrollIntoView({ block: "nearest" }); } },
+        this.el("span", { class: "jdot " + dot }), (name ? name.textContent : "job").slice(0, 48));
+    }));
+  },
+  setTab(tab) {
+    this.tab = tab;
+    document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
+    for (const s of ["switches", "find", "suggest", "scan", "phone", "files", "games", "store", "console"]) this.byId("tab-" + s).classList.toggle("hidden", s !== tab);
+    this.render();
+  },
+  render() {
+    if (this.tab === "store") return this.renderStore();  // needs no mod
+    if (!this.detail) return;
+    ({ switches: this.renderSwitches, find: this.renderFind, suggest: this.renderSuggest, scan: this.renderScan, phone: this.renderPhone, files: this.renderFiles, games: this.renderGames, store: this.renderStore, console: this.renderConsole })[this.tab].call(this);
+  },
+
+  // ---------------------------------------------------------------- switches
+  keys() { return ((this.detail.tweaks_json || {}).tweaks || []).map(t => t.key); },
+  renderSwitches() {
+    const d = this.detail, box = this.byId("tab-switches"); box.replaceChildren();
+    const tj = d.tweaks_json;
+    for (const f of d.features || []) {
+      const v = f.verified || {}, state = f.verification_state;
+      const evidence = this.el("details", { class: "feature-more" }, this.el("summary", { text: "Test evidence and reuse criteria" }));
+      for (const text of [...(f.evidence || []), ...(f.criteria || [])]) evidence.append(this.el("p", { class: "hint", text }));
+      box.append(this.el("div", { class: "panel feature" },
+        this.el("div", { class: "panel-h" }, this.el("span", { text: f.title }),
+          this.el("span", { class: "badge " + (state === "works" ? "good" : "warn"), text: state === "works" ? "Verified on this build" : state === "stale" ? "Needs retest" : state })),
+        this.el("div", { class: "panel-b" },
+          this.el("div", { class: "feature-meta mono", text: `${f.mode || "Custom feature"} · ${f.nojit ? "No JIT" : "Runtime dependent"} · game ${v.app_version || "?"} · mod ${v.mod_version || "?"} · ${v.date || ""}` }),
+          f.summary ? this.el("p", { class: "hint", text: f.summary }) : null, evidence)));
+    }
+    if (!tj) {
+      box.append(this.el("p", { class: "hint", text: "This mod has a hand-written Tweak.x and no tweaks.json. Adding a switch here creates one; the Makefile must then list AMTweaks.gen.m and Tweak.x must call AMTweaksRegister() (see README \"Dev loop\")." }));
+    }
+    const bump = this.el("input", { type: "checkbox" });
+    // unchecked: the build hooks nothing in the game (dev.py --no-hooks): the menu and pins stay
+    const hooks = this.el("input", { type: "checkbox" }); hooks.checked = true;
+    const noHooks = () => (hooks.checked ? [] : ["--no-hooks"]);
+    const more = (text, title, fn) => this.el("button", { title, onclick: ev => { ev.target.closest("details").open = false; fn(); } }, text);
+    // one primary action; the rest one click away under More
+    box.append(this.el("div", { class: "panel" },
+      this.el("div", { class: "panel-h" }, this.el("span", { text: "Try it on the phone" }), this.el("span", { class: "fig", text: d.last_ipa ? d.last_ipa.split(/[\\/]/).pop() + (d.last_hooks === false ? " (no hooks)" : "") : "no build yet" })),
+      this.el("div", { class: "bar", style: "padding-top:0" },
+        this.el("button", { class: "primary", title: "build the .ipa, sign it, install it, open the game and read its log", onclick: () => this.runOnPhone([...(bump.checked ? ["--bump"] : []), ...noHooks(), "--seconds", "75"]) }, "Build and run on the phone"),
+        this.el("button", { title: "sends this mod's switches to the installed game: they apply within 2 s, no build (needs a build that has live pins)", onclick: () => this.job("push", []) }, "Push switches"),
+        this.el("button", { title: "turns the switches on from the PC one category at a time, reads which reach the game, turns them off again (am test)", onclick: () => this.job("test", []) }, "Test switches"),
+        this.el("label", { style: "margin:0 6px;display:inline-flex;gap:6px;align-items:center" }, bump, "bump version"),
+        this.el("label", { style: "margin:0 6px;display:inline-flex;gap:6px;align-items:center", title: "unchecked: the build hooks nothing in the game (no method hooks, no sideload compatibility); the menu and pins still work. A game that waits on iCloud or Game Center may stall loading without them" }, hooks, "with hooks"),
+        this.el("span", { class: "grow" }),
+        this.el("details", { class: "more" }, this.el("summary", { text: "More ▾" }),
+          this.el("div", { class: "menu" },
+            more("Build .ipa only", "build without signing or installing", () => this.job("build", ["--ipa", ...(bump.checked ? ["--bump"] : []), ...noHooks()])),
+            more("Sign + install the last .ipa", this.detail.last_ipa || "no .ipa built yet", () => this.detail.last_ipa ? this.job("sign", [this.detail.last_ipa, "--install"]) : this.toast("No .ipa built yet: Build .ipa only first", "bad")),
+            more("Watch the phone (5 min)", "reads the phone's log: each switch shows its state here", async () => { await this.job("log", ["--seconds", "300"]); setTimeout(() => this.refreshLive(), 3000); }),
+            more("Private download link (6 months)", "uploads the newest build to private storage and makes a dl.getaccretion.app/s/ link; renew or revoke it with am share", () => this.job("share", ["--months", "6"])),
+            more("My download links", "every share link, its expiry and downloads", () => this.job("share", ["--list"])),
+            more("Menu image for the post", "our menu drawn with this mod's switches: fill it in, then save a PNG or upload it as the post's link", () => window.open(`/menu-image?mod=${this.mod}`, "_blank")),
+            more("Phone screenshot for the post", "takes the phone's screen now, uploads it as a 1-year link (renew it on the AccretionWeb tab) and puts it in this mod's post", () => this.phoneShot()),
+            more("Release post", "from your template, once every switch is marked works; written locally, never posted", () => this.job("post", [])),
+            more("Draft post", "the post now, marked DRAFT with what is not validated yet", () => this.job("post", ["--draft"])),
+            more("Add a plain switch / slider", "a value for hand-written code in Tweak.x", () => this.plainSwitchDialog()),
+            more("Regenerate code", "rewrite AMTweaks.gen.m from tweaks.json", () => this.quick("gen", {})))))));
+    if (tj && tj.watch && tj.watch.length) {
+      box.append(this.el("p", { class: "hint", text: "Watch (log every " + (tj.watch_every || 10) + " s): " + tj.watch.map(w => `${w.object} ${w.getter || w.field}`).join(", ") }));
+    }
+    const tweaks = tj ? tj.tweaks : [];
+    const filter = this.el("input", { placeholder: `Filter ${tweaks.length} switches`, value: this.switchFilter || "", style: "flex:1" });
+    const works = tweaks.filter(t => t.verification_state === "works").length;
+    box.append(this.el("div", { class: "row", style: "margin-bottom:14px" }, filter,
+      this.el("span", { class: "label", text: `${tweaks.length} switches · ${works} confirmed` })));
+    const list = this.el("div", {});
+    box.append(list);
+    const draw = () => {
+      list.replaceChildren();
+      const q = filter.value.trim().toLowerCase();
+      const groups = new Map();
+      for (const t of tweaks) {
+        if (q && !(t.title + " " + t.key + " " + (t.section || "")).toLowerCase().includes(q)) continue;
+        const sec = t.section || "Other";
+        if (!groups.has(sec)) groups.set(sec, []);
+        groups.get(sec).push(t);
+      }
+      if (!groups.size) list.append(this.el("p", { class: "hint", text: tweaks.length ? `No switch matches “${filter.value}”.` : "No switches yet: Find, Suggest or Scan adds them." }));
+      for (const [sec, items] of groups) {
+        const ok = items.filter(t => t.verification_state === "works").length;
+        const panel = this.el("div", { class: "panel" },
+          this.el("div", { class: "panel-h" }, this.el("span", { text: sec }),
+            this.el("span", { class: "fig" + (ok === items.length ? " good" : ""), text: `${ok}/${items.length} confirmed` })));
+        for (const t of items) panel.append(this.switchRow(t));
+        list.append(panel);
+      }
+      setTimeout(() => this.refreshLive(), 0);
+    };
+    filter.addEventListener("input", () => { this.switchFilter = filter.value; draw(); });
+    draw();
+  },
+  switchRow(t) {
+    const d = this.detail;
+    const hooks = t.hooks || [], pins = t.pins || [];
+    const jit = hooks.length && hooks.every(h => (d.hooks_json.find(e => (e.namespace ? e.namespace + "." : "") + e.class + "." + e.method === h.method || e.class + "." + e.method === h.method) || {}).needs_jit) && !pins.length && t.jit_label !== false;
+    const chips = [
+      ...hooks.map(h => this.el("span", { class: "chip hook", title: "hook (JIT unless virtual / Unity callback)", text: `${h.method} · ${h.action || "custom"}${h.value !== undefined ? " " + h.value : ""}${h.index !== undefined ? " [arg " + h.index + "]" : ""}` })),
+      ...pins.map(p => this.el("span", { class: "chip pin", title: "pin: no JIT needed", text: `${p.object}${p.via ? " via " + p.via : ""} · ${p.field || p.setter || (p.call + "(" + (p.args || []).join(", ") + ")")}${p.call ? " every " + (p.every ?? 0) + " s" : " " + (p.op === "multiply" ? "× " : "") + (p.when && p.when !== "always" ? p.when + " " : "= ") + JSON.stringify(p.value)}` })),
+    ];
+    const kindText = t.kind === "slider" ? `slider ${t.min}–${t.max}, default ${t.default ?? t.min}` : "switch";
+    return this.el("div", { class: "item" },
+      this.el("div", { class: "head" },
+        this.el("span", { id: "live-" + t.key }),
+        this.el("span", { class: "title", text: t.title }),
+        this.el("span", { class: "key", text: `${t.key} · ${kindText}` }),
+        jit ? this.el("span", { class: "badge warn", text: "JIT", title: "every hook needs JIT; add a pin for phones without it" }) : null,
+        t.verified ? this.el("span", { class: "badge " + (t.verification_state === "works" ? "good" : "warn"), text: `${t.verification_state === "stale" ? "needs retest" : t.verification_state} · ${t.verified.app_version}${t.verified.carried_from ? ` (carried from ${t.verified.carried_from})` : ""}`, title: t.verified.carried_from ? `marked on ${t.verified.carried_from} (${t.verified.date}); carried by dev.py update because every target is unchanged in ${t.verified.app_version}` : t.verified.date }) : null),
+      chips.length ? this.el("div", { class: "chips" }, chips) : this.el("div", { class: "hint", text: "No hook or pin: a value for hand-written code in Tweak.x (am_" + t.key + ")." }),
+      this.el("div", { class: "row acts" },
+        this.el("button", { class: "small", onclick: () => this.quick("mark", { key: t.key, works: true }) }, "Works"),
+        this.el("button", { class: "small", onclick: () => this.quick("mark", { key: t.key, fails: true }) }, "Fails"),
+        this.el("button", { class: "small ghost", onclick: () => this.pinDialog({ to: t.key }) }, "Add a pin"),
+        jit ? this.el("button", {class:"small", title:"Review the original hooks for supported data alternatives; no automatic conversion", onclick:()=>{
+          const pattern = "^(?:" + hooks.map(h=>h.method.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") + ")$";
+          localStorage.setItem("studio.q." + this.mod, pattern); this.byId("tab-find").dataset.mod = "";
+          this.findRows=[]; this.fieldHits=null; this.findFields=null; this.setTab("find");
+        }}, "Review no-JIT alternatives") : null,
+        this.el("button", { class: "small ghost danger", onclick: () => { if (confirm(`Remove "${t.title}" and the hooks only it uses?`)) this.quick("remove", { what: t.key }); } }, "Remove")));
+  },
+  async quick(command, body) {
+    try {
+      const r = await this.api(`/api/mods/${this.mod}/${command}`, body);
+      this.toast(r.output || "done", "ok");
+      await this.refresh(r.mod);
+      await this.loadMods();
+      return true;
+    } catch (e) { this.toast(e.message, "bad"); return false; }
+  },
+
+  // ---------------------------------------------------------------- dialogs
+  dialog(title, fields, onSubmit, submitText) {
+    const dlg = this.byId("dlg"), body = this.byId("dlgBody"); body.replaceChildren();
+    const form = this.el("form", { method: "dialog" }, this.el("h3", { text: title }));
+    const inputs = {};
+    for (const f of fields) {
+      if (f.type === "code") { form.append(this.el("pre", {text:f.text})); continue; }
+      if (f.type === "note") { form.append(this.el("p", { class: "hint", text: f.text })); continue; }
+      let input;
+      if (f.type === "select") { input = this.el("select", { name: f.name }, f.options.map(o => this.el("option", { value: o[0], text: o[1] }))); input.value = f.value ?? f.options[0][0]; }
+      else if (f.type === "check") { input = this.el("input", { type: "checkbox", name: f.name }); input.checked = !!f.value; }
+      else { input = this.el("input", { type: f.type || "text", name: f.name, value: f.value ?? "", placeholder: f.placeholder || "", class: f.mono ? "mono" : "" }); if (f.list) { input.setAttribute("list", f.name + "-list"); form.append(this.el("datalist", { id: f.name + "-list" }, f.list.map(v => this.el("option", { value: v })))); } }
+      input.style.width = f.type === "check" ? "auto" : "100%";
+      inputs[f.name] = input;
+      form.append(this.el("label", { text: f.label + (f.help ? "  —  " + f.help : "") }), input);
+      if (f.onchange) input.addEventListener("change", () => f.onchange(inputs));
+    }
+    form.append(this.el("div", { class: "row", style: "margin-top:14px;justify-content:flex-end" },
+      this.el("button", { type: "button", onclick: () => dlg.close() }, "Cancel"),
+      this.el("button", { type: "submit", class: "primary" }, submitText || "Add")));
+    form.addEventListener("submit", async ev => {
+      ev.preventDefault();
+      const values = {}; for (const [k, i] of Object.entries(inputs)) values[k] = i.type === "checkbox" ? i.checked : i.value.trim();
+      if (await onSubmit(values)) dlg.close();
+    });
+    body.append(form); dlg.showModal();
+    return inputs;
+  },
+  keyFrom(method) {
+    const [cls, name] = [method.slice(0, method.lastIndexOf(".")).split(".").pop(), method.slice(method.lastIndexOf(".") + 1).replace(/^(get_|set_)/, "")];
+    const k = (cls + name.charAt(0).toUpperCase() + name.slice(1)).replace(/\W/g, "");
+    return k.charAt(0).toLowerCase() + k.slice(1);
+  },
+  validKey(k) { return /^[A-Za-z][A-Za-z0-9_]*$/.test(k); },
+  hookDialog(m, preset) {
+    preset = preset || {};
+    const def = preset.action || (m.kind === "void" ? "skip" : m.kind === "bool" ? "return" : m.kind === "other" ? "custom" : "return");
+    const toOpts = [["", "a new switch"], ...this.keys().map(k => [k, "add to " + k])];
+    const fields = [
+      { type: "note", text: `${m.full_name}(${m.params.join(", ")}) → ${m.return_type}${m.needs_jit ? "   · needs JIT: without it this hook catches nothing; prefer a pin (Find → fields / set_ methods)" : ""}` },
+      { name: "to", label: "Switch", type: "select", options: toOpts, value: preset.to || "" },
+      { name: "title", label: "Menu title", value: preset.title || m.class + " " + m.method.replace(/^(get_|set_)/, "") },
+      { name: "key", label: "Key", value: this.keyFrom(m.full_name), mono: true },
+      { name: "action", label: "Action", type: "select", options: [["skip", "skip (void: don't call)"], ["return", "return a value"], ["multiply", "multiply the result"], ["arg", "replace an argument"], ["custom", "custom (code in Tweak.x)"]], value: def },
+      { name: "value", label: "Value", help: "for return / arg / multiply-by-fixed", value: preset.value !== undefined && preset.value !== null ? String(preset.value) : (m.kind === "bool" ? "true" : ""), mono: true },
+      { name: "index", label: "Argument index (arg)", value: "0", type: "number" },
+      { name: "slider", label: "Slider min max default (multiply)", value: preset.slider ? preset.slider.join(" ") : "1 20 1", mono: true },
+    ];
+    this.dialog("Hook a method", fields, async v => {
+      if (!v.to && !this.validKey(v.key)) { this.toast("key: letters, digits, underscores", "bad"); return false; }
+      if (!v.to && !v.title) { this.toast("a title is needed", "bad"); return false; }
+      const body = { method: m.full_name, args: m.args, action: v.action };
+      if (v.to) body.to = v.to; else { body.key = v.key; body.title = v.title; }
+      if (v.value && (v.action === "return" || v.action === "arg" || v.action === "multiply")) body.value = v.value;
+      if (v.action === "arg") body.index = Number(v.index);
+      if (v.action === "multiply" && !v.to && !v.value) body.slider = v.slider.split(/\s+/).map(Number);
+      return this.quick("add", body);
+    });
+  },
+  pinDialog(preset) {
+    preset = preset || {};
+    const toOpts = [["", "a new switch"], ...this.keys().map(k => [k, "add to " + k])];
+    const fields = [
+      { type: "note", text: "A pin runs every half second on the live object(s): write a field or call a setter. Works without JIT." },
+      { name: "target", label: "Target", help: "Class.field or Class.set_Property", value: preset.target || "", mono: true },
+      { name: "object", label: "Object", help: "blank = the class's instance field; or Class, or Class[] for every live object", value: preset.object || "", mono: true },
+      ...(preset.path !== undefined ? [{type:"note", text:"Object path: " + preset.root_class + " → " + preset.path.map(s => (s.field || s.getter || s.class) + (s.each ? " [" + s.each + "]" : "")).join(" → ")}] : []),
+      { name: "value", label: "Value", help: "number, true/false, peak, getter:get_X, field:Y, slider", value: preset.value || "", mono: true },
+      { name: "when", label: "When", type: "select", options: [["always", "always"], ["lower", "only when the current value is lower"], ["higher", "only when higher"]], value: preset.when || "always" },
+      { name: "threshold", label: "Threshold (with when)", value: "", type: "number" },
+      { name: "via", label: "Via getter (optional)", help: "a 0-arg getter on the object that returns the real target", value: preset.via || "", mono: true },
+      { name: "class", label: "Target class (optional)", help: "when the field belongs to a parent class or the via result", value: preset.target_class || "", mono: true },
+      { name: "multiply", label: "Multiply (field = base × value, slider)", type: "check" },
+      { name: "to", label: "Switch", type: "select", options: toOpts, value: preset.to || "" },
+      { name: "title", label: "Menu title (new switch)", value: preset.title || "" },
+      { name: "key", label: "Key (new switch)", value: preset.target ? this.keyFrom(preset.target) : "", mono: true },
+      { name: "slider", label: "Slider min max default (value = slider)", value: "1 20 1", mono: true },
+    ];
+    this.dialog("Add a pin (no JIT)", fields, async v => {
+      if (!v.target.includes(".")) { this.toast("target is Class.field or Class.set_X", "bad"); return false; }
+      if (!v.to && !this.validKey(v.key)) { this.toast("key: letters, digits, underscores", "bad"); return false; }
+      const body = { target: v.target, value: v.value || undefined, when: v.when };
+      if (preset.path !== undefined) { body.path = preset.path; body.root_class = preset.root_class; }
+      if (v.object) body.object = v.object; if (v.threshold) body.threshold = Number(v.threshold); if (v.via) body.via = v.via; if (v.class) body.class = v.class; if (v.multiply) body.multiply = true;
+      if (v.to) body.to = v.to; else { body.key = v.key; body.title = v.title || v.target; }
+      if (v.value === "slider") body.slider = v.slider.split(/\s+/).map(Number);
+      return this.quick("pin", body);
+    });
+  },
+  callDialog(m, preset) {
+    preset = preset || {};
+    const toOpts = [["", "a new switch"], ...this.keys().map(k => [k, "add to " + k])];
+    this.dialog("Call a method every N seconds (no JIT)", [
+      { type: "note", text: `${m.full_name}(${m.params.join(", ")})` },
+      { name: "args", label: "Arguments", help: "numbers / true / false, space-separated", value: m.params.map(p => (p.split("=")[1] || "0").trim()).join(" "), mono: true },
+      { name: "every", label: "Every (seconds)", type: "number", value: "10" },
+      { name: "object", label: "Object", help: "blank = the class's instance field", value: preset.object || "", mono: true },
+      { name: "to", label: "Switch", type: "select", options: toOpts, value: preset.to || "" },
+      { name: "title", label: "Menu title (new switch)", value: preset.title || `${m.method} every 10 s` },
+      { name: "key", label: "Key (new switch)", value: this.keyFrom(m.full_name), mono: true },
+    ], async v => {
+      if (!v.to && !this.validKey(v.key)) { this.toast("key: letters, digits, underscores", "bad"); return false; }
+      const body = { target: m.full_name, args: v.args ? v.args.split(/\s+/) : [], every: Number(v.every) };
+      if (v.object) body.object = v.object; if (v.to) body.to = v.to; else { body.key = v.key; body.title = v.title; }
+      return this.quick("call", body);
+    });
+  },
+  plainSwitchDialog() {
+    this.dialog("A switch or slider with no hook", [
+      { type: "note", text: "Read it in Tweak.x as am_<key> (BOOL, or float for a slider)." },
+      { name: "title", label: "Menu title", value: "" },
+      { name: "key", label: "Key", value: "", mono: true },
+      { name: "slider", label: "Slider min max default (blank = switch)", value: "", mono: true },
+    ], async v => {
+      if (!this.validKey(v.key) || !v.title) { this.toast("key and title are needed", "bad"); return false; }
+      const body = { key: v.key, title: v.title }; if (v.slider) body.slider = v.slider.split(/\s+/).map(Number);
+      return this.quick("tweak", body);
+    });
+  },
+
+  // ---------------------------------------------------------------- find
+  renderFind() {
+    const box = this.byId("tab-find");
+    if (box.dataset.mod === this.mod && box.childElementCount) { this.renderFindRows(); return; }
+    box.dataset.mod = this.mod; box.replaceChildren();
+    if (!this.detail.dump) { box.append(this.needDump()); return; }
+    const q = this.el("input", { class: "grow mono", placeholder: "regex on Class.method, e.g. Damage|Health", value: localStorage.getItem("studio.q." + this.mod) || "" });
+    const cls = this.el("input", { class: "mono", placeholder: "class (every method, or its fields)", style: "width:230px" });
+    const limit = this.el("input", { type: "number", value: "60", style: "width:80px", title: "limit" });
+    const search = async (mode) => {
+      try {
+        localStorage.setItem("studio.q." + this.mod, q.value);
+        if (mode === "fieldsearch") { const r = await this.api(`/api/mods/${this.mod}/fieldsearch?q=${encodeURIComponent(q.value || ".")}&limit=${Number(limit.value) || 60}`); this.findFields = null; this.findRows = []; this.fieldHits = r; this.renderFindRows(); return; }
+        this.fieldHits = null;
+        if (mode === "fields") { const r = await this.api(`/api/mods/${this.mod}/fields?class=${encodeURIComponent(cls.value.trim())}`); this.findFields = r.fields; this.findRows = []; this.findClass = cls.value.trim(); }
+        else { const url = cls.value.trim() && mode === "class" ? `class=${encodeURIComponent(cls.value.trim())}` : `q=${encodeURIComponent(q.value || ".")}`; const r = await this.api(`/api/mods/${this.mod}/find?${url}&limit=${Number(limit.value) || 60}`); this.findRows = r.methods; this.findCount = r.count; this.findFields = null; }
+        this.renderFindRows();
+      } catch (e) { this.toast(e.message, "bad"); }
+    };
+    q.addEventListener("keydown", ev => { if (ev.key === "Enter") search("q"); });
+    cls.addEventListener("keydown", ev => { if (ev.key === "Enter") search("class"); });
+    box.append(this.el("div", { class: "row" }, q, this.el("button", { class: "primary", onclick: () => search("q") }, "Search methods"), limit),
+      this.el("div", { class: "row", style: "margin-top:8px" }, cls, this.el("button", { onclick: () => search("class") }, "Methods of class"), this.el("button", { onclick: () => search("fields") }, "Fields of class"),
+        this.el("button", { title: "the search above, on field names of every class: which class holds a value (Currency, HealthPoints…)", onclick: () => search("fieldsearch") }, "Search all fields")),
+      this.el("p", { class: "hint", text: "Hook… registers a hook (catches calls only with JIT unless the method is virtual or a Unity callback). Pin… writes a field or calls a set_ method on the live objects every half second: works on any phone." }),
+      this.el("div", { id: "findOut" }));
+    if (q.value) search("q");
+  },
+  needDump() {
+    return this.el("div", { class: "item" }, this.el("p", { text: "No dump of the game yet. The dump reads the game's code names (Il2CppDumper) and takes under a minute." }),
+      this.el("button", { class: "primary", onclick: () => this.job("dump", []) }, "Dump the game"));
+  },
+  renderFindRows() {
+    const out = this.byId("findOut"); if (!out) return; out.replaceChildren();
+    if (this.fieldHits) {
+      const r = this.fieldHits;
+      out.append(this.el("p", { class: "hint", text: `${r.count} fields${r.count > r.fields.length ? " (showing " + r.fields.length + ")" : ""}` }));
+      const tb = this.el("tbody");
+      for (const f of r.fields) tb.append(this.el("tr", {}, this.el("td", { class: "mono", text: `${f.class}.${f.name}` }), this.el("td", { class: "mono muted", text: (f.static ? "static " : "") + f.type }),
+        this.el("td", {}, this.el("button", { class: "small", onclick: () => { this.findClass = f.class; this.api(`/api/mods/${this.mod}/fields?class=${encodeURIComponent(f.class)}`).then(x => { this.fieldHits = null; this.findFields = x.fields; this.renderFindRows(); }).catch(e => this.toast(e.message, "bad")); } }, "Fields of its class"))));
+      out.append(this.el("table", {}, this.el("thead", {}, this.el("tr", {}, ["field", "type", ""].map(h => this.el("th", { text: h })))), tb));
+      return;
+    }
+    if (this.findFields) {
+      out.append(this.el("p", { class: "hint", text: `${this.findFields.length} fields of ${this.findClass} (offsets are read by name at run time; you never copy them)` }));
+      const tb = this.el("tbody");
+      for (const f of this.findFields) tb.append(this.el("tr", {}, this.el("td", { class: "mono", text: this.hex(f.offset) }), this.el("td", { text: f.static ? "static" : "" }), this.el("td", { class: "mono", text: f.type }), this.el("td", { class: "mono", text: f.name }),
+        this.el("td", {}, f.static ? "" : this.el("button", { class: "small", onclick: () => this.pinDialog({ target: `${this.findClass}.${f.name}`, title: `${this.findClass} ${f.name}` }) }, "Pin…"))));
+      out.append(this.el("table", {}, this.el("thead", {}, this.el("tr", {}, ["offset", "", "type", "name", ""].map(h => this.el("th", { text: h })))), tb));
+      return;
+    }
+    if (!this.findRows.length) { out.append(this.el("p", { class: "hint", text: "No methods match." })); return; }
+    out.append(this.el("p", { class: "hint", text: `${this.findCount} methods${this.findCount > this.findRows.length ? " (showing " + this.findRows.length + ")" : ""}` }));
+    const tb = this.el("tbody");
+    for (const m of this.findRows) {
+      const canPin = !m.ambiguous && /^set_/.test(m.method) && m.args === 1;
+      tb.append(this.el("tr", {},
+        this.el("td", {}, this.el("span", { class: "mono", text: m.full_name }), this.el("br"), this.el("span", { class: "muted small mono", text: `(${m.params.join(", ")}) → ${m.static ? "static " : ""}${m.return_type}` })),
+        this.el("td", {}, m.needs_jit ? this.el("span", { class: "badge warn", text: "JIT", title: "Direct interception needs JIT; check available data alternatives" }) : this.el("span", { class: "badge", text: m.slot !== null ? "virtual candidate" : "callback candidate", title: "Pointer hooks may catch virtual/Unity dispatch without JIT; direct calls can bypass them" })),
+        this.el("td", { class: "mono muted small", text: m.rva }),
+        this.el("td", {}, this.el("div", { class: "row" },
+          !m.ambiguous ? this.el("button", { class: "small", onclick: () => this.hookDialog(m) }, "Hook…") : this.el("span", {class:"badge warn", text:"ambiguous overload"}),
+          (m.nojit_alternatives || []).map(a=>this.el("button", {class:"small", title:a.evidence, onclick:()=>this.pinDialog({target:`${a.class}.${a.member}`, ...a, title:a.name})}, "No-JIT alternative…")),
+          m.nojit_call ? this.el("button", {class:"small", title:m.nojit_call.evidence, onclick:()=>this.callDialog(m, m.nojit_call)}, "Call without JIT…") : null,
+          canPin ? this.el("button", { class: "small", onclick: () => this.pinDialog({ target: m.full_name, title: `${m.class} ${m.method.slice(4)}` }) }, "Pin…") : null,
+          !m.ambiguous ? this.el("button", { class: "small", onclick: () => this.callDialog(m) }, "Call…") : null,
+          this.el("button", { class: "small", onclick: () => { this.findClass = m.class; this.api(`/api/mods/${this.mod}/fields?class=${encodeURIComponent(m.class)}`).then(r => { this.findFields = r.fields; this.renderFindRows(); }).catch(e => this.toast(e.message, "bad")); } }, "Fields")))));
+    }
+    out.append(this.el("table", {}, this.el("thead", {}, this.el("tr", {}, ["method", "without JIT", "RVA", ""].map(h => this.el("th", { text: h })))), tb));
+  },
+
+  // ---------------------------------------------------------------- suggest
+  async renderSuggest() {
+    const box = this.byId("tab-suggest"); box.replaceChildren();
+    if (!this.detail.dump) { box.append(this.needDump()); return; }
+    box.append(this.el("p", { class: "hint", text: "Loading…" }));
+    try {
+      const r = await this.api(`/api/mods/${this.mod}/suggest?limit=40`);
+      box.replaceChildren(this.el("p", { class: "hint", text: `${r.learned} learned patterns from earlier mods (every hook you add and every phone result feeds them). Methods of this game that match, best first:` }));
+      if (!r.rows.length) { box.append(this.el("p", { text: r.learned ? "No method of this game matches a learned pattern. Use Find." : "Nothing learned yet: add switches, or import a mod's hooks.json with `am learn <mod>`." })); return; }
+      const tb = this.el("tbody");
+      for (const row of r.rows) {
+        const m = row.method;
+        const add = () => {
+          if (row.action === "pin") this.pinDialog({ target: m.full_name, title: row.title });
+          else if (row.action === "call") this.callDialog(m, { title: row.title });
+          else this.hookDialog(m, { title: row.title, action: row.action, value: row.value, slider: row.slider });
+        };
+        tb.append(this.el("tr", {},
+          this.el("td", { text: row.score }),
+          this.el("td", {}, this.el("span", { class: "mono", text: m.full_name }), this.el("br"), this.el("span", { class: "muted small mono", text: `(${m.params.join(", ")}) → ${m.return_type}` })),
+          this.el("td", {}, this.el("span", { class: "badge " + (row.exact ? "good" : ""), text: row.exact ? "same name" : "similar" }), this.el("div", { class: "small muted", text: row.pattern }), this.el("div", { class: "small", text: "“" + row.title + "”" })),
+          this.el("td", {}, this.el("button", { class: "small primary", onclick: add }, "Add…"))));
+      }
+      box.append(this.el("table", {}, this.el("thead", {}, this.el("tr", {}, ["score", "method", "learned", ""].map(h => this.el("th", { text: h })))), tb));
+    } catch (e) { box.replaceChildren(this.el("p", { class: "hint", text: e.message })); }
+  },
+
+  // ---------------------------------------------------------------- build & phone
+  renderPhone() {
+    const d = this.detail, box = this.byId("tab-phone");
+    if (box.dataset.mod !== this.mod || !box.childElementCount) {
+      box.dataset.mod = this.mod; box.replaceChildren();
+      const bump = this.el("input", { type: "checkbox", id: "bump" });
+      const hooks = this.el("input", { type: "checkbox", id: "hooks" }); hooks.checked = true;
+      const launch = this.el("input", { type: "checkbox", id: "launch" }); launch.checked = true;
+      const secs = this.el("input", { type: "number", value: "75", style: "width:80px", id: "secs" });
+      const extra = () => [...(bump.checked ? ["--bump"] : []), ...(hooks.checked ? [] : ["--no-hooks"])];
+      const btn = (text, cmd, args, cls) => this.el("button", { class: cls || "", onclick: () => this.job(cmd, typeof args === "function" ? args() : args) }, text);
+      box.append(
+        this.el("div", { class: "sec" }, this.el("h3", { text: "Game" }), this.el("div", { class: "row" }, btn("Dump", "dump", []), btn("Dump again", "dump", ["--force"]), btn("Check hooks against the dump", "check", []))),
+        this.el("div", { class: "sec" }, this.el("h3", { text: "Build" }), this.el("div", { class: "row" }, btn("Build .dylib", "build", extra), btn("Build .ipa", "build", () => ["--ipa", ...extra()]), this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center" }, bump, "bump the mod version"),
+            this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center", title: "unchecked: hook nothing in the game (no method hooks, no sideload compatibility); the menu and pins still work" }, hooks, "with hooks")),
+          this.el("p", { class: "hint", id: "buildInfo" })),
+        this.el("div", { class: "sec" }, this.el("h3", { text: "Phone (USB)" }), this.el("div", { class: "row" },
+          btn("Sign + install last .ipa", "sign", () => [d.last_ipa, "--install"], "primary"),
+          btn("Run: build, sign, install, open, log", "run", () => [...extra(), "--seconds", String(Number(secs.value) || 75)], "primary"),
+          btn("Log", "log", () => ["--seconds", String(Number(secs.value) || 60), ...(launch.checked ? ["--launch"] : [])]),
+          this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center" }, launch, "open the app first"), this.el("span", { class: "muted small", text: "seconds" }), secs),
+          this.el("p", { class: "hint", text: "Signs with your certificate (zsign in WSL), keeping the game's own app ID, so logins tied to it keep working; push, Sign in with Apple and JIT hooks don't work this way. For JIT, sign with the Apple ID: am sign <ipa> --install --apple-id (its first sign-in asks for a 2FA code in the answer box under the job)." })),
+        this.el("div", { class: "sec", id: "updateSec" }));
+    }
+    this.byId("buildInfo").textContent = (d.last_dylib ? "Last dylib: " + d.last_dylib : "No build yet") + (d.last_ipa ? "   ·   Last ipa: " + d.last_ipa : "");
+    box.querySelectorAll("button").forEach(b => { if (b.textContent.startsWith("Sign + install")) b.disabled = !d.last_ipa; });
+    const up = this.byId("updateSec"); up.replaceChildren(this.el("h3", { text: "Newer game version" }));
+    if (d.newer_bases.length) for (const b of d.newer_bases) up.append(this.el("div", { class: "row", style: "margin-bottom:6px" }, this.el("span", { class: "mono small grow", text: `${b.version}  ${b.path}` }), this.el("button", { class: "small", onclick: () => this.job("update", [b.path]) }, "Update to it"), this.el("button", { class: "small ghost", title: "dumps it (once, cached) and lists which hooks, pins and works marks stay, change or need a retest; changes nothing", onclick: () => this.job("update", [b.path, "--dry-run"]) }, "Preview")));
+    else up.append(this.el("p", { class: "hint", text: `No copy of ${d.target} newer than ${d.app_version} in intake/ or Downloads. Drop one there and this offers the update (re-dump, hooks checked, mod.json refreshed).` }));
+    up.append(this.el("div", { class: "row" }, this.el("button", { class: "small", onclick: () => this.job("fetch", ["--mod", this.mod]) }, "Get the newest from the decrypt site"), this.el("span", { class: "muted small", text: "then reload: it shows up above" })));
+  },
+  async job(command, args, mod) {
+    try {
+      const body = { command, args: (args || []).filter(a => a !== null && a !== undefined) };
+      if (!["new", "fetch", "start", "report"].includes(command)) body.mod = mod || this.mod;
+      const j = await this.api("/api/jobs", body);
+      this.showJob(j);
+      this.poll(j.id);
+      this.openJobs();
+    } catch (e) { this.toast(e.message, "bad"); }
+  },
+  showJob(j) {
+    const jobs = this.byId("jobs"); if (!jobs) return;
+    let det = this.byId("job-" + j.id);
+    if (!det) {
+      det = this.el("details", { class: "job", id: "job-" + j.id, open: "" },
+        this.el("summary", {}, this.el("span", { class: "mono", text: `${j.command} ${j.args.join(" ")}` }), " ", this.el("span", { class: "badge", id: "jobst-" + j.id, text: j.status }), " ", this.el("button", { class: "small", onclick: ev => { ev.preventDefault(); this.api(`/api/jobs/${j.id}/stop`, {}).catch(() => {}); } }, "Stop")),
+        this.el("div", { class: "console", id: "jobout-" + j.id }),
+        j.interactive ? this.el("form", { class: "answer", id: "jobans-" + j.id, onsubmit: ev => {
+          ev.preventDefault(); const i = ev.target.querySelector("input"); const text = i.value; i.value = "";
+          this.api(`/api/jobs/${j.id}/input`, { text }).catch(e => this.toast(e.message, "bad"));
+        } }, this.el("input", { placeholder: "answer a question from this command (a number, a 2FA code…), Enter sends" }), this.el("button", { class: "small", type: "submit" }, "Send")) : null);
+      jobs.prepend(det);
+    }
+    const ans = this.byId("jobans-" + j.id); if (ans && !["queued", "running"].includes(j.status)) ans.remove();
+    const st = this.byId("jobst-" + j.id); st.textContent = j.status; st.className = "badge " + (j.status === "done" ? "good" : ["queued", "running"].includes(j.status) ? "accent" : "bad");
+    const out = this.byId("jobout-" + j.id);
+    if (j.lines && j.lines.length) { out.textContent += (out.textContent ? "\n" : "") + j.lines.join("\n"); out.scrollTop = out.scrollHeight; }
+    this.drawJobChips();
+    if (j.command === "autobuild") this.autobuildProgress(j, det, out.textContent);
+    if (j.command === "store") this.stepProgress(j, det, out.textContent);
+    if (["claude", "claude-api", "aider", "codex", "gemini"].includes(j.command) && j.status !== "running" && !this.byId("jobcmds-" + j.id)) {
+      const text = (this.byId("jobout-" + j.id) || {}).textContent || "";
+      const cmds = [...new Set(text.split("\n").map(l => l.trim().replace(/^[`$>\s]+|`+$/g, "")).filter(l => /^am (pin|call|add|tweak|remove|gen|mark|build|update|new|dump|check|scan|find|fields) \S+/.test(l)))];
+      if (cmds.length) {
+        const list = this.el("div", { id: "jobcmds-" + j.id, class: "sec", style: "margin-top:8px" }, this.el("h3", { text: `${cmds.length} commands from ${this.engineShort(j.command)}` }));
+        for (const c of cmds) {
+          const btn = this.el("button", { class: "small primary" }, /^am (pin|call|add|tweak) /.test(c) ? "Add" : "Run");
+          btn.onclick = async () => { btn.disabled = true; try { const r = await this.api("/api/console", { line: c }); this.showJob(r); this.poll(r.id); btn.textContent = "Started"; } catch (e) { btn.disabled = false; this.toast(e.message, "bad"); } };
+          list.append(this.el("div", { class: "row", style: "margin-bottom:6px" }, this.el("span", { class: "mono small grow", text: c }), btn));
+        }
+        if ((j.command === "aider" || j.command === "gemini") && cmds.some(c => /^am (find|fields) /.test(c))) {
+          const who = this.engineShort(j.command);
+          const again = this.el("button", { class: "small primary", title: `Studio runs ${who}'s am find / am fields searches on the dump and gives ${who} the results with its prompt` }, `Run the searches and ask ${who} again`);
+          again.onclick = async () => { again.disabled = true; try { const r = await this.api(`/api/jobs/${j.id}/followup`, { mod: this.mod || "" }); this.showJob(r); this.poll(r.id); again.textContent = "Asked again"; } catch (e) { again.disabled = false; this.toast(e.message, "bad"); } };
+          list.append(this.el("div", { class: "row", style: "margin-top:4px" }, again));
+        }
+        this.byId("job-" + j.id).append(list);
+      }
+    }
+  },
+  // a job's step from its "==> n/N what" lines (publishing from the AccretionWeb tab)
+  stepProgress(j, det, text) {
+    let label = "Starting", pct = 0;
+    for (const line of text.split("\n")) {
+      const m = line.match(/^==> (\d+)\/(\d+) (.*)/);
+      if (m) { pct = 100 * (m[1] - 1) / m[2]; label = `Step ${m[1]} of ${m[2]} · ${m[3]}`; }
+      else if (/^==> done/.test(line)) { pct = 100; label = line.slice(4); }
+    }
+    const running = ["queued", "running", "stopping"].includes(j.status);
+    if (j.status === "done") pct = 100;
+    let box = this.byId("jobprog-" + j.id);
+    if (!box) {
+      box = this.el("div", { class: "jobprog", id: "jobprog-" + j.id }, this.el("div", { class: "jobprog-t" }), this.el("div", { class: "jobprog-bar" }, this.el("i")));
+      det.querySelector("summary").after(box);
+    }
+    box.firstChild.textContent = running ? `${label} · ${Math.round(pct)}%` : j.status === "done" ? label : `Stopped (${j.status}) · ${label}`;
+    box.lastChild.firstChild.style.width = Math.round(pct) + "%";
+    box.classList.toggle("bad", !running && j.status !== "done");
+    box.classList.toggle("going", running);
+  },
+  // the auto-build's step from its own output lines: "==> n/5", "--- batch k/N", "--- switch i/N", "$ am <step>"
+  autobuildProgress(j, det, text) {
+    const steps = ["Scanning the dump", "The model reads the candidates", "Adding the switches", "Generating and building", "Installing and watching the log"];
+    let step = 0, pct = 0, detail = "";
+    for (const line of text.split("\n")) {
+      let m;
+      if ((m = line.match(/^==> (\d)\/5/))) { step = +m[1]; pct = [0, 2, 5, 60, 75, 90][step]; detail = ""; }
+      else if ((m = line.match(/^--- batch (\d+)\/(\d+) done/))) { pct = 5 + 55 * m[1] / m[2]; detail = `${m[1]} of ${m[2]} batches answered`; }
+      else if ((m = line.match(/^--- batch (\d+)\/(\d+)/))) { pct = 5 + 55 * (m[1] - 1) / m[2]; detail = `batch ${m[1]} of ${m[2]}`; }
+      else if ((m = line.match(/^--- switch (\d+)\/(\d+)/))) { pct = 60 + 15 * (m[1] - 1) / m[2]; detail = `switch ${m[1]} of ${m[2]}`; }
+      else if (/^\$ am gen /.test(line)) { pct = 76; detail = "generating the menu"; }
+      else if (/^\$ am build /.test(line)) { pct = 78; detail = "building the .ipa"; }
+      else if (/^\$ am sign /.test(line)) { pct = 91; detail = "signing and installing"; }
+      else if (/^\$ am log /.test(line)) { pct = 94; detail = "game opened, reading the log (45 s)"; }
+      else if (/^==> (done|built but)/.test(line)) { pct = 100; detail = ""; }
+    }
+    const running = ["queued", "running", "stopping"].includes(j.status);
+    if (j.status === "done") pct = 100;
+    let box = this.byId("jobprog-" + j.id);
+    if (!box) {
+      box = this.el("div", { class: "jobprog", id: "jobprog-" + j.id }, this.el("div", { class: "jobprog-t" }), this.el("div", { class: "jobprog-bar" }, this.el("i")));
+      det.querySelector("summary").after(box);
+    }
+    const label = !running ? (j.status === "done" ? "Finished" : `Stopped at step ${step || 1} of 5 (${j.status})`)
+      : step ? `Step ${step} of 5 · ${steps[step - 1]}${detail ? " · " + detail : ""}` : "Starting";
+    const secs = Math.max(0, Math.round((j.ended || j.finished || Date.now() / 1000) - j.started));
+    box.firstChild.textContent = `${label} · ${Math.round(pct)}% · ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
+    box.lastChild.firstChild.style.width = Math.round(pct) + "%";
+    box.classList.toggle("bad", !running && j.status !== "done");
+    box.classList.toggle("going", running);
+  },
+  poll(id, since) {
+    since = since || 0;
+    this.api(`/api/jobs/${id}?since=${since}`).then(j => {
+      this.showJob(j);
+      if (["queued", "running", "stopping"].includes(j.status)) setTimeout(() => this.poll(id, j.next), 1000);
+      else {
+        this.toast(`${j.command}: ${j.status}`, j.status === "done" ? "ok" : "bad");
+        const made = j.command === "start" && j.status === "done" ? ((this.byId("jobout-" + j.id) || {}).textContent || "").match(/making mods\/([a-z0-9-]+)/) : null;
+        this.loadMods().then(async () => { if (made) { await this.select(made[1]); this.setTab("scan"); } else if (this.mod) this.refresh(); });
+      }
+    }).catch(e => this.toast(e.message, "bad"));
+  },
+
+  // ---------------------------------------------------------------- files
+  async snapshotDialog() {
+    try {
+      const data = await this.api(`/api/mods/${this.mod}/snapshots`);
+      if (!data.snapshots.length) { this.toast("No configuration snapshots yet", "ok"); return; }
+      this.dialog("Configuration snapshots", [{name:"id", label:"Snapshot", type:"select",
+        options:data.snapshots.map(s=>[s.id, `${s.created_at} · ${s.label}`])}], async v=>{
+          setTimeout(()=>this.previewSnapshot(v.id), 0); return true;
+        }, "Preview restore");
+    } catch(e) { this.toast(e.message, "bad"); }
+  },
+  async previewSnapshot(id) {
+    try {
+      const preview = await this.api(`/api/mods/${this.mod}/snapshot`, {action:"preview", id});
+      const changes = preview.files.filter(f=>f.changed);
+      if (!changes.length) { this.toast("This snapshot matches the current configuration", "ok"); return; }
+      this.dialog("Review configuration restore", [
+        {type:"note", text:"A recovery snapshot of the current configuration is saved before restoring. Game saves and installed apps are not changed."},
+        ...changes.map(f=>({type:"code", text:f.name + "\n" + (f.diff || (f.after_present ? "File will be created" : "File will be removed"))})),
+      ], async ()=>{
+        try {
+          await this.api(`/api/mods/${this.mod}/snapshot`, {action:"restore",id,expected:preview.expected});
+          this.byId("tab-scan").dataset.mod = ""; await this.refresh(); this.toast("Configuration restored; recovery snapshot saved", "ok"); return true;
+        } catch(e) { this.toast(e.message, "bad"); return false; }
+      }, "Restore configuration");
+    } catch(e) { this.toast(e.message,"bad"); }
+  },
+  renderFiles() {
+    const d = this.detail, box = this.byId("tab-files"); box.replaceChildren();
+    box.append(this.el("div", {class:"row"},
+      this.el("button", {onclick:async()=>{try{await this.api(`/api/mods/${this.mod}/snapshot`,{action:"create"});this.toast("Snapshot saved","ok");}catch(e){this.toast(e.message,"bad");}}}, "Save configuration snapshot"),
+      this.el("button", {onclick:()=>this.snapshotDialog()}, "Preview / restore configuration")));
+    const pre = (title, text) => this.el("div", { class: "sec" }, this.el("h3", {}, title, this.el("button", { class: "small copy", onclick: () => navigator.clipboard.writeText(text).then(() => this.toast("copied", "ok")) }, "Copy")), this.el("pre", { text }));
+    box.append(this.el("div", { class: "sec" }, this.el("h3", { text: "Paths" }), this.el("pre", { text: [`mod:        mods/${d.name}`, `base .ipa:  ${d.base_ipa || "(not remembered; dump finds it by bundle ID in intake/ and Downloads)"}`, `dump:       ${d.dump ? "present" : "none"}`, `last dylib: ${d.last_dylib || "-"}`, `last ipa:   ${d.last_ipa || "-"}`].join("\n") })),
+      pre("tweaks.json", d.tweaks_json ? JSON.stringify(d.tweaks_json, null, 2) : "(none)"),
+      pre("hooks.json", JSON.stringify({ engine: "unity-il2cpp", hooks: d.hooks_json }, null, 2)));
+  },
+
+  // ---------------------------------------------------------------- scan (no-JIT candidates in the dump)
+  scanActions(x) {
+    const pin = target => this.pinDialog({ target: `${target.class}.${target.member}`, object: target.object, value: target.value,
+      when: target.when, via: target.via, root_class: target.root_class, path: target.path, target_class: target.target_class || (target.path !== undefined ? target.class : undefined), title: target.name.replace(/^set_/, "").replace(/([a-z0-9])([A-Z])/g, "$1 $2") });
+    const inspect = () => this.dialog(`${x.class}.${x.member}`, [
+      {type:"note", text:x.signature || `${x.ctype} ${x.member}`},
+      {type:"note", text: x.explanation || "Identify an object path before changing this field."},
+      {type:"note", text:`Assembly: ${x.assembly || "game code"}`},
+    ], async () => true, "Close");
+    return this.el("div", {class:"row"},
+      !x.has && !x.inspect_only ? this.el("button", {class:"small", onclick:()=>pin(x)}, "Add…") : null,
+      !x.has && x.method && !x.ambiguous ? this.el("button", {class:"small", onclick:()=>this.hookDialog(x.method)}, "Hook…") : null,
+      (x.nojit_alternatives || []).map(a=>this.el("button", {class:"small", title:a.evidence + "; candidate until phone-tested", onclick:()=>pin(a)}, "No-JIT alternative…")),
+      x.nojit_call ? this.el("button", {class:"small", title:x.nojit_call.evidence, onclick:()=>this.callDialog(x.method, x.nojit_call)}, "Call without JIT…") : null,
+      x.inspect_only ? this.el("button", {class:"small", onclick:inspect}, "Inspect…") : null);
+  },
+  renderScan() {
+    const box = this.byId("tab-scan");
+    if (box.dataset.mod === this.mod && box.childElementCount) return;
+    box.dataset.mod = this.mod; box.replaceChildren();
+    const area = this.el("select", {}, [["", "All areas"], ["In-app purchases", "In-app purchases"], ["Survival", "Survival"], ["Combat", "Combat"], ["Pet", "Pet & companion"], ["Items", "Items & crafting"], ["Progress", "Progress"], ["Exploration", "Exploration"], ["Other", "Other"]].map(o => this.el("option", { value: o[0], text: o[1] })));
+    const find = this.el("input", { placeholder: "filter: regex on Class.member", class: "mono", style: "flex:1;min-width:180px" });
+    const mode = this.el("select", {}, [["all", "All actions"], ["no-jit", "No JIT paths"], ["pin", "Pin"], ["hook", "Hook"], ["investigate", "Needs investigation"]].map(o => this.el("option", {value:o[0], text:o[1]})));
+    const verified = this.el("select", {}, [["all", "All test results"], ["works", "Verified on this version"], ["fails", "Failed"], ["stale", "Needs retest"], ["untested", "Untested"]].map(o => this.el("option", {value:o[0], text:o[1]})));
+    const flagged = this.el("input", { type: "checkbox" });
+    const hideHas = this.el("input", { type: "checkbox" }); hideHas.checked = true;
+    const note = this.el("p", { class: "hint" });
+    const table = this.el("div", {});
+    let offset = 0, loadedCount = 0, request = 0;
+    const more = this.el("button", { class: "small", text: "Show next 300", hidden: true, onclick: () => load(false) });
+    const nice = name => name.replace(/^set_/, "").replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/_/g, " ");
+    const load = async (reset = true) => {
+      const ticket = ++request;
+      if (reset !== false) { offset = 0; loadedCount = 0; table.replaceChildren(); }
+      note.textContent = "Scanning the dump…";
+      more.hidden = true;
+      try {
+        const r = await this.api(`/api/mods/${this.mod}/scan?limit=300&offset=${offset}&area=${encodeURIComponent(area.value)}&find=${encodeURIComponent(find.value.trim())}&mode=${mode.value}&verified=${verified.value}&hide_has=${hideHas.checked ? 1 : 0}${flagged.checked ? "&flagged=1" : ""}`);
+        if (ticket !== request) return;
+        const rows = r.rows.filter(x => !hideHas.checked || !x.has);
+        loadedCount += rows.length; offset = r.next_offset;
+        note.textContent = `${r.matched ?? r.total} mod targets; showing ${loadedCount}. Add creates a pin; Hook targets a concrete method. Fields without an automatic object path need investigation. Generated helpers and metadata are hidden.`;
+        more.hidden = !r.has_more;
+        const existingBody = table.querySelector("tbody");
+        const tb = existingBody || this.el("tbody");
+        for (const x of rows) {
+          const tag = x.has ? this.el("span", { class: "badge good", text: "in the mod" }) : this.el("span", { class: "badge accent", style: "white-space:nowrap", text: x.method ? (x.method.needs_jit ? "hook · JIT" : "pointer hook candidate") : x.inspect_only ? "needs object" : "score " + x.score });
+          const add = this.scanActions(x);
+          const variants = x.variants && x.variants.length > 1 ? this.el("details", {},
+            this.el("summary", {class:"small muted", text:`${x.variants.length} related targets / signatures`}),
+            x.variants.map(v=>this.el("div", {class:"sec"}, this.el("code", {text:v.signature || `${v.ctype} ${v.member}`}), this.scanActions(v)))) : null;
+          tb.append(this.el("tr", {},
+            this.el("td", { text: x.area }),
+            this.el("td", {}, this.el("span", { class: "mono", text: `${x.object} ${x.member}` }), this.el("br"), this.el("span", { class: "muted small", text: `${x.ctype} ${x.kind}${x.offset ? " at " + x.offset : ""}${x.value ? " · suggested " + x.value + (x.when !== "always" ? " when " + x.when : "") : ""}` }), variants),
+            this.el("td", { style: "min-width:150px" }, this.el("div", { class: "badges", style: "margin:0" }, tag,
+              x.flag ? this.el("span", { class: "badge", text: x.flag }) : null,
+              this.el("span", {class:"badge " + (x.verification && x.verification.state === "works" ? "good" : ""),
+                text: !x.verification || x.verification.state === "untested" ? "untested" : x.verification.state === "stale" ? "needs retest" : x.verification.state,
+                title:JSON.stringify(x.verification || {})}),
+              x.learned ? this.el("span", { class: "badge good", title: `${x.learned.works} works, ${x.learned.fails} fails, ${x.learned.reached} reached in other games`, text: `like “${x.learned.title}”` }) : null,
+              x.direction === "lower" ? this.el("span", { class: "badge", text: "lower is better" }) : null,
+              x.saved ? this.el("span", { class: "badge warn", title: "the game keeps this in its save: switching off restores it", text: "kept in the save" }) : null)),
+            this.el("td", {}, add)));
+        }
+        if (!existingBody) table.replaceChildren(rows.length ? this.el("table", {}, this.el("thead", {}, this.el("tr", {}, ["area", "target", "", ""].map(h => this.el("th", { text: h })))), tb) : this.el("p", { class: "hint", text: "Nothing matches." }));
+      } catch (e) { note.textContent = e.message; }
+    };
+    const explain = async () => {
+      try {
+        const t = await this.api(`/api/mods/${this.mod}/scan?text=1&limit=60&area=${encodeURIComponent(area.value)}&find=${encodeURIComponent(find.value.trim())}${flagged.checked ? "&flagged=1" : ""}`);
+        const d = this.detail || {};
+        const prompt = `Goal: pick the best new switches across all feature topics for ${d.title || this.mod} from Mod Studio's dump scan, before changing anything.\n` +
+          `Project: Accretion mods. Target: AccretionMods/mods, mods/${this.mod} (${d.title || ""} ${d.version || ""}) for ${d.target || ""} ${d.app_version || ""}. The phone has no JIT. Prefer pins (field writes or setter calls every half second); inventory methods and types require investigation and are not automatic pin candidates.\n` +
+          `Candidates (scored by names and types only; not yet in the mod):\n${t.text}\n\n` +
+          `For the 10 to 15 most valuable: what it likely does in play (check the class in the dump with am find / am fields if unsure), a menu title, a section (Survival, Combat, Pet & companion, Items & crafting, Progress, Exploration, In-app purchases, Other), confidence (high/medium/low), and the approach (pin, hook, call or inspect). For valid pin candidates only, give the value and exact command on its own line starting with "am pin ${this.mod} ..." (with --object, --value, --when lower when it has a getter, --as <key>, --title "..."). Do not invent pin values for inventory methods or types. Explain technical requirements and side effects; skip a candidate only for a concrete technical reason, not its topic.\n` +
+          `Read only: change no files. Include purchases/IAP, full-game unlocks, ads, accounts and online play when relevant; topic labels are informational.`;
+        const j = await this.api("/api/claude", { prompt, read_only: true, engine: this.engine(), effort: this.effort(), account: this.account() });
+        this.showJob(j); this.poll(j.id); this.openJobs();
+        this.toast(`${this.engineName()} is ranking the candidates: its answer streams into Jobs, with an Add button on each command`, "ok");
+      } catch (e) { this.toast(e.message, "bad"); }
+    };
+    const rank = this.el("button", { class: "small primary", onclick: explain }, `Explain and rank with ${this.engineShort()}`);
+    // Auto-build: the picked model chooses switches from this scan, Studio adds them, runs gen and builds the .ipa
+    const auto = this.el("button", { class: "small", title: "The selected model goes through every scan candidate and makes a switch of each useful one; Studio adds them, runs gen, builds the .ipa and, when all went well, installs it on the phone", onclick: async () => {
+      const who = this.engineName();
+      if (!confirm(`Auto-build ${this.detail ? this.detail.title : this.mod}: ${who} goes through every candidate in this scan, across all topics, and makes a switch of each useful pin-compatible one, no top 10. Studio adds them with am pin, runs gen and builds the .ipa, and if all of that went well signs and installs it on the phone (USB, unlocked) and shows the new switches' status from the log. The mod's files are snapshotted first (Files tab restores). Start?`)) return;
+      try { const j = await this.api(`/api/mods/${this.mod}/autobuild`, { engine: this.engine(), effort: this.effort(), limit: 0, account: this.account() }); this.showJob(j); this.poll(j.id); this.openJobs(); this.toast(`${who} is picking switches; Studio adds and builds them: follow it in Jobs`, "ok"); }
+      catch (e) { this.toast(e.message, "bad"); }
+    } }, "Auto-build menu");
+    [area, mode, verified, flagged, hideHas].forEach(i => i.addEventListener("change", load));
+    find.addEventListener("keydown", ev => { if (ev.key === "Enter") load(); });
+    box.append(
+      this.el("p", { class: "hint", text: "Game fields and setters that a no-JIT pin can reach are scored by name. In-app purchases also includes mutable numeric/boolean fields and concrete hookable Store/IAP methods. Generated helpers, type-only rows, delegate caches and metadata are hidden. Topic labels are informational; names do not prove behaviour. Same list in a console: am scan <mod>." }),
+      this.el("div", { class: "row", style: "margin-bottom:8px" }, area, mode, verified, find,
+        this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center" }, hideHas, "hide what the mod has"),
+        this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center" }, flagged, "only topic-labelled"),
+        this.el("button", { class: "small", onclick: load }, "Scan"),
+        this.enginePicker(() => { rank.textContent = `Explain and rank with ${this.engineShort()}`; }),
+        rank, auto),
+      note, table, more);
+    load();
+  },
+
+  // Each switch's state on the phone, from the menu's status lines in Studio's log and run jobs.
+  // Runs on every tab: it also feeds the phone panel and the status strip.
+  async refreshLive() {
+    if (!this.mod) return;
+    const mod = this.mod;
+    let live;
+    try { live = await this.api(`/api/mods/${mod}/live`); } catch (e) { return; }
+    if (mod !== this.mod) return;
+    this.live = live; this.liveFor = mod;
+    this.renderPhonePanel();
+    this.renderStatus();
+    for (const [key, st] of Object.entries(live.switches)) {
+      const span = this.byId("live-" + key); if (!span) continue;
+      const text = st.state === "ok" ? "on the phone: working" : st.state === "off" ? "on the phone: off" : "on the phone: " + st.reason;
+      span.replaceChildren(this.el("span", { class: "badge " + (st.state === "ok" ? "good" : st.state === "off" ? "" : "bad"), text }));
+    }
+    clearTimeout(this.liveTimer);
+    if (live.watching) this.liveTimer = setTimeout(() => this.refreshLive(), 3000);
+  },
+
+  // ---------------------------------------------------------------- console
+  async renderConsole() {
+    const box = this.byId("tab-console");
+    const m = this.mod || "<mod>";
+    if (box.dataset.mod === m && box.childElementCount) return;
+    box.dataset.mod = m; box.replaceChildren();
+    let history = [];
+    try { history = JSON.parse(localStorage.getItem("studio.console.history") || "[]"); } catch (e) { history = []; }
+    let at = history.length;
+    const line = this.el("input", { placeholder: `any am command, e.g. find ${m} "Damage|Health"   (help lists them)`, autocomplete: "off", spellcheck: "false" });
+    const run = async text => {
+      text = (text ?? line.value).trim(); if (!text) return;
+      history = history.filter(h => h !== text).concat(text).slice(-100); at = history.length;
+      try { localStorage.setItem("studio.console.history", JSON.stringify(history)); } catch (e) {}
+      line.value = "";
+      try { const j = await this.api("/api/console", { line: text }); this.showJob(j); this.poll(j.id); this.openJobs(); }
+      catch (e) { this.toast(e.message, "bad"); }
+    };
+    line.addEventListener("keydown", ev => {
+      if (ev.key === "Enter") { ev.preventDefault(); run(); }
+      else if (ev.key === "ArrowUp" && history.length) { ev.preventDefault(); at = Math.max(0, at - 1); line.value = history[at] || ""; }
+      else if (ev.key === "ArrowDown") { ev.preventDefault(); at = Math.min(history.length, at + 1); line.value = history[at] || ""; }
+    });
+    const put = text => { line.value = text; line.focus(); const i = text.indexOf("…"); if (i >= 0) { line.setSelectionRange(i, i + 1); } };
+    const chip = (label, text, go) => this.el("button", { class: "small chipbtn", title: text, onclick: () => go ? run(text) : put(text) }, label);
+    const group = (title, chips) => this.el("div", { class: "sec" }, this.el("h3", { text: title }), this.el("div", { class: "row" }, chips));
+    let commands = [];
+    try { commands = (await this.api("/api/console/commands")).commands; } catch (e) { commands = []; }
+    box.append(
+      this.el("p", { class: "hint", text: "Runs any scripts/dev.py command (the same as am <command> in PowerShell), with this mod filled in by the buttons. Regexes are passed as typed: quote them when they have spaces or |. ↑/↓ walk the history. Questions a command asks (pick's number, the Apple ID 2FA code) are answered in the box under its job. Only this PC can use the console." }),
+      this.el("div", { class: "cmdline" }, line, this.el("button", { class: "primary", onclick: () => run() }, "Run")),
+      this.el("div", { style: "margin-top:14px" },
+        group("Dump and search the game", [
+          chip("dump", `dump ${m}`, true), chip("dump again", `dump ${m} --force`, true), chip("check hooks", `check ${m}`, true),
+          chip("find regex…", `find ${m} "…"`), chip("find class…", `find ${m} --class …`), chip("fields…", `fields ${m} …`),
+          chip("suggest", `suggest ${m} --no-pick`, true), chip("pick…", `pick ${m} "…"`), chip("status", `status ${m}`, true)]),
+        group("Change switches", [
+          chip("add hook…", `add ${m} … --title "…"`), chip("pin field…", `pin ${m} … --value …`), chip("call every…", `call ${m} … --every 10`),
+          chip("plain switch…", `tweak ${m} … --title "…"`), chip("remove…", `remove ${m} …`), chip("regenerate", `gen ${m}`, true),
+          chip("mark works…", `mark ${m} … --works`), chip("learn patterns", `learn ${m}`, true)]),
+        group("Build, sign, phone", [
+          chip("build .ipa", `build ${m} --ipa`, true), chip("build + bump", `build ${m} --ipa --bump`, true),
+          chip("sign + install…", `sign … --install`), chip("run on phone", `run ${m} --seconds 75`, true),
+          chip("log 60 s", `log ${m} --seconds 60 --launch`, true), chip("update to newer base", `update ${m}`, true)]),
+        group("Games and copies", [
+          chip("games like ours", "games", true), chip("search games…", "games search …"), chip("game info…", "games info …"),
+          chip("get .ipa…", "fetch …"), chip("get newest for this mod", `fetch --mod ${m}`, true), chip("decrypt site account", "fetch --account", true)]),
+        this.promptBuilder(run),
+        group("Help", [chip("all commands", "help", true), ...commands.map(c => chip(c, `help ${c}`, true))])));
+    line.focus();
+  },
+  // Which model answers Studio's prompts: Claude Code, or aider (the free model in ~/.aider.conf.yml, answers only).
+  // One choice for the whole page, remembered in this browser.
+  engine() {
+    try { const e = localStorage.getItem("studio.engine"); return ["aider", "codex", "gemini", "claude-api"].includes(e) ? e : "claude"; } catch (e) { return "claude"; }
+  },
+  // claude-api: which saved account (studio/claude_api.py add); "" = the first one
+  account() { try { return localStorage.getItem("studio.account") || ""; } catch (e) { return ""; } },
+  // how hard the model thinks: "" keeps each engine's own default
+  effort() {
+    try { const e = localStorage.getItem("studio.effort"); return ["low", "medium", "high"].includes(e) ? e : ""; } catch (e) { return ""; }
+  },
+  engineName(e) { return { aider: "aider (free model)", codex: "Codex (GPT)", gemini: "Gemini (free)", "claude-api": "Claude API" }[e || this.engine()] || "Claude Code"; },
+  engineShort(e) { return { aider: "aider", codex: "Codex", gemini: "Gemini", "claude-api": "Claude API" }[e || this.engine()] || "Claude"; },
+  enginePicker(onChange) {
+    const pick = this.el("select", { title: "Which model answers: Claude Code; Codex with GPT (your ChatGPT sign-in); aider with the free model in ~/.aider.conf.yml; or Gemini through aider with the free Google key (aider and Gemini edit only the selected mod and run no commands)" },
+      [["claude", "Claude Code"], ["claude-api", "Claude API"], ["codex", "Codex · GPT"], ["gemini", "Gemini · free"], ["aider", "aider · free model"]].map(o => this.el("option", { value: o[0], text: o[1] })));
+    pick.value = this.engine();
+    pick.addEventListener("change", () => { try { localStorage.setItem("studio.engine", pick.value); } catch (e) { /* private window */ } if (onChange) onChange(); });
+    const level = this.el("select", { title: "Effort: how hard the model thinks. Higher is slower and, for paid models, uses more of the plan; Default keeps the engine's own setting" },
+      [["", "Effort: default"], ["low", "Effort: low"], ["medium", "Effort: medium"], ["high", "Effort: high"]].map(o => this.el("option", { value: o[0], text: o[1] })));
+    level.value = this.effort();
+    level.addEventListener("change", () => { try { localStorage.setItem("studio.effort", level.value); } catch (e) { /* private window */ } if (onChange) onChange(); });
+    // the account the Claude API engine uses: the saved ones (python studio/claude_api.py add <name>)
+    const who = this.el("select", { title: "Which Claude API account (key in Windows Credential Manager; add one: python studio/claude_api.py add <name>)" });
+    const fillAccounts = async () => {
+      let list = [];
+      try { list = (await this.api("/api/ai/accounts")).accounts; } catch (e) { list = []; }
+      who.replaceChildren(...(list.length ? list.map(a => this.el("option", { value: a.name, text: `${a.name} · ${a.model.replace("claude-", "")}` }))
+                                          : [this.el("option", { value: "", text: "no account yet" })]));
+      who.value = list.some(a => a.name === this.account()) ? this.account() : (list[0] ? list[0].name : "");
+    };
+    who.addEventListener("change", () => { try { localStorage.setItem("studio.account", who.value); } catch (e) { /* private window */ } if (onChange) onChange(); });
+    const showWho = () => { who.classList.toggle("hidden", pick.value !== "claude-api"); if (pick.value === "claude-api") fillAccounts(); };
+    pick.addEventListener("change", showWho);
+    showWho();
+    return this.el("span", { style: "display:inline-flex;gap:6px" }, pick, who, level);
+  },
+  // the prompt builder: a task + one line + this mod's facts -> a prompt for Claude Code (studio/prompts.json)
+  promptBuilder(run) {
+    const box = this.el("div", { class: "sec" }, this.el("h3", { text: "Prompt builder" }),
+      this.el("p", { class: "hint", text: "Pick a task and type one line. Studio adds this mod's facts (versions, dump, switches and their phone results, the last log errors) and the goal / target / done when / limits shape, and says which detail is missing. Copy it into Claude Code. Tasks live in studio/prompts.json." }));
+    const task = this.el("select", {});
+    const ask = this.el("input", { style: "flex:1;min-width:220px" });
+    const tags = this.el("span", { class: "badges", style: "margin:0" });
+    const hints = this.el("div", {});
+    const out = this.el("textarea", { rows: "11", style: "width:100%;margin-top:8px", spellcheck: "false" });
+    const copy = this.el("button", { class: "primary", onclick: () => navigator.clipboard.writeText(out.value).then(() => this.toast("prompt copied: paste it into Claude Code", "ok")).catch(() => { out.select(); this.toast("select and copy the prompt", "bad"); }) }, "Copy prompt");
+    const refresh = this.el("button", { class: "small", title: "read the mod's facts again (after a log, build or mark)", onclick: async () => { try { ctx = await this.api(`/api/mods/${this.mod}/context`); build(); this.toast("facts updated", "ok"); } catch (e) { this.toast(e.message, "bad"); } } }, "Refresh facts");
+    const runBtn = this.el("button", { class: "small", onclick: async () => {
+      const t = conf && (conf.tasks.find(x => x.id === task.value) || conf.tasks[0]); if (!t) return;
+      const readOnly = !!t.read_only, engine = this.engine();
+      if ((engine === "aider" || engine === "gemini") && !readOnly) {
+        if (!confirm(`${this.engineName(engine)} will edit mods/${this.mod}: tweaks.json, hooks.json, mod.json and Tweak.x are sent with the prompt to ${engine === "gemini" ? "Google's free Gemini API" : "the free OpenRouter model"}. Studio snapshots them first (Files tab restores). aider runs no commands: the am commands it proposes appear as buttons in Jobs. Run it?`)) return;
+      } else if (!readOnly && engine === "codex") {
+        if (!confirm("Full access: Codex (GPT) runs this task start to finish with no sandbox: it edits the repo, runs any command on this PC with the network, and builds, signs and installs on the phone (am run). It is told not to push, publish, delete outside the mod or install other software, but nothing enforces that. Run it?")) return;
+      } else if (!readOnly && !confirm("This task may change files: Claude Code can edit this repo and run any am command (build, sign, install on the phone). It cannot push, publish or run other shell commands. Run it?")) return;
+      try { const j = await this.api("/api/claude", { prompt: out.value, read_only: readOnly, engine, effort: this.effort(), mod: this.mod, account: this.account() }); this.showJob(j); this.poll(j.id); this.openJobs(); this.toast(`${this.engineName(engine)} is working: its answer streams into Jobs`, "ok"); }
+      catch (e) { this.toast(e.message, "bad"); }
+    } }, "Run with Claude Code");
+    const runNote = this.el("span", { class: "muted small" });
+    const picker = this.enginePicker(() => build());
+    box.append(this.el("div", { class: "row" }, task, ask, tags, refresh), hints, out, this.el("div", { class: "row", style: "margin-top:6px" }, copy, picker, runBtn, runNote));
+    let conf = null, ctx = null;
+    const fill = (text, facts) => text.replace(/\{(\w+)\}/g, (m, k) => (k in facts ? String(facts[k]) : m));
+    const build = () => {
+      if (!conf || !ctx) return;
+      const t = conf.tasks.find(x => x.id === task.value) || conf.tasks[0];
+      ask.placeholder = t.ask;
+      const line = ask.value.trim();
+      const facts = { ...ctx, ask: line || "<" + t.ask.replace(/\s*\(.*\)$/, "") + ">", extra: line ? ` (${line})` : "" };
+      facts.limits = fill(conf.limits, facts);
+      facts.where = fill(conf.where, facts);
+      out.value = t.lines.map(l => fill(l, facts)).join("\n");
+      for (const workflow of ctx.learned_workflows || []) {
+        // These are review checklists from another tested game, never automatic proof or patch instructions.
+        if (!(workflow.topics || []).some(word => line.toLowerCase().includes(word.toLowerCase()))) continue;
+        out.value += `\n\nPreviously tested workflow: ${workflow.title}\n` +
+          `Evidence applies only to ${workflow.proven_on || "the recorded game/build"}. Check every criterion in this game; do not apply automatically.\n` +
+          (workflow.criteria || []).map(text => `- ${text}`).join("\n");
+      }
+      tags.replaceChildren(t.read_only ? this.el("span", { class: "badge good", text: "read only" }) : this.el("span", { class: "badge warn", text: "changes files" }));
+      const viaAider = this.engine() === "aider" || this.engine() === "gemini";
+      const viaCodex = this.engine() === "codex";
+      const short = this.engineShort();
+      runBtn.textContent = viaAider ? (t.read_only ? `Ask ${short} (read only)` : `Run with ${short}…`) : viaCodex ? (t.read_only ? "Run with Codex (read only)" : "Run with Codex…") : t.read_only ? "Run with Claude Code (read only)" : "Run with Claude Code…";
+      runNote.textContent = viaCodex
+        ? (t.read_only ? "Codex (GPT) reads the repo and runs read-only am commands in a read-only sandbox." : "Asks first: full access, start to finish: Codex edits, builds, signs and installs on the phone (no sandbox).")
+        : viaAider
+        ? (t.read_only ? `${short} answers from the prompt alone (free model): no files, no commands, nothing else leaves this PC.` : `Asks first: ${short} edits this mod's files (snapshot first); its am commands become buttons in Jobs.`)
+        : t.read_only ? "Claude reads the repo and runs read-only am commands; it changes nothing." : "Asks first: Claude may edit files and run am commands (no push, no publish).";
+      const missing = [];
+      if ((t.needs || []).includes("ask") && !line) missing.push([`Type the one line: ${t.ask}`]);
+      if (t.id === "port" && line && !/^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+){2,}$/.test(line)) missing.push(["Use the game's bundle ID (AppStore tab or am games search shows it)."]);
+      if ((t.needs || []).includes("dump") && !ctx.dump) missing.push(["No dump yet, so Claude can't look up classes.", "Dump now", `dump ${ctx.mod}`]);
+      if ((t.needs || []).includes("log") && !ctx.log_seen) missing.push(["No device log in Studio yet, so the prompt can't carry the errors.", "Log 60 s", `log ${ctx.mod} --seconds 60 --launch`]);
+      if (t.id === "update" && ctx.newer_bases.length) missing.push([`A newer copy is already waiting: ${ctx.newer_bases[0].version}.`]);
+      hints.replaceChildren(...missing.map(([text, label, cmd]) => this.el("div", { class: "row hint", style: "margin:6px 0 0" },
+        this.el("span", { class: "badge warn", text: "missing" }), this.el("span", { class: "grow", text }),
+        label ? this.el("button", { class: "small", onclick: () => run(cmd) }, label) : null)));
+    };
+    task.addEventListener("change", build); ask.addEventListener("input", build);
+    (async () => {
+      try {
+        [conf, ctx] = await Promise.all([this.api("/api/prompts"), this.api(`/api/mods/${this.mod}/context`)]);
+        task.replaceChildren(...conf.tasks.map(t => this.el("option", { value: t.id, text: t.label })));
+        build();
+      } catch (e) { hints.replaceChildren(this.el("p", { class: "hint", text: e.message })); }
+    })();
+    return box;
+  },
+
+  // ---------------------------------------------------------------- games
+  // ---------------------------------------------------------------- store
+  // The store in one place: its numbers (public, and admin through the one-time link), our mods in it, every
+  // endpoint we depend on, keys and sign-ins (secret names and ages, never values) and the publishing workflows.
+  loadStore(parts) {
+    this.store = this.store || {};
+    for (const p of parts || ["link", "public", "admin", "moderation", "shots", "endpoints", "keys", "runs"]) {
+      this.store[p] = { loading: true, ...(this.store[p] && this.store[p].data ? { data: this.store[p].data } : {}) };
+      this.api("/api/store/" + p).then(data => { this.store[p] = { data, at: Date.now() }; })
+        .catch(e => { this.store[p] = { error: e.message }; })
+        .finally(() => { if (this.tab === "store") this.renderStore(); });
+    }
+    if (this.tab === "store") this.renderStore();
+  },
+  async storeLink() {
+    try {
+      const r = await this.api("/api/store/link/start", {});
+      window.open(r.approve_url, "_blank", "noopener");
+      this.store.link = { data: { status: "waiting", code: r.code, approve_url: r.approve_url } };
+      this.renderStore();
+      const until = Date.now() + 10 * 60e3;
+      const poll = async () => {
+        if (Date.now() > until) return;
+        const s = await this.api("/api/store/link/poll", {}).catch(() => null);
+        if (s && s.status === "linked") { this.toast("Mod Studio linked as admin", "ok"); this.loadStore(["link", "admin", "keys"]); return; }
+        if (s && s.status === "expired") { this.toast("The code expired: link again", "bad"); this.loadStore(["link"]); return; }
+        setTimeout(poll, 3000);
+      };
+      setTimeout(poll, 3000);
+    } catch (e) { this.toast(e.message, "bad"); }
+  },
+  // publish this PC's version of a mod, or take it out of the store: a Studio job (store_publish.py)
+  async storePublish(mod, action, question) {
+    let confirm = "";
+    if (action === "remove") {
+      confirm = prompt(`Take ${mod} out of the store? People who installed it keep it, but it leaves the store and its updates stop. Type ${mod} to confirm.`) || "";
+      if (confirm !== mod) { if (confirm) this.toast("The name didn't match: nothing removed", "bad"); return; }
+    } else if (!window.confirm(question)) return;
+    try {
+      const j = await this.api("/api/store/publish", { mod, action, confirm });
+      this.showJob(j); this.poll(j.id);
+      this.openJobs();
+    } catch (e) { this.toast(e.message, "bad"); }
+  },
+  // the phone's screen as a link for this mod's post (studio/shots.py through Accretion Link)
+  async phoneShot() {
+    this.toast("Taking the phone's screenshot…");
+    try {
+      const r = await this.api("/api/store/shots/phone", { mod: this.mod, ttl: "1y" });
+      try { await navigator.clipboard.writeText(r.url); } catch (e) {}
+      this.toast(`Screenshot link copied; it's in this mod's post until ${new Date(r.expires_at).toLocaleDateString()}`, "ok");
+      if (this.store) this.loadStore(["shots"]);
+    } catch (e) { this.toast(e.message, "bad"); }
+  },
+  async storeAct(body, done) {
+    const r = await this.api("/api/store/act", body);
+    if (done) { this.toast(done, "ok"); this.loadStore(["moderation", "admin"]); }
+    return r;
+  },
+  renderStore() {
+    const box = this.byId("tab-store");
+    if (!this.store) return this.loadStore();
+    const S = this.store, el = this.el.bind(this);
+    const n = v => v === null || v === undefined || v === "" ? "—" : typeof v === "number" ? v.toLocaleString() : String(v);
+    const ago = iso => { if (!iso) return "—"; const s = (Date.now() - new Date(iso).getTime()) / 1000; return s < 90 ? "just now" : s < 5400 ? Math.round(s / 60) + " min ago" : s < 129600 ? Math.round(s / 3600) + " h ago" : Math.round(s / 86400) + " d ago"; };
+    const mb = b => b ? (b / 1048576).toFixed(b < 10485760 ? 1 : 0) + " MB" : "—";
+    const badge = (text, kind) => el("span", { class: "badge " + (kind || ""), text });
+    const panel = (title, right, ...body) => el("div", { class: "panel" }, el("div", { class: "panel-h" }, el("span", { text: title }), right || null), el("div", { class: "panel-b" }, ...body));
+    const state = p => S[p] && S[p].loading && !S[p].data ? el("p", { class: "hint", text: "Loading…" }) : S[p] && S[p].error ? el("p", { class: "hint", text: "Could not load: " + S[p].error }) : null;
+    const table = (head, rows, numeric) => el("div", { class: "store-scroll" }, el("table", { class: "store-t" },
+      el("tr", {}, head.map((h, i) => el("th", { class: numeric && numeric.includes(i) ? "n" : "", text: h }))),
+      rows.map(r => el("tr", {}, r.map((c, i) => el("td", { class: numeric && numeric.includes(i) ? "n" : "" }, c))))));
+    const pub = (S.public || {}).data || {}, st = pub.stats || {};
+    const admin = (S.admin || {}).data || {}, sec = admin.sections || {};
+    const linked = ((S.link || {}).data || {}).status === "linked" || admin.linked;
+    const okSec = k => sec[k] && !sec[k].error ? sec[k] : null;
+    box.replaceChildren();
+
+    // header row
+    box.append(el("div", { class: "row", style: "margin-bottom:12px" },
+      el("span", { class: "hint grow", style: "margin:0", text: "Read only. Numbers refresh when you open this tab or press Refresh." }),
+      el("button", { class: "small", onclick: () => this.loadStore() }, "Refresh all")));
+
+    // admin link
+    const link = (S.link || {}).data || {};
+    const linkBody = link.status === "linked" || admin.linked
+      ? el("div", { class: "row" }, el("span", { class: "hint grow", style: "margin:0", text: "Linked once with a code approved on getaccretion.app. The admin token stays on this PC (AM_ROOT/studio/admin.json) and only goes to the store's own functions." }),
+          el("button", { class: "small ghost", onclick: async () => { if (!confirm("Unlink Mod Studio from your Accretion admin account?")) return; await this.api("/api/store/link/unlink", {}).catch(e => this.toast(e.message, "bad")); this.store.admin = { data: { linked: false } }; this.loadStore(["link", "keys"]); } }, "Unlink"))
+      : link.status === "waiting"
+        ? el("div", { class: "row" }, el("span", { class: "grow" }, "Approve code ", el("b", { class: "mono", text: link.code || "" }), " on getaccretion.app while signed in as an admin. Studio checks every few seconds."),
+            link.approve_url ? el("button", { class: "small", onclick: () => window.open(link.approve_url, "_blank", "noopener") }, "Open the approve page") : null,
+            el("button", { class: "small ghost", onclick: () => this.storeLink() }, "New code"))
+        : el("div", { class: "row" }, el("span", { class: "hint grow", style: "margin:0", text: "Link once to see the admin numbers (downloads, accounts, community, cloud saves, share links). Studio shows a code; approve it on getaccretion.app signed in as an admin." }),
+            el("button", { class: "primary small", onclick: () => this.storeLink() }, "Link Mod Studio"));
+    box.append(panel("Accretion admin", linked ? badge(`signed in · ${admin.account || link.account || "admin"} · admin`, "good") : link.status === "waiting" ? badge("waiting for approval", "warn") : badge("not linked"),
+      linkBody, admin.error ? el("p", { class: "hint", text: admin.error }) : null));
+
+    // the store's tiles
+    const acc = okSec("accounts"), dl = okSec("downloads"), cs = okSec("cloud_saves");
+    const tile = (label, value, sub, kind) => el("div", { class: "tile" }, el("div", { class: "l", text: label }), el("div", { class: "nn", text: n(value) }), sub ? el("div", { class: "d " + (kind || ""), text: sub }) : null);
+    const tiles = el("div", { class: "tiles" },
+      tile("apps", st.apps, st.new_30d !== undefined ? `+${n(st.new_30d)} in 30 days` : null),
+      tile("curated", st.curated_apps, st.developers ? `${n(st.developers)} developers` : null),
+      tile("sources", st.sources_total, st.sources_failed ? `${st.sources_failed} failing` : "none failing", st.sources_failed ? "warn" : "good"),
+      tile("updated 7d", st.updated_7d, st.updated_30d ? `${n(st.updated_30d)} in 30 days` : null),
+      tile("downloads 7d", dl ? dl.total_7d : null, dl ? `${n(dl.total_30d)} in 30 days` : linked ? null : "link to see"),
+      tile("accounts", acc ? acc.total : null, acc ? `+${n(acc.new_7d)} this week` : linked ? null : "link to see"),
+      tile("cloud saves", cs ? cs.backups : null, cs ? `${n(cs.devices)} devices · ${mb(cs.bytes)}` : linked ? null : "link to see"),
+      tile("links removed", st.dead_links_removed, st.links_on_hold ? `${st.links_on_hold} on hold` : null));
+    const spark = dl && dl.per_day ? (() => { const max = Math.max(1, ...dl.per_day.map(d => d.n));
+      return el("div", {}, el("div", { class: "spark" }, dl.per_day.map(d => el("i", { title: `${d.day}: ${d.n}`, style: `height:${Math.max(3, Math.round(d.n / max * 100))}%` }))),
+        el("div", { class: "hint", style: "margin:4px 0 0", text: "downloads per day, 14 days" + (dl.via ? " · " + Object.entries(dl.via).map(([k, v]) => `${k} ${n(v)}`).join(" · ") : "") })); })() : null;
+    box.append(panel("The store", el("span", { class: "fig", text: st.built_at ? `built ${ago(st.built_at)} · ${st.size_mb || "?"} MB` : "" }), state("public"), tiles, spark));
+
+    // moderation: the site's #/mod page, acted on from here through the admin link
+    if (linked) {
+      const m = (S.moderation || {}).data || {}, reports = m.reports || [];
+      const list = v => Array.isArray(v) ? v : [];
+      const who = p => p ? el("span", {}, "@" + p.username, p.banned ? el("span", { class: "badge bad", style: "margin-left:6px", text: "banned" }) : null, p.role && p.role !== "user" ? el("span", { class: "badge accent", style: "margin-left:6px", text: p.role }) : null) : "—";
+      const btn = (label, cls, fn) => el("button", { class: "small " + (cls || ""), onclick: async ev => { ev.target.disabled = true; try { await fn(); } catch (e) { this.toast(e.message, "bad"); ev.target.disabled = false; } } }, label);
+      const act = (body, done) => this.storeAct(body, done);
+      const reportRows = reports.map(r => {
+        const target = r.post ? r.post.author_p : r.profile;
+        return el("div", { class: "mod-item" },
+          el("div", { class: "row" }, el("b", { text: r.post ? "Post" : "Profile" }),
+            el("span", { class: "muted small grow", text: `${r.reporter_p ? "reported by @" + r.reporter_p.username : "flagged by AI moderation"} · ${ago(r.created_at)}` })),
+          el("p", { class: "mod-reason", text: `“${r.reason}”` }),
+          r.post ? el("blockquote", { class: "mod-post", text: r.post.body }) : null,
+          el("div", { class: "row" }, el("span", { class: "small grow" }, "Author: ", who(target), r.post && r.post.app_id ? el("span", { class: "muted small mono", text: " · " + r.post.app_id }) : null),
+            r.post && !r.post.hidden ? btn("Hide post", "", async () => { await act({ action: "hide", target: String(r.post.id), flag: true }); await act({ action: "resolve", target: String(r.id), value: "resolved" }, "Post hidden"); }) : null,
+            target && !target.banned && target.role !== "admin" ? btn("Ban user", "", async () => { if (!confirm(`Ban @${target.username}? They can't post, like or report until unbanned.`)) throw new Error("Cancelled"); await act({ action: "ban", target: target.id, flag: true }); await act({ action: "resolve", target: String(r.id), value: "resolved" }, `@${target.username} banned`); }) : null,
+            btn("Dismiss", "ghost", () => act({ action: "resolve", target: String(r.id), value: "dismissed" }, "Dismissed"))));
+      });
+      const postRow = (p, hiddenList) => [el("span", { class: "small" }, who(p.author_p), el("div", { class: "muted small", text: `${ago(p.created_at)}${p.app_id ? " · " + p.app_id : ""}${p.parent_id ? " · reply" : ""}` })),
+        el("span", { class: "small mod-body", text: p.body.length > 220 ? p.body.slice(0, 220) + "…" : p.body }),
+        hiddenList || p.hidden ? btn("Unhide", "ghost", () => act({ action: "hide", target: String(p.id), flag: false }, "Post visible again")) : btn("Hide", "", () => act({ action: "hide", target: String(p.id), flag: true }, "Post hidden"))];
+      const roleUser = el("input", { placeholder: "username", style: "width:160px" });
+      const role = el("select", {}, [["mod", "Moderator"], ["user", "Regular user"], ["admin", "Admin"]].map(o => el("option", { value: o[0], text: o[1] })));
+      const supUser = el("input", { placeholder: "username", style: "width:160px" });
+      const team = list(m.team);
+      box.append(panel("Moderation", el("span", { class: "row" }, m.reports ? badge(reports.length ? `${reports.length} open report${reports.length === 1 ? "" : "s"}` : "no open reports", reports.length ? "warn" : "good") : null,
+          el("button", { class: "small ghost", onclick: () => this.loadStore(["moderation"]) }, "Refresh")), state("moderation"),
+        m.reports ? (reportRows.length ? el("div", {}, reportRows) : el("p", { class: "hint", text: "No open reports." })) : null,
+        m.reports ? el("details", { class: "feature-more" }, el("summary", { text: `Latest posts (${list(m.recent).length})` }),
+          table(["Author", "Post", ""], list(m.recent).map(p => postRow(p)))) : null,
+        m.reports ? el("details", { class: "feature-more" }, el("summary", { text: `Hidden posts (${list(m.hidden).length})` }),
+          list(m.hidden).length ? table(["Author", "Post", ""], list(m.hidden).map(p => postRow(p, true))) : el("p", { class: "hint", text: "None." })) : null,
+        m.reports ? el("details", { class: "feature-more" }, el("summary", { text: `Banned accounts (${list(m.banned).length})` }),
+          list(m.banned).length ? table(["Account", "Joined", ""], list(m.banned).map(u => ["@" + u.username, ago(u.created_at), btn("Unban", "ghost", () => act({ action: "ban", target: u.id, flag: false }, `@${u.username} unbanned`))])) : el("p", { class: "hint", text: "None." })) : null,
+        m.reports ? el("details", { class: "feature-more" }, el("summary", { text: `Team and supporters (${team.length})` }),
+          team.length ? table(["Account", "Role", "Supporter"], team.map(u => ["@" + u.username, u.role, u.supporter ? "♥" : ""])) : null,
+          el("div", { class: "row", style: "margin-top:10px" }, el("span", { class: "small", text: "Role" }), roleUser, role,
+            btn("Apply", "primary", async () => { const u = roleUser.value.trim().replace(/^@/, ""); if (!u) throw new Error("Type a username"); if (role.value === "admin" && !confirm(`Make @${u} an admin? Admins can change roles and ban.`)) throw new Error("Cancelled"); await act({ action: "role", target: u, value: role.value }, `@${u} is now ${role.value}`); })),
+          el("div", { class: "row", style: "margin-top:8px" }, el("span", { class: "small", text: "♥ Supporter" }), supUser,
+            btn("Give badge", "primary", async () => { const u = supUser.value.trim().replace(/^@/, ""); if (!u) throw new Error("Type a username"); await act({ action: "supporter", target: u, flag: true }, `@${u} is now a supporter ♥`); }),
+            btn("Remove", "ghost", async () => { const u = supUser.value.trim().replace(/^@/, ""); if (!u) throw new Error("Type a username"); await act({ action: "supporter", target: u, flag: false }, `@${u} is no longer a supporter`); }))) : null,
+        el("p", { class: "hint", text: "Actions go to the store at once, recorded under your admin account. Admins can't be banned from here, and your own role can't be changed here." })));
+    }
+
+    // our mods
+    const ours = pub.ours || [], appsSec = okSec("apps") || {}, perApp = (dl && dl.per_app) || {};
+    const saves = id => cs && cs.per_game ? Object.entries(cs.per_game).filter(([b]) => b === id || b.startsWith(id + ".")).reduce((s, [, g]) => s + g.backups, 0) : null;
+    const rows = ours.map(o => { const a = (appsSec.ours || {})[o.id] || {};
+      const here = !o.here ? badge("not here") : o.here === o.live ? badge(o.here, "good") : badge(o.here + " here", "warn");
+      const acts = el("span", { class: "row", style: "flex-wrap:nowrap" },
+        o.here && o.here !== o.live && o.mod ? el("button", { class: "small primary", title: `Publish ${o.here} from this PC: a pull request with auto-merge, then the ${o.kind === "tweak" ? "release" : "cloud build"}`,
+          onclick: () => this.storePublish(o.mod, "update", `Publish ${o.name} ${o.here} to the store (live: ${o.live})?`) }, `Publish ${o.here}`) : null,
+        o.mod ? el("button", { class: "small ghost", title: "Take it out of the store (a pull request with auto-merge)",
+          onclick: () => this.storePublish(o.mod, "remove") }, "Remove") : null);
+      return [el("span", {}, o.name || o.mod, " ", el("span", { class: "muted small", text: o.kind })), o.live || "—", here, n(a.views_7d), n((perApp[o.id] || {}).d7), n(a.installs_7d), n(a.likes), a.rating ? a.rating + ` (${a.ratings})` : "—", n(a.comments), n(saves(o.id)), ago(o.date), acts]; });
+    box.append(panel("Our mods in the store", el("span", { class: "fig", text: "7 days" }), state("public"),
+      ours.length ? table(["Mod", "Live", "Here", "Views", "Downloads", "Installs", "Likes", "Rating", "Comments", "Cloud saves", "Published", ""], rows, [3, 4, 5, 6, 7, 8, 9]) : null,
+      (pub.unlisted || []).length ? el("p", { class: "hint", text: "Not in the store: " + pub.unlisted.map(u => `${u.mod} ${u.version}${u.personal ? " (personal)" : ""}`).join(", ") + ". Personal mods aren't published from Studio; a public mod is added to the cloud build's list first, then Mods: build a mod publishes it." }) : null,
+      !linked && ours.length ? el("p", { class: "hint", text: "Views, downloads, likes and the rest need the admin link." }) : null));
+
+    // trending + community
+    if (linked) {
+      const tr = (okSec("apps") || {}).trending || [], com = okSec("community"), srch = okSec("searches"), sl = okSec("share_links");
+      const names = Object.fromEntries(ours.map(o => [o.id, o.name]));
+      box.append(el("div", { class: "store-grid" },
+        panel("Trending in the store", el("span", { class: "fig", text: "3×searches + 2×installs + views, 7 days" }),
+          tr.length ? table(["#", "App", "Views", "Installs", "Score"], tr.map((t, i) => [String(i + 1), names[t.id] || t.id, n(t.views_7d), n(t.installs_7d), n(t.score)]), [2, 3, 4]) : el("p", { class: "hint", text: sec.apps && sec.apps.error ? sec.apps.error : "No views yet." })),
+        panel("Community", com && com.reports_open ? badge(`${com.reports_open} reports waiting`, "warn") : null,
+          com ? table(["", ""], [["Posts this week", n(com.posts_7d)], ["Hidden posts", n(com.posts_hidden)], ["Open reports", n(com.reports_open)], ["Install reports (7 days)", n(com.install_reports_7d)],
+            ["Searches with no result", srch ? n(srch.missing_top.length) : "—"], ["Share links (active)", sl ? `${n(sl.active)} · ${n(sl.downloads)} downloads` : "—"],
+            ["Moderators and admins", acc ? n(acc.moderators) : "—"], ["Banned accounts", acc ? n(acc.banned) : "—"]], [1]) : el("p", { class: "hint", text: (sec.community || {}).error || "" }),
+          el("div", { class: "row", style: "margin-top:8px" }, el("button", { class: "small", onclick: () => window.open("https://getaccretion.app/#/mod", "_blank", "noopener") }, "Open the moderation page ›")))));
+      const ir = (com && com.install_reports_recent) || [], miss = (srch && srch.missing_top) || [];
+      box.append(el("div", { class: "store-grid" },
+        panel("Searches with no result", el("span", { class: "fig", text: "7 days" }),
+          miss.length ? table(["Search", "Times"], miss.slice(0, 12).map(m => [m.query, n(m.hits)]), [1]) : el("p", { class: "hint", text: "None this week." })),
+        panel("Latest install reports", null,
+          ir.length ? table(["App", "Stage", "iOS", "App version", "When"], ir.map(r => [names[r.bundle_id] || r.bundle_id || "—", r.stage || "—", r.ios || "—", r.app_version || "—", ago(r.created_at)])) : el("p", { class: "hint", text: "None." }))));
+      const links = (sl && sl.links) || [], builds = (okSec("builds") || {}).latest || {};
+      box.append(el("div", { class: "store-grid" },
+        panel("Share links", sl ? el("span", { class: "fig", text: `${n(sl.active)} active` }) : null,
+          links.length ? table(["Name", "Downloads", "Last", "Expires"], links.map(l => [l.name || l.note || l.id, n(l.downloads), ago(l.last_download_at), new Date(l.expires_at).toLocaleDateString()]), [1]) : el("p", { class: "hint", text: "No active links." })),
+        panel("Cloud saves by game", cs ? el("span", { class: "fig", text: `${n(cs.backups_7d)} backups this week` }) : null,
+          cs && Object.keys(cs.per_game).length ? table(["Game", "Devices", "Backups", "Size"], Object.entries(cs.per_game).map(([, g]) => [g.game || "—", n(g.devices), n(g.backups), mb(g.bytes)]), [1, 2, 3]) : el("p", { class: "hint", text: "No backups yet." }))));
+      if (Object.keys(builds).length) box.append(panel("Hosted builds", el("span", { class: "fig", text: `${Object.keys(builds).length} apps` }),
+        table(["App", "Latest", "Size", "Builds kept", "Added"], Object.entries(builds).sort((a, b) => String(b[1].created_at).localeCompare(String(a[1].created_at))).slice(0, 15).map(([id, b]) => [names[id] || id, b.version, mb(b.size), n(b.builds), ago(b.created_at)]), [2, 3])));
+    }
+
+    // screenshot links (phone shots for posts, ShareX on this PC): copy, renew, delete
+    const shotRows = ((S.shots || {}).data || {}).shots || [];
+    const life = el("select", {}, [["1y", "1 year"], ["6m", "6 months"], ["3m", "3 months"]].map(o => el("option", { value: o[0], text: o[1] })));
+    const left = iso => { const d = Math.round((new Date(iso) - Date.now()) / 86400000); return d < 0 ? badge(`expired ${-d} d ago`, "bad") : d < 14 ? badge(`${d} d left`, "warn") : badge(`${d} d left`); };
+    box.append(panel("Screenshot links", el("span", { class: "row" }, el("span", { class: "small muted", text: "renew for" }), life,
+        el("button", { class: "small ghost", onclick: () => this.loadStore(["shots"]) }, "Refresh")), state("shots"),
+      shotRows.length ? table(["Link", "What", "Taken", "Life", ""], shotRows.map(r => [
+        el("a", { href: r.url, target: "_blank", rel: "noopener", class: "mono small", text: r.id }),
+        el("span", { class: "small", text: `${r.label || "PC"} · ${r.content_type.split("/")[1]} · ${mb(r.size)}` }),
+        ago(r.created_at), left(r.expires_at),
+        el("span", { class: "row", style: "flex-wrap:nowrap" },
+          el("button", { class: "small", onclick: async () => { try { await navigator.clipboard.writeText(r.url); this.toast("Link copied", "ok"); } catch (e) { this.toast(r.url); } } }, "Copy"),
+          el("button", { class: "small", onclick: async () => { try { await this.api("/api/store/shots/renew", { id: r.id, ttl: life.value }); this.toast("Renewed", "ok"); this.loadStore(["shots"]); } catch (e) { this.toast(e.message, "bad"); } } }, "Renew"),
+          el("button", { class: "small ghost", onclick: async () => { if (!confirm("Delete this screenshot? Its link stops working everywhere it was pasted.")) return; try { await this.api("/api/store/shots/delete", { id: r.id }); this.toast("Deleted", "ok"); this.loadStore(["shots"]); } catch (e) { this.toast(e.message, "bad"); } } }, "Delete"))])) : (S.shots && S.shots.data ? el("p", { class: "hint", text: "No screenshot links yet. A mod's More menu has Phone screenshot for the post; ShareX on this PC uploads here too." }) : null),
+      el("p", { class: "hint", text: "Anyone with a link can open it until it expires. An expired link can be renewed for 30 days, then its file is deleted." })));
+
+    // endpoints
+    const ep = (S.endpoints || {}).data || {}, eps = ep.endpoints || [];
+    const down = eps.filter(e => !e.ok).length, slow = eps.filter(e => e.ok && e.slow).length;
+    box.append(panel("Endpoints", el("span", { class: "row" }, eps.length ? badge(down ? `${down} down` : slow ? `${slow} slow` : "all answering", down ? "bad" : slow ? "warn" : "good") : null,
+      el("button", { class: "small ghost", onclick: () => this.loadStore(["endpoints"]) }, "Check again")), state("endpoints"),
+      eps.length ? table(["Service", "Answer", "Time", ""], eps.map(e => [el("span", {}, e.name, el("div", { class: "muted small mono", text: e.url })), e.status ? String(e.status) : "no answer", e.ms + " ms",
+        badge(!e.ok ? "down" : e.slow ? "slow" : "ok", !e.ok ? "bad" : e.slow ? "warn" : "good")]), [2]) : null,
+      eps.length ? el("p", { class: "hint", text: "Each check expects the answer the service gives when it works (a function without a token answers 401). Checked " + ago(new Date(ep.checked_at * 1000).toISOString()) + "." }) : null));
+
+    // keys and sign-ins
+    const k = (S.keys || {}).data || {}, checks = k.checks || [], secrets = k.secrets || [];
+    const old = secrets.filter(s => s.old).length;
+    box.append(panel("Keys and sign-ins", el("span", { class: "row" }, checks.length ? badge(checks.every(c => c.ok) ? "all valid" : `${checks.filter(c => !c.ok).length} to look at`, checks.every(c => c.ok) ? "good" : "warn") : null,
+      el("button", { class: "small ghost", onclick: () => this.loadStore(["keys"]) }, "Revalidate")), state("keys"),
+      checks.length ? table(["Check", "Result", ""], checks.map(c => [c.name, el("span", { class: "small", text: c.detail }), badge(c.ok ? "valid" : "check", c.ok ? "good" : "warn")])) : null,
+      secrets.length ? el("details", { class: "feature-more", style: "margin-top:10px" }, el("summary", { text: `GitHub secrets: ${secrets.filter(s => s.name).length} across ${new Set(secrets.map(s => s.repo)).size} repos${old ? ` · ${old} older than 180 days` : " · none older than 180 days"}` }),
+        table(["Repo", "Secret", "Updated", ""], secrets.map(s => [s.repo.split("/")[1], s.name || el("span", { class: "muted", text: s.error }), s.updated ? ago(s.updated) : "—",
+          s.name ? el("a", { href: `https://github.com/${s.repo}/settings/secrets/actions/${s.name}`, target: "_blank", rel: "noopener", class: "small" }, s.old ? "Rotate ›" : "Update ›") : ""]))) : null,
+      el("p", { class: "hint", text: "Names and dates only: secret values never leave GitHub. Update opens GitHub's own page for that secret." })));
+
+    // workflows
+    const runs = ((S.runs || {}).data || {}).runs || [];
+    const rk = r => r.status && r.status !== "completed" ? ["running", "accent"] : r.conclusion === "success" ? ["success", "good"] : r.conclusion ? [r.conclusion, "bad"] : ["never run", ""];
+    box.append(panel("Publishing and automation", el("span", { class: "row" }, el("span", { class: "fig", text: "GitHub Actions" }), el("button", { class: "small ghost", onclick: () => this.loadStore(["runs"]) }, "Refresh")), state("runs"),
+      runs.length ? table(["Workflow", "Last run", "When", ""], runs.map(r => [el("span", {}, r.label, r.title && r.title !== r.label && !r.label.endsWith(r.title.replace(/^[^:]+: /, "")) ? el("div", { class: "muted small", text: r.title }) : null), badge(...rk(r)), ago(r.at),
+        r.url ? el("a", { href: r.url, target: "_blank", rel: "noopener", class: "small" }, "Open ›") : ""])) : null));
+  },
+
+  renderGames() {
+    const box = this.byId("tab-games");
+    if (box.childElementCount) return;  // built once; Refresh reloads the list
+    const pref = (k, d) => { try { return localStorage.getItem("studio.games." + k) || d; } catch (e) { return d; } };
+    const save = (k, v) => { try { localStorage.setItem("studio.games." + k, v); } catch (e) {} };
+    const list = this.el("select", {}, [["similar", "Like the games we mod"], ["search", "App Store search"], ["like", "Like one game"], ["top-free", "Top free"], ["top-paid", "Top paid"], ["top-grossing", "Top grossing"], ["new-free", "New free"], ["new-paid", "New paid"]].map(o => this.el("option", { value: o[0], text: o[1] })));
+    const region = this.el("select", {}, [["us", "USA"], ["jp", "Japan"], ["cn", "China"], ["vn", "Vietnam"], ["gb", "UK"], ["de", "Germany"], ["br", "Brazil"], ["mx", "Mexico"]].map(o => this.el("option", { value: o[0], text: o[1] })));
+    const filter = this.el("input", { placeholder: "filter this list, or Enter to search the whole App Store", style: "flex:1;min-width:200px" });
+    let likeBundle = "", likeName = "", loads = 0;
+    const offline = this.el("input", { type: "checkbox" });
+    const compat = this.el("input", { type: "checkbox" });
+    list.value = pref("list", "similar"); if (list.value === "like" || list.value === "search") list.value = "similar"; region.value = pref("region", "us"); offline.checked = pref("offlineFilter", "0") === "1";
+    compat.checked = pref("compatFilter", "0") === "1";
+    // the engine check reads each game's App Store file list with the owner's Apple ID (scripts/appstore.py)
+    const account = this.el("span", { class: "muted small" });
+    const showAccount = async () => {
+      let a = { signed_in: false };
+      try { a = await this.api("/api/appstore/account"); } catch (e) { /* older server */ }
+      account.replaceChildren(a.signed_in
+        ? this.el("span", {}, `App Store: ${a.email} `, this.el("button", { class: "small", onclick: async () => { await this.api("/api/appstore/logout", {}); showAccount(); } }, "Sign out"))
+        : this.el("button", { class: "small", title: "To check engines: Studio reads each game's file list from the App Store with your Apple ID", onclick: () => this.appStoreLogin(showAccount) }, "App Store sign-in"));
+    };
+    showAccount();
+    const checkAll = this.el("button", { class: "small", title: "Checks every unchecked game in this list that your Apple ID already has; games it doesn't have are counted, never licensed", onclick: async () => {
+      const todo = rows.filter(g => !g.engine && !g.mods.length && g.id);
+      if (!todo.length) { this.toast("every game here is checked", "ok"); return; }
+      checkAll.disabled = true;
+      let done = 0, unowned = 0, failed = 0;
+      for (const g of todo) {
+        checkAll.textContent = `Checking ${done + unowned + failed + 1} of ${todo.length}…`;
+        try {
+          const r = await this.api("/api/games/engine", { id: g.id, bundle: g.bundle });
+          if (r.needs_license) unowned++; else { g.engine = r.verdict; done++; }
+        } catch (e) { failed++; if (/sign in/i.test(e.message)) { this.toast(e.message, "bad"); break; } }
+        draw();
+      }
+      checkAll.disabled = false; checkAll.textContent = "Check engines";
+      this.toast(`${done} checked` + (unowned ? `, ${unowned} not on your Apple ID (Check engine on a card asks to get a free one)` : "") + (failed ? `, ${failed} failed` : ""), failed ? "bad" : "ok");
+    } }, "Check engines");
+    const note = this.el("p", { class: "hint" });
+    const grid = this.el("div", { class: "games" });
+    let rows = [];
+    const draw = () => {
+      const f = list.value === "search" ? "" : filter.value.trim().toLowerCase();  // a search list is already the answer
+      const shown = rows.filter(g => (list.value === "search" || !offline.checked || !g.online) && (!f || [g.name, g.seller, g.bundle, ...g.genres].join(" ").toLowerCase().includes(f))
+        && (!compat.checked || (g.verdict && g.verdict.moddable)));
+      const hidden = rows.filter(g => g.online).length;
+      note.textContent = (list.value === "search" ? `${shown.length} App Store results for "${filter.value.trim()}"` : list.value === "like" ? `${shown.length} games like ${likeName}` : `${shown.length} of ${rows.length} games`)
+        + (list.value !== "search" && offline.checked && hidden ? ` · ${hidden} online or multiplayer hidden by your filter` : "")
+        + (compat.checked ? ` · moddable only: ${rows.filter(g => !g.engine && !g.mods.length).length} not checked yet` : "")
+        + (f && !shown.length ? " · press Enter to search the whole App Store" : "");
+      grid.replaceChildren(...shown.map(g => this.gameCard(g, region.value)));
+    };
+    const load = async () => {
+      save("list", list.value); save("region", region.value);
+      if (list.value === "search" && filter.value.trim().length < 2) { rows = []; grid.replaceChildren(); note.textContent = "Type a name or bundle ID above and press Enter."; return; }
+      if (list.value === "like" && !likeBundle) { rows = []; grid.replaceChildren(); note.textContent = "Press Like this on a card first."; return; }
+      note.textContent = list.value === "similar" || list.value === "like" ? "Looking for similar games (the first time takes about 10 s)…" : "Loading…";
+      grid.replaceChildren();
+      const extra = list.value === "search" ? `&q=${encodeURIComponent(filter.value.trim())}` : list.value === "like" ? `&bundle=${encodeURIComponent(likeBundle)}` : "";
+      const ticket = ++loads;  // a slow earlier list must not land on top of a newer one
+      try { const got = (await this.api(`/api/games?list=${list.value}&region=${region.value}${extra}`)).games; if (ticket === loads) { rows = got; draw(); } }
+      catch (e) { if (ticket === loads) note.textContent = e.message; }
+    };
+    this.gamesLike = (bundle, name) => { likeBundle = bundle; likeName = name; list.value = "like"; filter.value = ""; load(); };
+    list.addEventListener("change", load); region.addEventListener("change", load);
+    filter.addEventListener("input", draw);
+    filter.addEventListener("keydown", ev => { if (ev.key === "Enter" && filter.value.trim().length >= 2) { ev.preventDefault(); list.value = "search"; load(); } }); offline.addEventListener("change", () => { save("offlineFilter", offline.checked ? "1" : "0"); draw(); });
+    compat.addEventListener("change", () => { save("compatFilter", compat.checked ? "1" : "0"); draw(); });
+    this.gamesRedraw = draw;
+    // Keep the .ipa: where an App Store copy goes when a card's App Store copy asks to keep one (scripts/appstore.py)
+    const keepPick = this.el("select", { title: "Where Keep puts a game's App Store .ipa. It stays encrypted to your Apple ID: a backup or an older version, never a mod base" },
+      [["none", "Keep the .ipa: don't keep"], ["pc", "Keep the .ipa: this PC"], ["servers", "Keep the .ipa: our servers (not yet)"]].map(o => this.el("option", { value: o[0], text: o[1] })));
+    this.api("/api/appstore/prefs").then(p => { keepPick.value = p.keep; }).catch(() => {});
+    keepPick.addEventListener("change", async () => {
+      try { await this.api("/api/appstore/prefs", { keep: keepPick.value }); this.toast(keepPick.selectedOptions[0].text, "ok"); }
+      catch (e) { this.toast(e.message, "bad"); }
+    });
+    const keptBtn = this.el("button", { class: "small", title: "App Store copies kept on this PC", onclick: () => this.keptDialog() }, "Kept copies");
+    box.append(
+      this.el("div", { class: "row", style: "margin-bottom:10px" }, list, region, filter,
+        this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center" }, offline, "single-player only"),
+        this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center", title: "Games our switches can run on (Unity IL2CPP), from an engine check or one of our mods; online ones too, for offline play only" }, compat, "moddable only"),
+        this.el("button", { class: "small", onclick: load }, "Refresh")),
+      this.el("div", { class: "row", style: "margin-bottom:6px" }, account, checkAll, keepPick, keptBtn),
+      this.el("p", { class: "hint", text: "From the App Store's public charts and search. Type in the box to filter this list; press Enter to search the whole App Store (a name or a bundle ID). \"Like the games we mod\" ranks games by the themes and genres they share with our mods' games; Like this on a card does the same for one game. Get .ipa looks the game up on the decrypt site; New mod starts a mod from a decrypted copy. Same lists from a console: am games (see am games --help)." }),
+      note, grid);
+    load();
+  },
+  fmtCount(n) { return n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? Math.round(n / 1e3) + "K" : String(n); },
+  // the one verdict a game gets (dev.moddable): Modded, Moddable (· online / · hot-update code), not moddable, or
+  // not checked yet; the engine check's details in its tooltip
+  verdictBadge(g) {
+    const v = g.verdict || { label: "Engine not checked", tone: "unknown", why: "" };
+    const e = g.engine;
+    const tip = v.why + (e ? ` · ${e.engine}, ${e.files} files, version ${e.version}, checked ${e.checked}` : "");
+    return this.el("span", { class: "badge " + (v.tone === "unknown" ? "" : v.tone), title: tip, text: v.label });
+  },
+  gameCard(g, region) {
+    const fmt = n => this.fmtCount(n);
+    const badges = [
+      this.verdictBadge(g),
+      ...g.mods.map(m => this.el("span", { class: "badge good", text: "our mod: " + m.title })),
+      g.ipa ? this.el("span", { class: "badge accent", text: ".ipa " + (g.ipa.version || "") + " ready" }) : null,
+      ...g.like.map(t => this.el("span", { class: "badge", text: "like " + t })),
+    ];
+    return this.el("div", { class: "game" },
+      this.el("div", { class: "top", title: "Details", onclick: () => this.appDetails(g, region) },
+        this.el("img", { src: g.icon, alt: "", loading: "lazy" }),
+        this.el("div", { style: "min-width:0" }, this.el("div", { class: "name", text: g.name }), this.el("div", { class: "seller", text: g.seller }))),
+      this.el("div", { class: "meta", text: [g.rating ? `★ ${g.rating} (${fmt(g.ratings)})` : "no ratings", g.price, g.size ? this.mb(g.size) : null, g.updated ? "updated " + g.updated : null].filter(Boolean).join(" · ") }),
+      g.genres.length ? this.el("div", { class: "meta", text: g.genres.join(", ") }) : null,
+      this.el("div", { class: "badges" }, badges),
+      this.el("div", { class: "acts" }, this.gameActs(g, region)));
+  },
+  // a game's actions, on its card and on its details page
+  gameActs(g, region) {
+    const engineBtn = g.engine || g.mods.length || !g.id ? null : this.el("button", { class: "small", title: "Reads this game's file list from the App Store (not the game): Unity IL2CPP or not", onclick: async () => {
+      engineBtn.disabled = true; engineBtn.textContent = "Checking…";
+      try {
+        let r = await this.api("/api/games/engine", { id: g.id, bundle: g.bundle });
+        if (r.needs_license) {
+          const free = /free|^0/i.test(String(g.price || ""));
+          if (!free) { this.toast(`${g.name} is paid and not on your Apple ID: Studio never buys games`, "bad"); engineBtn.disabled = false; engineBtn.textContent = "Check engine"; return; }
+          if (!confirm(`Your Apple ID doesn't have ${g.name} yet. Get it for free on your account (like tapping Get in the App Store; it shows in your purchases) so Studio can read its file list?`)) { engineBtn.disabled = false; engineBtn.textContent = "Check engine"; return; }
+          r = await this.api("/api/games/engine", { id: g.id, bundle: g.bundle, license: true });
+        }
+        g.engine = r.verdict;
+        try {  // the card's verdict comes from the server (dev.moddable), which now knows the engine
+          g.verdict = (await this.api(`/api/games/info?bundle=${encodeURIComponent(g.bundle)}&region=${encodeURIComponent(region || "us")}`)).verdict || g.verdict;
+        } catch (e) { /* the engine badge still shows in the tooltip after a refresh */ }
+        this.toast(`${g.name}: ${r.verdict.engine}` + (r.verdict.compatible ? " (compatible)" : ""), r.verdict.compatible ? "ok" : "bad");
+        if (this.gamesRedraw) this.gamesRedraw();
+      } catch (e) { this.toast(e.message, "bad"); engineBtn.disabled = false; engineBtn.textContent = "Check engine"; }
+    } }, "Check engine");
+    const newMod = g.mods.length
+      ? this.el("button", { class: "small", onclick: () => { this.select(g.mods[0].name); this.setTab("switches"); } }, "Open mod")
+      : this.el("button", { class: "small primary", title: "decrypted copy, moddability report, mod folder + dump, then the scan, in one job", onclick: () => {
+          if (confirm(`Start a mod for ${g.name}? Studio gets a decrypted copy (if none is here), reports whether it can be modded, makes the mod folder and its dump, and opens the scan.`)) this.job("start", [g.bundle, "--region", ["us", "jp", "cn", "vn"].includes(region) ? region : "us"]);
+        } }, "Start a mod");
+    const report = g.ipa ? this.el("button", { class: "small", title: "engine, decrypted, online, ads and purchases", onclick: () => this.job("report", [g.ipa.path]) }, "Report") : null;
+    return [
+      this.el("button", { class: "small", onclick: () => this.getIpaDialog(g.bundle, region) }, "Get .ipa"),
+      newMod,
+      report,
+      engineBtn,
+      g.id ? this.el("button", { class: "small", title: "Where it's sold, its versions, and keeping the App Store .ipa", onclick: () => this.appStoreCopyDialog(g) }, "App Store copy") : null,
+      this.el("button", { class: "small", onclick: () => this.gamesLike && this.gamesLike(g.bundle, g.name) }, "Like this"),
+      g.url ? this.el("a", { href: g.url, target: "_blank", rel: "noopener", class: "small", style: "align-self:center" }, "App Store") : null,
+    ];
+  },
+
+  // A game's details, laid out like its App Store page: icon, name and developer; ratings, age, size and version;
+  // screenshots; what's new; the description; the information list; and our verdict and actions. From the public
+  // lookup (/api/games/info), with our mods, .ipa and engine check marked in.
+  async appDetails(g, region) {
+    let dlg = this.byId("appd");
+    if (!dlg) { dlg = this.el("dialog", { id: "appd", class: "appd" }); document.body.append(dlg); dlg.addEventListener("click", ev => { if (ev.target === dlg) dlg.close(); }); }
+    const close = this.el("button", { onclick: () => dlg.close() }, "Close");
+    const show = (d, loading) => {
+      const fmt = n => this.fmtCount(n);
+      const stat = (k, v, s) => this.el("div", { class: "stat" }, this.el("div", { class: "k", text: k }), this.el("div", { class: "v", text: v || "–" }), s ? this.el("div", { class: "s", text: s }) : null);
+      const genre = (d.all_genres || d.genres || []).find(x => x !== "Games") || (d.genres || [])[0] || "Games";
+      const longText = (txt) => {
+        const box = this.el("div", { class: "text clip", text: txt });
+        const more = this.el("button", { class: "more", type: "button", onclick: () => { box.classList.remove("clip"); more.remove(); } }, "more");
+        return txt.length > 300 ? [box, more] : [this.el("div", { class: "text", text: txt })];
+      };
+      const v = d.verdict || g.verdict || {};
+      const langs = d.languages || [];
+      const info = [
+        ["Developer", d.seller], ["Size", d.size ? this.mb(d.size) : ""], ["Category", genre],
+        ["Compatibility", d.min_ios ? `iOS ${d.min_ios} or later` : ""], ["Languages", langs.length ? langs.slice(0, 8).join(", ") + (langs.length > 8 ? ` +${langs.length - 8}` : "") : ""],
+        ["Age rating", d.age], ["Content", (d.advisories || []).join("; ")], ["Price", d.price], ["Released", d.released],
+        ["Bundle ID", d.bundle],
+      ].filter(r => r[1]);
+      dlg.replaceChildren(
+        this.el("div", { class: "scroll" },
+          this.el("div", { class: "head" },
+            this.el("img", { src: d.icon || g.icon, alt: "" }),
+            this.el("div", { style: "min-width:0" },
+              this.el("h2", { text: d.name || g.name }),
+              d.seller_url ? this.el("a", { class: "seller", href: d.seller_url, target: "_blank", rel: "noopener", text: d.seller }) : this.el("div", { class: "seller", text: d.seller || g.seller }),
+              this.el("div", { class: "sub", text: [genre, d.price].filter(Boolean).join(" · ") }),
+              this.el("div", { class: "badges" }, this.verdictBadge(d.verdict ? d : g), ...(g.mods || []).map(m => this.el("span", { class: "badge good", text: "our mod: " + m.title }))))),
+          this.el("div", { class: "stats" },
+            stat(`${fmt(d.ratings || 0)} ratings`, d.rating ? `${d.rating} ★` : "–", d.ratings_now ? `${d.rating_now} ★ this version` : null),
+            stat("Age", d.age), stat("Category", genre), stat("Size", d.size ? this.mb(d.size) : ""), stat("Version", d.version, d.updated)),
+          loading ? this.el("p", { class: "hint", text: "Loading its App Store page…" }) : null,
+          (d.screenshots || []).length ? this.el("h4", { text: "Preview" }) : null,
+          (d.screenshots || []).length ? this.el("div", { class: "shots" }, d.screenshots.map(u => this.el("img", { src: u, alt: "", loading: "lazy" }))) : null,
+          d.notes ? this.el("h4", { text: "What's new" }) : null,
+          d.notes ? this.el("div", { class: "sub muted small", text: [d.version && "Version " + d.version, d.updated].filter(Boolean).join(" · ") }) : null,
+          ...(d.notes ? longText(d.notes) : []),
+          d.description ? this.el("h4", { text: "About" }) : null,
+          ...(d.description ? longText(d.description) : []),
+          this.el("div", { class: "ours" },
+            this.el("b", { text: "For modding: " }), this.el("span", { text: v.label || "Engine not checked" }),
+            v.why ? this.el("div", { class: "why", text: v.why }) : null,
+            (d.themes || []).length ? this.el("div", { class: "why", text: "Themes: " + d.themes.join(", ") }) : null,
+            this.el("div", { class: "acts", style: "margin-top:10px" }, this.gameActs(Object.assign({}, g, d), region))),
+          info.length ? this.el("h4", { text: "Information" }) : null,
+          info.length ? this.el("dl", { class: "info" }, info.flatMap(([k, val]) => [this.el("dt", { text: k }), this.el("dd", { text: String(val) })])) : null),
+        this.el("div", { class: "foot" }, d.url ? this.el("a", { href: d.url, target: "_blank", rel: "noopener", class: "small", style: "align-self:center" }, "Open in the App Store") : null, close));
+    };
+    show(g, true);
+    if (!dlg.open) dlg.showModal();
+    try {
+      const d = await this.api(`/api/games/info?bundle=${encodeURIComponent(g.bundle)}&region=${encodeURIComponent(region || "us")}`);
+      if (dlg.open) show(Object.assign({}, g, d), false);
+    } catch (e) {
+      if (dlg.open) { show(g, false); this.toast(e.message, "bad"); }
+    }
+  },
+
+  // A game's App Store copy: where it is sold (public lookup), the store's versions (signed in), and Keep, which
+  // downloads the whole .ipa as a job. The copy stays encrypted to the Apple ID: a backup or an older version.
+  async appStoreCopyDialog(g) {
+    const dlg = this.byId("dlg"), body = this.byId("dlgBody"); body.replaceChildren();
+    const regionsBox = this.el("div", { class: "sec" }, this.el("h3", { text: "Where it's sold" }), this.el("p", { class: "hint", text: "Asking every App Store…" }));
+    const versionsBox = this.el("div", { class: "sec" }, this.el("h3", { text: "Versions" }));
+    const keepRow = this.el("div", { class: "row", style: "margin-top:14px;justify-content:flex-end" });
+    body.append(this.el("form", { method: "dialog" },
+      this.el("h3", { text: `${g.name}: App Store copy` }),
+      this.el("p", { class: "hint", text: "An App Store .ipa stays encrypted to your Apple ID: it installs as it is on phones signed in with that Apple ID (no 7-day or yearly limit), but it can't be re-signed or modded." }),
+      regionsBox, versionsBox, keepRow));
+    dlg.showModal();
+    // where it's sold, from the public lookup in every storefront (cached a day)
+    this.api(`/api/appstore/regions?bundle=${encodeURIComponent(g.bundle)}`).then(r => {
+      const sold = Object.entries(r.sold), tb = this.el("tbody");
+      for (const [c, v] of sold) tb.append(this.el("tr", {},
+        this.el("td", { class: "mono", text: c.toUpperCase() }),
+        this.el("td", { text: v.name !== g.name ? v.name : "" }),
+        this.el("td", { text: v.price ? `${v.price} ${v.currency}` : "free" }),
+        this.el("td", { class: "mono", text: v.version })));
+      regionsBox.replaceChildren(this.el("h3", { text: "Where it's sold" }),
+        this.el("p", { class: "hint", text: `Sold in ${sold.length} App Stores` + (r.missing.length ? `, not in ${r.missing.length}: ${r.missing.map(c => c.toUpperCase()).join(", ")}` : "") + (r.unknown.length ? ` (${r.unknown.length} didn't answer)` : "") + `. Checked ${r.checked}.` }),
+        this.el("div", { style: "max-height:220px;overflow:auto" }, this.el("table", {}, this.el("thead", {}, this.el("tr", {}, ["store", "name there", "price", "version"].map(h => this.el("th", { text: h })))), tb)));
+    }).catch(e => regionsBox.replaceChildren(this.el("h3", { text: "Where it's sold" }), this.el("p", { class: "hint", text: e.message })));
+    // the store's versions for this Apple ID; a version id's number is looked up when it is picked
+    let account = { signed_in: false }, choice = "none";
+    try { account = await this.api("/api/appstore/account"); choice = (await this.api("/api/appstore/prefs")).keep; } catch (e) { /* older server */ }
+    if (!account.signed_in) { versionsBox.append(this.el("p", { class: "hint", text: "Sign in to the App Store (AppStore tab) to see versions and keep a copy." })); keepRow.append(this.el("button", { type: "button", onclick: () => dlg.close() }, "Close")); return; }
+    const pick = this.el("select", { style: "width:100%" }), about = this.el("p", { class: "hint", text: "" });
+    const license = async () => {
+      const free = /free|^0/i.test(String(g.price || ""));
+      if (!free) { this.toast(`${g.name} is paid and not on your Apple ID: Studio never buys games`, "bad"); return false; }
+      return confirm(`Your Apple ID doesn't have ${g.name} yet. Get it for free on your account (like tapping Get in the App Store; it shows in your purchases)?`);
+    };
+    let licensed = false, v;
+    versionsBox.append(this.el("p", { class: "hint", text: "Loading the store's versions…" }));
+    try {
+      v = await this.api("/api/appstore/versions", { id: g.id });
+      if (v.needs_license) {
+        if (!(await license())) { versionsBox.replaceChildren(this.el("h3", { text: "Versions" }), this.el("p", { class: "hint", text: "Not on your Apple ID." })); keepRow.append(this.el("button", { type: "button", onclick: () => dlg.close() }, "Close")); return; }
+        licensed = true;
+        await this.api("/api/games/engine", { id: g.id, bundle: g.bundle, license: true });  // gets the free license, and checks the engine
+        v = await this.api("/api/appstore/versions", { id: g.id });
+      }
+    } catch (e) { versionsBox.replaceChildren(this.el("h3", { text: "Versions" }), this.el("p", { class: "hint", text: e.message })); keepRow.append(this.el("button", { type: "button", onclick: () => dlg.close() }, "Close")); return; }
+    const ids = [...v.ids].reverse();  // newest first
+    pick.replaceChildren(...ids.map((id, i) => this.el("option", { value: id === v.latest ? "" : id, text: id === v.latest ? `newest (${id})` : `${ids.length - i}. version id ${id}` })));
+    const describe = async () => {
+      if (!pick.value) { about.textContent = "The newest version."; return; }
+      about.textContent = "Looking up this version…";
+      try { const i = await this.api("/api/appstore/version", { id: g.id, version_id: pick.value }); about.textContent = `Version ${i.version || "?"}` + (i.released ? `, released ${String(i.released).slice(0, 10)}` : ""); }
+      catch (e) { about.textContent = e.message; }
+    };
+    pick.addEventListener("change", describe); describe();
+    versionsBox.replaceChildren(this.el("h3", { text: `Versions (${ids.length})` }), pick, about);
+    const where = { none: "Keep is off (AppStore tab: Keep the .ipa)", pc: "Keeps it on this PC", servers: "Our servers aren't ready yet" }[choice];
+    const keepBtn = this.el("button", { type: "button", class: "primary", disabled: choice !== "pc", title: where, onclick: async () => {
+      keepBtn.disabled = true;
+      try {
+        const j = await this.api("/api/appstore/keep", { id: g.id, bundle: g.bundle, version_id: pick.value, license: licensed });
+        dlg.close(); this.showJob(j); this.poll(j.id); this.openJobs();
+        this.toast(`Keeping ${g.name}: the download follows in Jobs`, "ok");
+      } catch (e) { this.toast(e.message, "bad"); keepBtn.disabled = false; }
+    } }, choice === "pc" ? "Keep on this PC" : "Keep");
+    keepRow.append(this.el("span", { class: "muted small", style: "margin-right:auto;align-self:center", text: where }),
+      this.el("button", { type: "button", onclick: () => dlg.close() }, "Close"), keepBtn);
+  },
+
+  async keptDialog() {
+    const dlg = this.byId("dlg"), body = this.byId("dlgBody"); body.replaceChildren();
+    let k = { kept: [], folder: "" };
+    try { k = await this.api("/api/appstore/kept"); } catch (e) { this.toast(e.message, "bad"); return; }
+    const tb = this.el("tbody");
+    for (const r of k.kept) {
+      const del = this.el("button", { class: "small", type: "button", onclick: async () => {
+        if (!confirm(`Delete ${r.file} from this PC? It can be downloaded again while the App Store keeps that version.`)) return;
+        try { await this.api("/api/appstore/forget", { file: r.file }); dlg.close(); this.keptDialog(); } catch (e) { this.toast(e.message, "bad"); }
+      } }, "Delete");
+      tb.append(this.el("tr", {}, this.el("td", { class: "mono", text: r.bundle }), this.el("td", { class: "mono", text: r.version }),
+        this.el("td", { text: this.mb(r.size) }), this.el("td", { text: r.kept }), this.el("td", {}, del)));
+    }
+    body.append(this.el("form", { method: "dialog" },
+      this.el("h3", { text: "Kept App Store copies" }),
+      this.el("p", { class: "hint", text: `In ${k.folder}. Encrypted to your Apple ID: they install as they are on its phones (pymobiledevice3 apps install), never as a mod base.` }),
+      k.kept.length ? this.el("table", {}, this.el("thead", {}, this.el("tr", {}, ["game", "version", "size", "kept", ""].map(h => this.el("th", { text: h })))), tb)
+        : this.el("p", { class: "hint", text: "Nothing kept yet: App Store copy on a game card." }),
+      this.el("div", { class: "row", style: "margin-top:14px;justify-content:flex-end" }, this.el("button", { type: "button", onclick: () => dlg.close() }, "Close"))));
+    dlg.showModal();
+  },
+
+  // App Store sign-in for engine checks: the password and the code go to Apple through this PC's Studio and are
+  // never saved; Studio keeps Apple's session token, encrypted for this Windows user.
+  appStoreLogin(after) {
+    const email = this.el("input", { type: "email", placeholder: "Apple ID", autocomplete: "username", style: "width:100%" });
+    const pass = this.el("input", { type: "password", placeholder: "Password", autocomplete: "current-password", style: "width:100%;margin-top:6px" });
+    const code = this.el("input", { inputmode: "numeric", placeholder: "Code from your Apple device", autocomplete: "one-time-code", style: "width:100%;margin-top:6px;display:none" });
+    const msg = this.el("p", { class: "hint", text: "Used only to read games' file lists (Check engine). Your password and code go to Apple and are not saved; Studio keeps Apple's sign-in token on this PC, encrypted for your Windows account." });
+    const go = this.el("button", { class: "primary" }, "Sign in");
+    const dlg = this.el("dialog", { style: "max-width:360px" }, this.el("h3", { text: "App Store sign-in" }), email, pass, code, msg,
+      this.el("div", { class: "row", style: "margin-top:8px;justify-content:flex-end" }, this.el("button", { onclick: () => { dlg.close(); dlg.remove(); } }, "Cancel"), go));
+    go.onclick = async () => {
+      go.disabled = true;
+      try {
+        const r = await this.api("/api/appstore/login", { email: email.value.trim(), password: pass.value, code: code.value.trim() });
+        if (r.needs_code) { code.style.display = ""; code.focus(); msg.textContent = "Apple sent a code to your devices: type it and press Sign in again."; return; }
+        pass.value = ""; dlg.close(); dlg.remove();
+        this.toast(`Signed in to the App Store as ${r.email}`, "ok");
+        if (after) after();
+      } catch (e) { msg.textContent = e.message; } finally { go.disabled = false; }
+    };
+    document.body.append(dlg);
+    dlg.showModal();
+    email.focus();
+  },
+
+  // ---------------------------------------------------------------- new mod
+  async newModDialog(bundle, appName) {
+    let ipas = [];
+    try { ipas = (await this.api("/api/bases")).ipas; } catch (e) { this.toast(e.message, "bad"); }
+    const base = bundle ? ipas.find(i => i.bundle === bundle) : null;
+    if (bundle && !base) { this.toast(`No decrypted .ipa of ${appName || bundle} yet: get one first`, "bad"); return this.getIpaDialog(bundle); }
+    const opts = [["", "choose a decrypted .ipa from intake/ or Downloads…"], ...ipas.map(i => [i.path, `${i.name} ${i.version} · ${i.bundle} · ${this.mb(i.size)}${i.fetched ? " · decrypt site" : ""}`])];
+    this.dialog("New personal mod", [
+      { type: "note", text: "Makes mods/<name>/ from a decrypted .ipa of the game, then dumps it. Nothing is uploaded. No copy yet? Close this and use Get .ipa." },
+      { name: "name", label: "Folder name", help: "lowercase letters, digits, dashes", value: base ? (base.name || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") + "-plus" : "", placeholder: "my-game-plus", mono: true },
+      { name: "title", label: "Menu title", value: base ? (base.name || "") + "+" : "", placeholder: "My Game+" },
+      { name: "pick", label: "Base .ipa", type: "select", options: opts, value: base ? base.path : "", onchange: i => { if (i.pick.value) { const row = ipas.find(x => x.path === i.pick.value); i.path.value = i.pick.value; if (!i.title.value) i.title.value = row.name + "+"; if (!i.name.value) i.name.value = row.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") + "-plus"; } } },
+      { name: "path", label: "or a path", value: base ? base.path : "", mono: true },
+    ], async v => {
+      if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(v.name)) { this.toast("name: lowercase letters, digits and dashes", "bad"); return false; }
+      if (!v.path) { this.toast("choose a base .ipa", "bad"); return false; }
+      await this.job("new", [v.name, v.path, "--title", v.title || v.name]);
+      return true;
+    }, "Create and dump");
+  },
+
+  // ---------------------------------------------------------------- get .ipa (decrypt site)
+  async getIpaDialog(preset, presetRegion) {
+    const dlg = this.byId("dlg"), body = this.byId("dlgBody"); body.replaceChildren();
+    const status = this.el("p", { class: "hint", text: "Checking the decrypt site…" });
+    const q = this.el("input", { class: "mono", placeholder: "bundle ID (com.company.game) or app name", value: preset || "", style: "width:100%" });
+    const region = this.el("select", {}, [["us", "USA"], ["jp", "Japan"], ["cn", "China"], ["vn", "Vietnam"]].map(o => this.el("option", { value: o[0], text: o[1] })));
+    const platform = this.el("select", {}, [["iphone", "iPhone / iPad"], ["appletv", "Apple TV"], ["vision", "Vision Pro"]].map(o => this.el("option", { value: o[0], text: o[1] })));
+    const source = this.el("select", {}, [["eevee", "decrypt.whoeevee.com (main)"], ["telegram", "Telegram decrypt bot"], ["34306", "decrypt.34306.lol"], ["decrypt.day", "decrypt.day (browser)"], ["armconverter", "armconverter.com (browser, your account)"]].map(o => this.el("option", { value: o[0], text: o[1] })));
+    const results = this.el("div", { style: "margin-top:10px;max-height:320px;overflow:auto" });
+    const viaBrowser = () => {
+      const bundle = q.value.trim(), isId = /^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)+$/.test(bundle);
+      return [this.el("p", { class: "hint", text: "Get opens the site in your browser (sign in there if it asks): find the app, download it, and Studio picks the file up from Downloads, checks it and moves it to intake/." + (isId ? "" : " Type the bundle ID (com.company.game) above first.") }),
+        this.el("div", { class: "row" }, this.el("button", { class: "small primary", disabled: isId ? null : "", onclick: () => { dlg.close(); this.job("fetch", [bundle, "--source", source.value, "--region", region.value, "--platform", platform.value]); } }, "Get " + (isId ? bundle : "…") + " through the browser"))];
+    };
+    const account = this.el("div", { class: "sec", style: "margin-top:12px" });
+    const search = async () => {
+      if (q.value.trim().length < 2) return;
+      if (source.value === "eevee") {
+        // decrypt.whoeevee.com's API with your access token (dev.py fetch --save-key): the newest version or the one
+        // you type; if it has nothing for the newest, Studio asks the Telegram bot (scripts/ipa_fetch.py eevee)
+        const target = q.value.trim();
+        const version = this.el("input", { class: "mono", placeholder: "version (empty: newest)", style: "width:180px" });
+        results.replaceChildren(this.el("p", { class: "hint", text: "Studio asks decrypt.whoeevee.com for the decrypted .ipa (bundle ID, App Store link or id), checks it and saves it in intake/. First time: save your access token once in a console with python scripts/dev.py fetch --save-key (hidden input)." }),
+          this.el("div", { class: "row" }, version, this.el("button", { class: "small primary", onclick: () => { dlg.close(); const v = version.value.trim(); this.job("fetch", [target, "--source", "eevee", "--region", region.value, ...(v ? ["--version", v] : [])]); } }, `Get ${target}`)));
+        return;
+      }
+      if (source.value === "telegram") {
+        // the bot gets the game's App Store link from your Telegram account; its answer is followed, checked
+        // (decrypted, the right app) and saved in intake/ (scripts/telegram_fetch.py)
+        const target = q.value.trim();
+        results.replaceChildren(this.el("p", { class: "hint", text: "Studio sends the game's App Store link to the decrypt bot from your Telegram account, follows the bot's answer and saves the decrypted .ipa in intake/. First time: sign in once in a console with python scripts/telegram_fetch.py login (uv run --with telethon)." }),
+          this.el("div", { class: "row" }, this.el("button", { class: "small primary", onclick: () => { dlg.close(); this.job("fetch", [target, "--source", "telegram", "--region", region.value]); } }, `Ask the bot for ${target}`)));
+        return;
+      }
+      if (source.value !== "34306") { results.replaceChildren(...viaBrowser()); return; }
+      results.replaceChildren(this.el("p", { class: "hint", text: "Searching…" }));
+      try {
+        const r = await this.api(`/api/fetch/search?q=${encodeURIComponent(q.value.trim())}&region=${region.value}&platform=${platform.value}`);
+        results.replaceChildren();
+        if (!r.results.length) results.append(this.el("p", { class: "hint", text: "Nothing found in that store." }));
+        for (const a of r.results) {
+          const cached = a.is_cached ? this.el("span", { class: "badge good", text: "ready" }) : a.cached_version ? this.el("span", { class: "badge warn", text: "older " + a.cached_version + " ready" }) : this.el("span", { class: "badge", text: "needs a decrypt" });
+          results.append(this.el("div", { class: "row", style: "margin-bottom:8px" },
+            this.el("div", { class: "grow" }, this.el("b", { text: a.name }), " ", this.el("span", { class: "muted small", text: a.version + (a.size_bytes ? " · " + this.mb(Number(a.size_bytes)) : "") }), this.el("br"), this.el("span", { class: "mono small muted", text: a.bundle_id }), " ", cached),
+            this.el("button", { class: "small primary", onclick: () => { dlg.close(); this.job("fetch", [a.bundle_id, "--source", "34306", "--region", region.value, "--platform", platform.value]); } }, "Get")));
+        }
+      } catch (e) {
+        results.replaceChildren(this.el("p", { class: "hint", text: e.message }));
+        if (/captcha/i.test(e.message)) results.append(...viaBrowser());
+      }
+    };
+    const showAccount = a => {
+      status.textContent = `${a.site}: ${a.up ? "up" : "not answering"}${a.paused ? " · paused, no new decrypts right now (apps marked ready still download)" : ""}`;
+      account.replaceChildren(this.el("h3", { text: "Site account" }));
+      if (a.user) {
+        const u = a.user;
+        account.append(this.el("div", { class: "row" }, this.el("span", { class: "grow", text: `${u.email} · ${!u.approved ? "waiting for the site admin's approval" : u.limit == null ? "no daily limit" : `${u.remaining} of ${u.limit} new decrypts left today`}` }),
+          this.el("button", { class: "small", onclick: async () => { await this.api("/api/fetch/logout", {}); showAccount(await this.api("/api/fetch/account")); } }, "Sign out")));
+      } else {
+        const email = this.el("input", { type: "email", placeholder: "e-mail", style: "width:100%" }), pw = this.el("input", { type: "password", placeholder: "password", style: "width:100%" });
+        account.append(this.el("p", { class: "hint", text: "Apps marked ready download with no account. A new decrypt needs an account on the site, made on the site itself and approved by its admin. The password goes to the site only; Studio keeps just the session." }),
+          this.el("div", { class: "row" }, email, pw, this.el("button", { class: "small", onclick: async () => {
+            try { await this.api("/api/fetch/login", { email: email.value.trim(), password: pw.value }); pw.value = ""; showAccount(await this.api("/api/fetch/account")); this.toast("signed in", "ok"); } catch (e) { this.toast(e.message, "bad"); }
+          } }, "Sign in")));
+      }
+    };
+    q.addEventListener("keydown", ev => { if (ev.key === "Enter") { ev.preventDefault(); search(); } });
+    body.append(this.el("h3", { text: "Get a decrypted .ipa" }),
+      this.el("p", { class: "hint", text: "From the decrypt site (another party's Mac, free, may be paused). The copy lands in intake/, is checked (right app, not encrypted) and its origin is saved next to it. Use mods built on it on your own phone." }),
+      status, q, this.el("div", { class: "row", style: "margin-top:8px" }, source, region, platform, this.el("button", { class: "primary", onclick: search }, "Search")),
+      results, account,
+      this.el("div", { class: "row", style: "margin-top:14px;justify-content:flex-end" }, this.el("button", { onclick: () => dlg.close() }, "Close")));
+    dlg.showModal();
+    this.api("/api/fetch/account").then(showAccount).catch(e => { status.textContent = e.message; });
+    if (presetRegion && ["us", "jp", "cn", "vn"].includes(presetRegion)) region.value = presetRegion;
+    if (preset) search();
+  },
+
+  init() {
+    this.api("/api/jobs").then(data=>{
+      for (const job of data.jobs) {
+        this.showJob(job);
+        if (["queued", "running", "stopping"].includes(job.status)) this.poll(job.id);
+        else {
+          const details = this.byId("job-" + job.id); details.open = false;
+          let loaded = false;
+          details.addEventListener("toggle", async()=>{
+            if (!details.open || loaded) return; loaded = true;
+            try { this.showJob(await this.api(`/api/jobs/${job.id}?since=0`)); } catch(e) {loaded=false;this.toast(e.message,"bad");}
+          });
+        }
+      }
+    }).catch(e=>this.toast(e.message,"bad"));
+    const checkVersion = async () => {
+      try {
+        const v = await this.api("/api/studio");
+        this.byId("studioVersion").textContent = v.stale ? "Studio update available" : "Studio " + v.loaded;
+        this.byId("restartStudio").classList.toggle("hidden", !v.stale);
+        this.byId("restartStudio").disabled = v.busy;
+      } catch (e) { this.byId("studioVersion").textContent = "Server unavailable; reconnecting…"; }
+    };
+    this.byId("restartStudio").onclick = async () => {
+      try {
+        await this.api("/api/studio/restart", {});
+        let attempts = 0;
+        const reconnect = async () => {
+          try { const status = await this.api("/api/studio"); if (!status.stale) { location.reload(); return; } } catch(e) { /* server is restarting */ }
+          if (++attempts < 30) setTimeout(reconnect, 1000); else this.toast("Studio has not reconnected yet; use the launcher to reopen it", "bad");
+        };
+        setTimeout(reconnect, 500);
+      }
+      catch (e) { this.toast(e.message, "bad"); }
+    };
+    checkVersion(); setInterval(checkVersion, 10000);
+    const theme = localStorage.getItem("studio.theme") || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+    document.documentElement.dataset.theme = theme;
+    this.byId("themeBtn").addEventListener("click", () => { const t = document.documentElement.dataset.theme === "light" ? "dark" : "light"; document.documentElement.dataset.theme = t; localStorage.setItem("studio.theme", t); });
+    this.byId("tabs").addEventListener("click", ev => { const b = ev.target.closest("button"); if (b) this.setTab(b.dataset.tab); });
+    this.byId("newBtn").addEventListener("click", () => this.newModDialog());
+    this.byId("getBtn").addEventListener("click", () => this.getIpaDialog());
+    this.byId("reloadMods").addEventListener("click", () => this.loadMods());
+    this.byId("clearJobs").addEventListener("click", () => { this.byId("jobs").replaceChildren(); this.drawJobChips(); });
+    // workspace: header Build and run, phone panel, jobs dock
+    this.byId("runPhone").addEventListener("click", () => this.mod && this.runOnPhone(["--seconds", "75"]));
+    this.byId("phoneWatch").addEventListener("click", async () => { if (!this.mod) return; await this.job("log", ["--seconds", "300"]); setTimeout(() => this.refreshLive(), 3000); });
+    this.byId("phonePush").addEventListener("click", () => this.mod && this.job("push", []));
+    this.byId("phoneShotBtn").addEventListener("click", () => this.mod && this.phoneShot());
+    this.byId("jobsToggle").addEventListener("click", () => this.openJobs(!this.byId("jobsPanel").classList.contains("open")));
+    let jobsOpen = false;
+    try { jobsOpen = localStorage.getItem("studio.jobs.open") === "1"; } catch (e) { /* private window */ }
+    this.openJobs(jobsOpen);
+    this.renderPhonePanel();
+    this.loadMods().catch(e => this.toast(e.message, "bad"));
+  },
+};
+App.init();
