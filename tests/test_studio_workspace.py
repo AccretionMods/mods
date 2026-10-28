@@ -42,12 +42,22 @@ class Snapshots(unittest.TestCase):
         return self.state / "snapshots" / "sample-mod" / (identifier + ".json")
 
     def test_only_the_newest_snapshots_stay(self):
-        ids = [self.create()["id"] for _ in range(4)]
+        ids = []
+        for i in range(4):  # a change each time: an unchanged mod isn't snapshotted again
+            (self.mod / "Tweak.x").write_text(f"version {i}\n", encoding="utf-8")
+            ids.append(self.create()["id"])
         for i, identifier in enumerate(ids):  # distinct file times, oldest first
             import os
             os.utime(self.manifest(identifier), (1000 + i, 1000 + i))
         workspace.snapshot_prune(self.state, "sample-mod", keep=2)
         self.assertEqual([self.manifest(i).exists() for i in ids], [False, False, True, True])
+
+    def test_unchanged_mod_is_not_snapshotted_again(self):
+        first = self.create()
+        self.assertEqual(self.create()["id"], first["id"])
+        (self.mod / "Tweak.x").write_text("changed\n", encoding="utf-8")
+        self.assertNotEqual(self.create()["id"], first["id"])
+        self.assertEqual(len(workspace.snapshot_list(self.state, "sample-mod")), 2)
 
     def test_create_preview_restore_and_recovery_preserve_absence(self):
         snap = self.create()

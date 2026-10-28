@@ -21,6 +21,7 @@ plumesign (--apple-id, Windows); installs and device logs need the phone on USB 
   dev.py tweak <mod> <key> --title T [--slider MIN MAX DEFAULT]  a switch or slider with no hook (for Tweak.x code)
   dev.py remove <mod> <key or Class.method>                      drop a tweak (and hooks nothing else uses)
   dev.py gen <mod>                                               regenerate AMTweaks.gen.m from tweaks.json
+  dev.py snapshots <mod> [--restore ID]                         configuration snapshots (taken before every change)
   dev.py check <mod>                                             hooks.json against the current dump
   dev.py build <mod> [--ipa] [--bump] [--base file.ipa] [--no-hooks]  .dylib (and .ipa) in C:\\AccretionMods\\builds
   dev.py sign <file.ipa> [--install] [--mod M] [--apple-id] [--minimal-entitlements]  certificate signing (zsign, keeps the ID); --apple-id: plumesign
@@ -1241,6 +1242,26 @@ Depends: mobilesubstrate
 """
 
 
+def keep_out_of_git(name):
+    """A personal mod never goes into the public repository: list its folder in this checkout's own
+    .git/info/exclude (local, never pushed), so `git add -A` can't pick it up."""
+    try:
+        r = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--git-path", "info/exclude"],
+                           capture_output=True, text=True, check=False)
+        if r.returncode != 0:
+            return
+        exclude = Path(r.stdout.strip())
+        exclude = exclude if exclude.is_absolute() else ROOT / exclude
+        line = f"/mods/{name}/"
+        current = exclude.read_text(encoding="utf-8") if exclude.is_file() else ""
+        if line not in current.splitlines():
+            exclude.parent.mkdir(parents=True, exist_ok=True)
+            with open(exclude, "a", encoding="utf-8", newline="\n") as f:
+                f.write(("" if not current or current.endswith("\n") else "\n") + line + "\n")
+    except OSError:
+        pass  # a checkout without git: nothing to protect
+
+
 def cmd_new(args):
     name = args.name
     if not re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", name):
@@ -1321,6 +1342,7 @@ def cmd_new(args):
     )
     if r.returncode != 0:
         raise DevError("validate_mods.py failed")
+    keep_out_of_git(name)
     print(f"==> Made mods/{name} for {app} {version}")
     print(
         f'    Next: dev.py dump {name}; dev.py find {name} Damage; dev.py add {name} Player.TakeDamage --title "No damage"'
@@ -3332,6 +3354,11 @@ def build_parser():
     s.add_argument("mod")
     s.set_defaults(fn=cmd_gen)
 
+    s = sub.add_parser("snapshots", help="a mod's configuration snapshots; --restore ID puts one back")
+    s.add_argument("mod")
+    s.add_argument("--restore", metavar="ID", help="the snapshot to put back (its id from the list)")
+    s.set_defaults(fn=cmd_snapshots)
+
     s = sub.add_parser("check")
     s.add_argument("mod")
     s.set_defaults(fn=cmd_check)
@@ -3554,12 +3581,65 @@ def build_parser():
     return p
 
 
+# Commands that change a mod's files: the same snapshot Studio takes first (its Snapshots dialog and
+# `dev.py snapshots` list them), so a change made from the command line or a script can be undone too.
+SNAPSHOT_BEFORE = {"add", "pin", "call", "tweak", "remove", "mark", "gen", "build", "update", "run"}
+
+
+def _workspace():
+    studio = str(Path(__file__).resolve().parent.parent / "studio")  # this checkout's, whatever ROOT points at
+    if studio not in sys.path:
+        sys.path.insert(0, studio)
+    import workspace
+
+    return workspace
+
+
+def snapshot_before(mod, label):
+    """A snapshot of the mod's configuration (skipped when it is the same as the newest); never stops the command."""
+    try:
+        folder = mod_dir(mod)
+        _workspace().snapshot_create(am_root() / "studio", mod, folder, label)
+    except DevError:
+        pass  # an unknown mod: the command itself says so
+    except (ImportError, OSError, ValueError) as error:
+        print(f"(no snapshot: {error})", file=sys.stderr)
+
+
+def cmd_snapshots(args):
+    """The mod's configuration snapshots, newest first; --restore ID puts one back (after a recovery snapshot)."""
+    workspace = _workspace()
+    state, folder = am_root() / "studio", mod_dir(args.mod)
+    if not args.restore:
+        rows = workspace.snapshot_list(state, args.mod)
+        if not rows:
+            print(f"no snapshots of {args.mod} yet")
+        for row in rows:
+            print(f"{row['id']}  {row['created_at'][:19].replace('T', ' ')}  {row['label']}")
+        return 0
+    try:
+        preview = workspace.snapshot_preview(state, args.mod, folder, args.restore)
+        changed = [f["name"] for f in preview["files"] if f.get("diff") or f["before_present"] != f.get("after_present")]
+        if not changed:
+            print("that snapshot matches the mod's current files: nothing to restore")
+            return 0
+        result = workspace.snapshot_restore(state, args.mod, folder, args.restore, preview["expected"])
+    except (OSError, ValueError) as error:
+        raise DevError(f"restore failed: {error}")
+    print(f"==> restored {', '.join(changed)} from {args.restore}")
+    print(f"    the files before it: snapshot {result['recovery_id']} (dev.py snapshots {args.mod} --restore it to undo)")
+    return 0
+
+
 def main(argv=None):
     p = build_parser()
     if not argv and len(sys.argv) == 1:
         p.print_help()
         return 0
     args = p.parse_args(argv)
+    command = (argv if argv is not None else sys.argv[1:])[:1]
+    if command and command[0] in SNAPSHOT_BEFORE and getattr(args, "mod", None):
+        snapshot_before(args.mod, "before " + command[0] + " (command line)")
     try:
         return args.fn(args) or 0
     except DevError as e:
