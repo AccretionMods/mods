@@ -307,7 +307,8 @@ def problems(tweaks, hooks):
 
 PIN_WHEN = ("always", "lower", "higher")
 # "HotFix:GameManager.m_t": a class outside Assembly-CSharp carries its assembly (AMIl2cppClass reads it)
-OBJECT_SPEC = re.compile(r"^(?:[A-Za-z_][\w.-]*:)?[A-Za-z_][\w.]*(\[\])?$")
+# "Class.<Prop>k__BackingField" reaches a static auto-property (a game's ClientWorld.Base, say) as a root.
+OBJECT_SPEC = re.compile(r"^(?:[A-Za-z_][\w.-]*:)?[A-Za-z_][\w.]*(?:\.<[A-Za-z_]\w*>k__BackingField)?(\[\])?$")
 # a fixed-point number (Photon's FP: a long holding value * 65536): the pin's "scale"
 FP_SCALE = 65536
 NAME = re.compile(r"^[A-Za-z_<][\w<>]*$")

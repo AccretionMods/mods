@@ -577,6 +577,16 @@ class Pins(unittest.TestCase):
         self.assertEqual(m.count('[menu addSection:@"Other"];'), 2)
         self.assertLess(m.index('[menu addSection:@"Other"];'), m.index('addSwitch:@"keepAwake"'))
 
+    def test_static_auto_property_backing_field_is_a_root(self):
+        pin = {"object": "ClientWorld.<Base>k__BackingField", "root_class": "BaseClientWorld",
+               "path": [{"getter": "get_game", "class": "GameContext"},
+                        {"getter": "get_avatarEntity", "class": "GameEntity"}],
+               "class": "GameEntity", "setter": "set_isNotPursuitTarget", "ctype": "bool", "value": True}
+        self.assertEqual(self.pin(pin), [])
+        for bad in ("ClientWorld.<a b>k__BackingField", "ClientWorld.<Base>k__BackingField.x",
+                    "<Base>k__BackingField", "ClientWorld.<Base>", "ClientWorld.<Base>k__BackingField[]x"):
+            self.assertTrue(self.pin(dict(pin, object=bad)), bad)
+
     def test_fixed_point_and_assembly_qualified_objects(self):
         fp = {"object": "HotFix:HotFix.GameManager.m_t", "field": "MoveSpeed", "ctype": "int64_t",
               "value": 1.5, "when": "lower", "threshold": 1, "scale": 65536}
