@@ -11,6 +11,7 @@ from unittest import mock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
 import dev
+import dev_signing
 
 
 class Result:
@@ -41,10 +42,10 @@ class Signing(unittest.TestCase):
                                   replace_original=False, **flags)
         with mock.patch.object(dev.subprocess, "run", side_effect=fake_run), \
                 mock.patch.object(dev, "ipa_info", return_value=({"CFBundleIdentifier": "com.example.game"}, None)), \
-                mock.patch.object(dev, "phone_apps", side_effect=[dict.fromkeys(apps), {"com.example.game": {}}]), \
-                mock.patch.object(dev, "pymobiledevice3_cli", return_value="pmd3"), \
-                mock.patch.object(dev, "plumesign", return_value="plumesign"), \
-                mock.patch.object(dev, "usbmux_device_id", return_value="1"):
+                mock.patch.object(dev_signing, "phone_apps", side_effect=[dict.fromkeys(apps), {"com.example.game": {}}]), \
+                mock.patch.object(dev_signing, "pymobiledevice3_cli", return_value="pmd3"), \
+                mock.patch.object(dev_signing, "plumesign", return_value="plumesign"), \
+                mock.patch.object(dev_signing, "usbmux_device_id", return_value="1"):
             return dev.cmd_sign(args)
 
     def test_the_certificate_is_the_default_and_keeps_the_app_id(self):
@@ -64,9 +65,9 @@ class Signing(unittest.TestCase):
         self.assertFalse(any("zsign -k" in " ".join(c) for c in self.calls))
 
     def test_no_certificate_falls_back_to_the_apple_id(self):
-        with mock.patch.object(dev, "certificate_ready", return_value=False):
+        with mock.patch.object(dev_signing, "certificate_ready", return_value=False):
             self.assertEqual(dev.signer_for(argparse.Namespace(apple_id=False)), "apple-id")
-        with mock.patch.object(dev, "certificate_ready", return_value=True):
+        with mock.patch.object(dev_signing, "certificate_ready", return_value=True):
             self.assertEqual(dev.signer_for(argparse.Namespace(apple_id=False)), "certificate")
             self.assertEqual(dev.signer_for(argparse.Namespace(apple_id=True)), "apple-id")
 

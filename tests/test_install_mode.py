@@ -15,6 +15,7 @@ from unittest import mock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
 import dev
+import dev_signing
 
 META = {"target_bundle_id": "com.example.game", "bundle_id": "io.github.accretionmods.gameplus"}
 
@@ -85,11 +86,11 @@ class InstallModes(unittest.TestCase):
 
         infos = {str(self.root / "a.ipa"): META["target_bundle_id"] if dev.install_mode("game-plus") == "original"
                  else META["bundle_id"], str(self.root / "a_signed.ipa"): signed_id}
-        with mock.patch.object(dev, "WINDOWS", True), mock.patch.object(dev, "plumesign", return_value="plumesign"), \
-                mock.patch.object(dev, "usbmux_device_id", return_value="dev"), \
-                mock.patch.object(dev, "pymobiledevice3_cli", return_value="pmd3"), \
+        with mock.patch.object(dev, "WINDOWS", True), mock.patch.object(dev_signing, "plumesign", return_value="plumesign"), \
+                mock.patch.object(dev_signing, "usbmux_device_id", return_value="dev"), \
+                mock.patch.object(dev_signing, "pymobiledevice3_cli", return_value="pmd3"), \
                 mock.patch.object(dev, "ipa_info", lambda p: ({"CFBundleIdentifier": infos[str(p)]}, "Payload/G.app")), \
-                mock.patch.object(dev, "phone_apps", lambda: dict(apps)), \
+                mock.patch.object(dev_signing, "phone_apps", lambda: dict(apps)), \
                 mock.patch.object(dev.subprocess, "run", run), redirect_stdout(io.StringIO()) as out:
             try:
                 dev.cmd_sign(argparse.Namespace(ipa=str(self.root / "a.ipa"), install=True, out=None, launch=False,

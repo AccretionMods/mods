@@ -68,6 +68,32 @@ chose a local web app in this repo over a desktop app, a Claude panel or an iOS 
   only); the `fetch` job waits for the download in Downloads and files it in intake/. Build & phone tab: "Get the
   newest from the decrypt site". Checked in the page against the live site (paused, captcha shown); no real download yet.
 
+## Working on Studio: run, test, change safely (2026-10-28)
+- Run: `uv run --no-project --python 3.12 studio/server.py` (port 8765; `.claude/launch.json` "mod-studio"). After a
+  code change the header says "Studio update available": Load update restarts it (it watches `studio/*.py|html|js|css`
+  and `scripts/*.py`).
+- Tests, full (C runtime harnesses too, ~20 s): in WSL, `python3 -m unittest discover -s tests`. On Windows:
+  `uv run --no-project --python 3.12 --with pytest --with pyyaml python -m pytest -q tests` (the C harnesses skip:
+  no POSIX `-ldl`). Every test file must also pass on its own; a module-level patch that leaks into other files is a bug.
+- Undefined names before a commit: `uv run --no-project --python 3.12 --with pyflakes python -m pyflakes <files>`.
+- Files are LF (`.gitattributes`). Shell heredocs on this PC can turn `\n` in a string into a real newline: edit
+  with the Edit tool or a script file.
+- A mod's `tweaks.json` is read and written only through `scripts/mod_tweaks.py` (`dev.save_tweaks`): it keeps the
+  previous file in `AM_ROOT/dev/history/<mod>/`, puts back a template switch `Tweak.x` uses, and builds stop on a
+  switch `Tweak.x` uses that the menu lost. Every change to a mod (Studio or command line) is snapshotted first:
+  `dev.py snapshots <mod> [--restore ID]`. Personal mods are never committed; `dev.py new` lists them in
+  `.git/info/exclude`.
+- The page is `studio/index.html` + `app.js` + `app.css`; `tests/test_studio_page.py` holds `app.js` to the job
+  commands and flags the server and `dev.py` have, and CI runs `node --check studio/app.js`.
+- Splitting `dev.py`: signing, installing and the phone are in `scripts/dev_signing.py`. Pattern for the next
+  piece: the module calls its own functions directly, reaches dev.py's basics (`mod_dir`, `load_state`, `am_root`,
+  `WINDOWS`...) as `dev.<name>` when a function runs, and does `import dev` on its last line; dev.py re-exports its
+  names; tests patch its functions on the new module. Next candidates: log/push/test (~215 lines), post/share/report
+  (~200), dump/scan/find (~390, most test patches).
+- One task, one branch: off `codex/studio-feature-scope` until PR #83 merges, then off `main`. The detection
+  layer's older local copy (design docs, probe app) is on the local-only branch `detection-layer`; the push guard
+  refuses it (`git config --get-all pushguard.localOnly`).
+
 ## State (2026-10-23)
 - Local nested pin paths: scanner follows reference fields/getters, arrays/lists/dictionary values and typed
   casts across assemblies. Add and Auto-build preserve `root_class`/`path`; CLI validates metadata before
