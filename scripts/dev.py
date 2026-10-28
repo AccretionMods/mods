@@ -23,7 +23,7 @@ plumesign (--apple-id, Windows); installs and device logs need the phone on USB 
   dev.py gen <mod>                                               regenerate AMTweaks.gen.m from tweaks.json
   dev.py check <mod>                                             hooks.json against the current dump
   dev.py build <mod> [--ipa] [--bump] [--base file.ipa] [--no-hooks]  .dylib (and .ipa) in C:\\AccretionMods\\builds
-  dev.py sign <file.ipa> [--install] [--mod M] [--apple-id]      certificate signing (zsign, keeps the ID); --apple-id: plumesign
+  dev.py sign <file.ipa> [--install] [--mod M] [--apple-id] [--minimal-entitlements]  certificate signing (zsign, keeps the ID); --apple-id: plumesign
   dev.py install <signed.ipa>                                    pymobiledevice3 apps install (USB)
   dev.py log <mod> [--seconds 60]                                device log lines of the mod and the runtime
   dev.py status <mod>                                            base, dump, tweaks, hooks, last build
@@ -1640,12 +1640,49 @@ def signer_for(args):
     return "apple-id"
 
 
-def certificate_sign(ipa, out):
+def minimal_entitlements(profile, bundle, jit=False):
+    """The fewest entitlements a mod needs, from the provisioning profile's own set: its application identifier (a
+    wildcard profile's "TEAM.*" becomes TEAM.<bundle>), its team, one keychain group (that identifier), and
+    get-task-allow only for a mod with JIT hooks when the profile grants it. Without this zsign passes the profile's
+    whole set through (HealthKit, HomeKit, VPN, NFC...), capabilities the game never had."""
+    app_id = profile.get("application-identifier")
+    team = profile.get("com.apple.developer.team-identifier")
+    if not isinstance(app_id, str) or not isinstance(team, str) or not app_id.startswith(team + "."):
+        raise DevError("the provisioning profile has no usable application-identifier/team-identifier")
+    if app_id.endswith("*"):
+        app_id = app_id[:-1] + bundle
+    out = {"application-identifier": app_id, "com.apple.developer.team-identifier": team,
+           "keychain-access-groups": [app_id]}
+    if jit and profile.get("get-task-allow") is True:
+        out["get-task-allow"] = True
+    return out
+
+
+def profile_entitlements():
+    """The Entitlements dictionary of the certificate's provisioning profile (a signed plist: the XML is read out)."""
+    r = subprocess.run(bash(f"cat {CERT_DIR}/profile.mobileprovision"), capture_output=True,
+                       stdin=subprocess.DEVNULL, check=False)
+    found = re.search(rb"<\?xml.*?</plist>", r.stdout, re.S)
+    if r.returncode != 0 or not found:
+        raise DevError(f"can't read {CERT_DIR}/profile.mobileprovision")
+    return plistlib.loads(found.group(0)).get("Entitlements", {})
+
+
+def certificate_sign(ipa, out, entitlements=None):
     """zsign with the owner's certificate, keeping the app's bundle ID. The password goes from its file straight to
-    zsign: it is never printed or passed through this process."""
+    zsign: it is never printed or passed through this process. `entitlements` (a dict) replaces the profile's full
+    set with exactly those keys (zsign -e)."""
     script = f'cd {CERT_DIR} && zsign -k cert.p12 -p "$(cat password)" -m profile.mobileprovision -o "$1" "$2"'
+    extra = []
+    if entitlements is not None:
+        plist = am_root() / "work" / f"entitlements-{Path(out).stem}.plist"
+        plist.parent.mkdir(parents=True, exist_ok=True)
+        plist.write_bytes(plistlib.dumps(entitlements))
+        script += ' -e "$3"'
+        extra = [wsl_path(plist)]
+        print(f"==> minimal entitlements: {', '.join(sorted(entitlements))}")
     print(f"==> zsign with the certificate in {CERT_DIR} (keeps the app's own ID)")
-    r = subprocess.run(bash(script, wsl_path(out), wsl_path(ipa)), capture_output=True, text=True,
+    r = subprocess.run(bash(script, wsl_path(out), wsl_path(ipa), *extra), capture_output=True, text=True,
                        encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL, check=False)
     if r.returncode != 0 or not Path(out).is_file():
         tail = [line for line in (r.stdout + r.stderr).splitlines() if line.strip()][-3:]
@@ -1671,8 +1708,17 @@ def cmd_sign(args):
               "they won't run (pins do). --apple-id signs for JIT.")
     # a kept ID can replace the game, and so can an "original" install: sign first, look at the phone, then install
     careful = bool(args.install and (signer == "certificate" or (mod and install_mode(mod) == "original")))
+    minimal = getattr(args, "minimal_entitlements", False)
+    if minimal and signer != "certificate":
+        raise DevError("--minimal-entitlements needs the certificate (zsign); Apple ID signing sets its own")
     if signer == "certificate":
-        certificate_sign(ipa, out)
+        entitlements = None
+        if minimal:
+            jit = bool(mod) and any(h.get("needs_jit") for h in load_hooks(mod_dir(mod))["hooks"])
+            entitlements = minimal_entitlements(profile_entitlements(), chosen, jit)
+            if jit and "get-task-allow" not in entitlements:
+                print("==> note: the profile has no get-task-allow, so JIT hooks can't run with this certificate")
+        certificate_sign(ipa, out, entitlements)
     else:
         cmd = [plumesign(), "sign", "-p", str(ipa), "--apple-id", "-o", str(out)]
         if args.install and not careful:
@@ -1785,7 +1831,8 @@ def cmd_run(args):
         raise DevError("no .ipa from the build")
     cmd_sign(argparse.Namespace(ipa=ipa, install=True, out=None, launch=False, mod=args.mod,
                                 replace_original=getattr(args, "replace_original", False),
-                                apple_id=getattr(args, "apple_id", False)))
+                                apple_id=getattr(args, "apple_id", False),
+                                minimal_entitlements=getattr(args, "minimal_entitlements", False)))
     launch_app(load_state(args.mod)["installed_bundle"])  # the ID sign verified on the phone
     return cmd_log(argparse.Namespace(mod=args.mod, seconds=args.seconds, launch=False))
 
@@ -3275,6 +3322,9 @@ def build_parser():
         "--launch", action="store_true", help="with --install: open the app afterwards"
     )
     s.add_argument("-o", "--out")
+    s.add_argument("--minimal-entitlements", action="store_true",
+                   help="certificate signing with only the app identifier, team, one keychain group (and "
+                        "get-task-allow for JIT hooks when the profile allows it), not the profile's full set")
     s.set_defaults(fn=cmd_sign)
 
     s = sub.add_parser("install")
@@ -3302,6 +3352,8 @@ def build_parser():
     s.add_argument("--replace-original", action="store_true",
                    help="replace the original game on the phone when it has the same ID (asked for when it is there)")
     s.add_argument("--apple-id", action="store_true", help="sign with the Apple ID instead (team-suffixed ID, JIT)")
+    s.add_argument("--minimal-entitlements", action="store_true",
+                   help="certificate signing with only the entitlements a mod needs (see dev.py sign)")
     s.add_argument("--no-hooks", action="store_true",
                    help="hook nothing in the game (no method hooks, no sideload compatibility): menu and pins only")
     s.set_defaults(fn=cmd_run)

@@ -212,5 +212,39 @@ class Cli(unittest.TestCase):
         self.assertIn("0x60    long EnemyDamage", out)
 
 
+class MinimalEntitlements(unittest.TestCase):
+    PROFILE = {"application-identifier": "TEAM123456.app.example.fixed", "com.apple.developer.team-identifier": "TEAM123456",
+               "keychain-access-groups": ["TEAM123456.*", "com.apple.token"], "get-task-allow": False,
+               "com.apple.developer.healthkit": True, "com.apple.developer.homekit": True, "aps-environment": "production"}
+
+    def test_only_identifier_team_and_one_keychain_group(self):
+        ent = dev.minimal_entitlements(self.PROFILE, "com.game.example")
+        self.assertEqual(ent, {"application-identifier": "TEAM123456.app.example.fixed",
+                               "com.apple.developer.team-identifier": "TEAM123456",
+                               "keychain-access-groups": ["TEAM123456.app.example.fixed"]})
+
+    def test_wildcard_profile_gets_the_bundle(self):
+        ent = dev.minimal_entitlements(dict(self.PROFILE, **{"application-identifier": "TEAM123456.*"}), "com.game.example")
+        self.assertEqual(ent["application-identifier"], "TEAM123456.com.game.example")
+        self.assertEqual(ent["keychain-access-groups"], ["TEAM123456.com.game.example"])
+
+    def test_get_task_allow_only_for_jit_when_the_profile_grants_it(self):
+        self.assertNotIn("get-task-allow", dev.minimal_entitlements(self.PROFILE, "b", jit=True))
+        granting = dict(self.PROFILE, **{"get-task-allow": True})
+        self.assertNotIn("get-task-allow", dev.minimal_entitlements(granting, "b", jit=False))
+        self.assertIs(dev.minimal_entitlements(granting, "b", jit=True)["get-task-allow"], True)
+
+    def test_unusable_profile_is_refused(self):
+        for broken in ({}, {"application-identifier": "OTHER.app.x", "com.apple.developer.team-identifier": "TEAM123456"}):
+            with self.assertRaises(dev.DevError):
+                dev.minimal_entitlements(broken, "b")
+
+    def test_flag_parses_on_sign_and_run(self):
+        parser = dev.build_parser()
+        self.assertTrue(parser.parse_args(["sign", "x.ipa", "--minimal-entitlements"]).minimal_entitlements)
+        self.assertTrue(parser.parse_args(["run", "m", "--minimal-entitlements"]).minimal_entitlements)
+        self.assertFalse(parser.parse_args(["sign", "x.ipa"]).minimal_entitlements)
+
+
 if __name__ == "__main__":
     unittest.main()
