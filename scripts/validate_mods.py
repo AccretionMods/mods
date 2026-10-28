@@ -80,7 +80,30 @@ def check(mod, meta):
         problems += runtime_problems(folder)
     if os.path.isfile(os.path.join(folder, "tweaks.json")):
         problems += tweaks_problems(folder)
+    problems += detection_problems(folder, meta)
     return problems
+
+
+def detection_problems(folder, meta):
+    """An opted-in profile must match the base and compile the optional runtime bridge."""
+    import detection_profile
+    path = os.path.join(folder, "detection.json")
+    if not os.path.isfile(path):
+        return []
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        errors = [f"detection.json: {e}" for e in detection_profile.problems(data, meta.get("tested_app_version"))]
+    except (ValueError, OSError) as error:
+        return [f"detection.json: {error}"]
+    makefile = os.path.join(folder, "Makefile")
+    if not os.path.isfile(makefile):
+        errors.append("detection.json requires a Makefile with runtime/SideloadCompat.m")
+    else:
+        with open(makefile, encoding="utf-8") as f:
+            if "runtime/SideloadCompat.m" not in f.read():
+                errors.append("detection.json requires runtime/SideloadCompat.m in the Makefile")
+    return errors
 
 
 def tweaks_problems(folder):

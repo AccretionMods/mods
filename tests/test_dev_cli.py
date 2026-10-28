@@ -246,5 +246,30 @@ class MinimalEntitlements(unittest.TestCase):
         self.assertFalse(parser.parse_args(["sign", "x.ipa"]).minimal_entitlements)
 
 
+class ReportFlags(unittest.TestCase):
+    def test_run_report_and_detection_wait_parse(self):
+        parser = dev.build_parser()
+        args = parser.parse_args(["run", "example", "--report"])
+        self.assertTrue(args.report)
+        self.assertFalse(parser.parse_args(["run", "example"]).report)
+        args = parser.parse_args(["detection", "report", "example", "--wait", "120"])
+        self.assertEqual(args.wait, 120)
+        with self.assertRaises(dev.DevError):
+            dev.cmd_detection(parser.parse_args(["detection", "report", "example", "--wait", "121"]))
+
+
+class NoHooks(unittest.TestCase):
+    def test_flag_parses_on_build_and_run(self):
+        parser = dev.build_parser()
+        self.assertTrue(parser.parse_args(["build", "m", "--no-hooks"]).no_hooks)
+        self.assertTrue(parser.parse_args(["run", "m", "--no-hooks"]).no_hooks)
+        self.assertFalse(parser.parse_args(["build", "m"]).no_hooks)
+
+    def test_no_hooks_build_leaves_out_the_detection_profile_too(self):
+        source = (Path(__file__).resolve().parents[1] / "runtime" / "SideloadCompat.m").read_text(encoding="utf-8")
+        self.assertIn('#if __has_include("AMDetectionProfile.gen.h") && !AM_NO_HOOKS', source)
+        self.assertLess(source.index("#define AM_NO_HOOKS 0"), source.index('__has_include("AMDetectionProfile.gen.h")'))
+
+
 if __name__ == "__main__":
     unittest.main()
