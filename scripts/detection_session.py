@@ -303,11 +303,21 @@ def command(dev, args):
         except ValueError as error:
             raise dev.DevError(str(error)) from error
 
-    report = read()
     if args.action == "report":
+        # The runtime writes its first report 30 s after launch; poll until it is pullable.
+        until = time.monotonic() + max(0, getattr(args, "wait", 0))
+        while True:
+            try:
+                report = read()
+                break
+            except dev.DevError as error:
+                if "unavailable" not in str(error) or time.monotonic() >= until:
+                    raise
+                time.sleep(2)
         print(json.dumps(report, indent=2))
         print("\n".join(summarize(report)), file=sys.stderr)
         return 0
+    report = read()
     try:
         request = phase_request(report, args.phase)
     except ValueError as error:

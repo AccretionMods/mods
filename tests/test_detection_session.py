@@ -196,6 +196,53 @@ class DetectionSession(unittest.TestCase):
         self.assertIn("schema 4, mode observe", errors.getvalue())
         self.assertNotIn("schema 4, mode observe", printed)
 
+    def test_report_polls_until_the_file_is_pullable_but_not_past_validation(self):
+        clean = self.schema4_report()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dev = SimpleNamespace(
+                Path=Path, mod_dir=lambda _: root, read_json=lambda _: {"bundle_id": "io.example.game"},
+                installed_bundles=lambda _: ["io.example.game"], pymobiledevice3_cli=lambda: "phone-tool",
+                am_root=lambda: root, DevError=RuntimeError,
+            )
+            pulls = []
+
+            def transfer(arguments, **_):
+                pulls.append(1)
+                if len(pulls) < 3:
+                    return SimpleNamespace(returncode=1)
+                Path(arguments[-1]).write_text(json.dumps(clean))
+                return SimpleNamespace(returncode=0)
+
+            args = SimpleNamespace(action="report", target="example", wait=30)
+            with (
+                mock.patch.object(self.module.subprocess, "run", side_effect=transfer),
+                mock.patch.object(self.module.time, "sleep") as sleep,
+                contextlib.redirect_stdout(io.StringIO()) as output,
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                self.assertEqual(self.module.command(dev, args), 0)
+            self.assertEqual(len(pulls), 3)
+            self.assertEqual(sleep.call_count, 2)
+            self.assertEqual(json.loads(output.getvalue()), clean)
+            pulls.clear()
+            bad = dict(clean, account=self.SENTINEL)
+
+            def invalid(arguments, **_):
+                pulls.append(1)
+                Path(arguments[-1]).write_text(json.dumps(bad))
+                return SimpleNamespace(returncode=0)
+
+            with (
+                mock.patch.object(self.module.subprocess, "run", side_effect=invalid),
+                mock.patch.object(self.module.time, "sleep") as sleep,
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                with self.assertRaises(RuntimeError):
+                    self.module.command(dev, args)
+            self.assertEqual(len(pulls), 1)
+            self.assertEqual(sleep.call_count, 0)
+
     def test_validator_vocabularies_match_runtime_sources(self):
         import re
         registry = (ROOT / "runtime/AMDetectionRegistry.c").read_text(encoding="utf-8")
