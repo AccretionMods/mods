@@ -12,12 +12,34 @@ void AMIl2cppDataSetLogTag(const char *tag) {
     if (tag && *tag) sTag = strdup(tag);
 }
 
+// Opt-in copy of the log in Documents/am_il2cpp.log, for a phone whose live syslog relay gives nothing: only
+// while Documents/am_log_request exists (pushed with pymobiledevice3 apps push), one launch per file, 64 KiB
+// at most. A build exports nothing unless that marker was placed by hand.
+static void logToFile(NSString *line) {
+    static NSString *path;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSString *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+        NSFileManager *fm = NSFileManager.defaultManager;
+        if (!docs || ![fm fileExistsAtPath:[docs stringByAppendingPathComponent:@"am_log_request"]]) return;
+        path = [docs stringByAppendingPathComponent:@"am_il2cpp.log"];
+        [fm createFileAtPath:path contents:[NSData data] attributes:nil];
+    });
+    if (!path) return;
+    NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:path];
+    if (!handle) return;
+    unsigned long long size = [handle seekToEndOfFile];
+    if (size < 64 * 1024) [handle writeData:[[line stringByAppendingString:@"\n"] dataUsingEncoding:NSUTF8StringEncoding]];
+    [handle closeFile];
+}
+
 void AMIl2cppLog(NSString *format, ...) {
     va_list args;
     va_start(args, format);
     NSString *text = [[NSString alloc] initWithFormat:format arguments:args];
     va_end(args);
     os_log(OS_LOG_DEFAULT, "[%{public}s] %{public}@", sTag, text);
+    logToFile(text);
 }
 
 // One message per distinct failure, so a ticker that runs twice a second doesn't flood the log.
