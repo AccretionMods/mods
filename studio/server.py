@@ -1369,6 +1369,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_file(HERE / "index.html", "text/html; charset=utf-8")
         if parts == ["menu-image"]:
             return self.send_file(HERE / "menu_image.html", "text/html; charset=utf-8")
+        if parts == ["app.js"]:
+            return self.send_file(HERE / "app.js", "text/javascript; charset=utf-8")
+        if parts == ["app.css"]:
+            return self.send_file(HERE / "app.css", "text/css; charset=utf-8")
         if parts[0] != "api":
             return self.send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
         if parts[1:] == ["mods"]:

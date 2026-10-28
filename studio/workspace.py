@@ -14,7 +14,7 @@ def source_revision(root):
     root = Path(root)
     digest = hashlib.sha256()
     for folder, patterns in (
-        ("studio", ("*.py", "*.html", "prompts.json")),
+        ("studio", ("*.py", "*.html", "*.js", "*.css", "prompts.json")),
         ("scripts", ("*.py",)),
     ):
         paths = {p for pattern in patterns for p in (root / folder).glob(pattern)}
