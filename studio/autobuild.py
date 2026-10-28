@@ -514,7 +514,7 @@ def main(argv=None):
 
     remember_reviewed(mod, reviewed, batches, answers, results, meta.get("tested_app_version"), args.engine)
     say("==> 3/5 adding the picked switches")
-    tweaks = json.loads((folder / "tweaks.json").read_text(encoding="utf-8"))
+    tweaks = dev.mod_tweaks.load(folder)
     taken = {t["key"] for t in tweaks.get("tweaks", [])}
     pins, targets, picked = [], set(), {}
     for n in sorted(results):  # batch order: the scan's best rows first
@@ -596,12 +596,11 @@ def main(argv=None):
             section = row_area or area.get(argv_[2] if len(argv_) > 2 else "")
             if key and section:
                 sections[key] = section
-    path = folder / "tweaks.json"
-    data = json.loads(path.read_text(encoding="utf-8"))
+    data = dev.mod_tweaks.load(folder)
     for t in data["tweaks"]:
         if t["key"] in sections and not t.get("section"):
             t["section"] = sections[t["key"]]
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
+    dev.save_tweaks(folder, data)
     say(f"    {added} of {len(pins)} added")
     if not added:
         say("none of the picks passed dev.py pin: nothing to build")

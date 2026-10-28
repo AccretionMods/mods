@@ -116,6 +116,9 @@ def tweaks_problems(folder):
     except json.JSONDecodeError as e:
         return [f"tweaks.json isn't valid JSON ({e})"]
     problems = [f"tweaks.json: {p}" for p in gen_tweaks.problems(tweaks, hooks)]
+    import mod_tweaks
+
+    problems += [f"Tweak.x uses {name}, which tweaks.json doesn't have" for name in mod_tweaks.undeclared(folder)]
     makefile = os.path.join(folder, "Makefile")
     if os.path.isfile(makefile):
         with open(makefile, encoding="utf-8") as f:

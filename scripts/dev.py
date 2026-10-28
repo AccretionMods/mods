@@ -99,6 +99,7 @@ import dump_scan
 import moddability
 import games
 import gen_tweaks
+import mod_tweaks
 import ipa_fetch
 from il2cpp_dump import methods
 
@@ -153,6 +154,15 @@ def write_json(path, data):
     with open(path, "w", encoding="utf-8", newline="\n") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
         f.write("\n")
+
+
+def save_tweaks(folder, tweaks):
+    """A mod's tweaks.json, written through scripts/mod_tweaks.py: the previous file is kept in
+    <AM_ROOT>/dev/history/<mod>, and a template switch Tweak.x still uses is put back if it went missing."""
+    folder = Path(folder)
+    restored = mod_tweaks.save(folder, tweaks, history=am_root() / "dev" / "history" / folder.name)
+    if restored:
+        print(f"==> tweaks.json: put back {', '.join(restored)} (Tweak.x uses it)")
 
 
 def state_path(mod):
@@ -739,7 +749,7 @@ def cmd_add(args):
     if problems:
         raise DevError("not written:\n  " + "\n  ".join(problems))
     write_json(folder / "hooks.json", hooks)
-    write_json(folder / "tweaks.json", tweaks)
+    save_tweaks(folder, tweaks)
     # remember the choice, so the next game's `suggest` starts from it
     store = dev_learn.load(patterns_path())
     tweak_item = next(t for t in tweaks["tweaks"] if t["key"] == key)
@@ -904,7 +914,7 @@ def cmd_pin(args):
     problems = gen_tweaks.problems(tweaks, load_hooks(folder))
     if problems:
         raise DevError("not written:\n  " + "\n  ".join(problems))
-    write_json(folder / "tweaks.json", tweaks)
+    save_tweaks(folder, tweaks)
     store = dev_learn.load(patterns_path())
     dev_learn.record_pin(store, pin.get("class") or cls, member, ctype_, pin, tweak, meta["target_bundle_id"])
     dev_learn.save(patterns_path(), store)
@@ -972,7 +982,7 @@ def cmd_call(args):
     problems = gen_tweaks.problems(tweaks, load_hooks(folder))
     if problems:
         raise DevError("not written:\n  " + "\n  ".join(problems))
-    write_json(folder / "tweaks.json", tweaks)
+    save_tweaks(folder, tweaks)
     store = dev_learn.load(patterns_path())
     dev_learn.record(store, m.hook(), "call", values, tweak, meta["target_bundle_id"])
     dev_learn.save(patterns_path(), store)
@@ -996,7 +1006,7 @@ def cmd_tweak(args):
     problems = gen_tweaks.problems(tweaks, load_hooks(folder))
     if problems:
         raise DevError("not written:\n  " + "\n  ".join(problems))
-    write_json(folder / "tweaks.json", tweaks)
+    save_tweaks(folder, tweaks)
     print(f"==> tweak {args.key} ({tweak['kind']}): read am_{args.key} in Tweak.x")
     return cmd_gen(args)
 
@@ -1021,7 +1031,7 @@ def cmd_remove(args):
     ]
     removed_hooks = len(hooks["hooks"]) - len(kept)
     hooks["hooks"] = kept
-    write_json(folder / "tweaks.json", tweaks)
+    save_tweaks(folder, tweaks)
     write_json(folder / "hooks.json", hooks)
     print(
         f"==> removed {before - len(tweaks['tweaks'])} tweak(s) and {removed_hooks} unused hook(s)"
@@ -1039,7 +1049,7 @@ def cmd_gen(args):
         print(f"tweaks.json: {p}")
     if problems:
         return 1
-    tweaks = read_json(folder / "tweaks.json")
+    tweaks = mod_tweaks.load(folder)
     n = sum(len(t.get("hooks", [])) for t in tweaks["tweaks"])
     print(f"==> AMTweaks.gen.m: {len(tweaks['tweaks'])} tweaks, {n} hooks")
     return 0
@@ -1384,6 +1394,11 @@ def cmd_build(args):
             f"==> Note: {newer[0][0].name} is {newer[0][1]}, newer than the {meta.get('tested_app_version')} this mod is built for (dev.py update {args.mod})"
         )
     if (folder / "tweaks.json").is_file():
+        missing = mod_tweaks.undeclared(folder)
+        if missing:
+            raise DevError(
+                f"Tweak.x uses {', '.join(missing)}, which tweaks.json doesn't have: add the switch back (the "
+                f"previous tweaks.json versions are in {am_root() / 'dev' / 'history' / folder.name})")
         problems = gen_tweaks.generate(str(folder))
         if problems:
             raise DevError("tweaks.json:\n  " + "\n  ".join(problems))
@@ -1990,8 +2005,8 @@ def stream_log(mod, seconds, on_line, quiet=False, on_ready=None):
     tag = meta.get("display_name") or meta["name"]
     if (folder / "tweaks.json").is_file():
         tag = (
-            read_json(folder / "tweaks.json").get("log_tag")
-            or read_json(folder / "tweaks.json").get("title")
+            mod_tweaks.load(folder).get("log_tag")
+            or mod_tweaks.load(folder).get("title")
             or tag
         )
     pattern = f"\\[{re.escape(tag)}\\]|AccretionMods"
@@ -2300,7 +2315,7 @@ def cmd_status(args):
     jit = sum(1 for h in hooks if h.get("needs_jit"))
     print(f"  hooks.json: {len(hooks)} hooks ({jit} need JIT)")
     if (folder / "tweaks.json").is_file():
-        tweaks = read_json(folder / "tweaks.json")["tweaks"]
+        tweaks = mod_tweaks.load(folder)["tweaks"]
         print(f"  tweaks.json: {len(tweaks)} tweaks")
         for t in tweaks:
             hs = (
@@ -2400,7 +2415,7 @@ def update_preview(mod, folder, meta, ipa, old_classes, old_version, version, ch
     if (folder / "tweaks.json").is_file():
         same = moved = gone = 0
         lost = []
-        for t in read_json(folder / "tweaks.json").get("tweaks", []):
+        for t in mod_tweaks.load(folder).get("tweaks", []):
             for p in t.get("pins", []):
                 before = dump_scan.pin_signature(old_classes, p) if old_classes else None
                 after = dump_scan.pin_signature(new_classes, p)
@@ -2672,7 +2687,7 @@ def cmd_mark(args):
         "date": dev_learn.date.today().isoformat(),
         "app_version": meta.get("tested_app_version"),
     }
-    write_json(folder / "tweaks.json", tweaks)
+    save_tweaks(folder, tweaks)
     dev_learn.save(patterns_path(), store)
     print(
         f"==> {args.key}: {'works' if works else 'fails'} on {meta.get('tested_app_version')}; patterns updated: {', '.join(touched) or 'none (no hooks or pins)'}"
@@ -2685,7 +2700,7 @@ def cmd_learn(args):
     meta = read_json(folder / "mod.json")
     hooks = load_hooks(folder)["hooks"]
     tweaks = (
-        read_json(folder / "tweaks.json")
+        mod_tweaks.load(folder)
         if (folder / "tweaks.json").is_file()
         else None
     )
