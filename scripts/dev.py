@@ -1462,7 +1462,11 @@ def cmd_run(args):
     state["installed_bundle"] = bundle
     save_state(args.mod, state)
     launch_app(bundle)
-    return cmd_log(argparse.Namespace(mod=args.mod, seconds=args.seconds, launch=False))
+    code = cmd_log(argparse.Namespace(mod=args.mod, seconds=args.seconds, launch=False))
+    if code or not args.report:
+        return code
+    return cmd_detection(argparse.Namespace(action="report", target=args.mod, phase=None,
+                                            profile=None, output=None, wait=45))
 
 
 def cmd_install(args):
@@ -2535,12 +2539,30 @@ def cmd_fetch(args):
     return 0
 
 
+def cmd_detection(args):
+    import detection_session
+
+    if not 1 <= args.wait <= 120:
+        raise DevError("diagnostic wait must be between 1 and 120 seconds")
+    return detection_session.command(sys.modules[__name__], args)
+
+
 def build_parser():
     """dev.py's argument parser (Mod Studio's Console reads the command list from it)."""
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     sub = p.add_subparsers(dest="cmd", required=True)
+
+    s = sub.add_parser("detection", help="static import preflight, local reports and explicit diagnostic phases")
+    s.add_argument("action", choices=("preflight", "report", "phase"))
+    s.add_argument("target", help="mod name or private trial folder; an IPA path for preflight")
+    s.add_argument("phase", nargs="?", choices=("startup", "login", "menu", "fight", "results"))
+    s.add_argument("--profile", help="new observation profile path; refuses overwrite")
+    s.add_argument("--output", help="private preflight report path")
+    s.add_argument("--wait", type=int, default=20,
+                   help="seconds to wait for the report file or a phase acknowledgement, 1-120")
+    s.set_defaults(fn=cmd_detection)
 
     s = sub.add_parser("new")
     s.add_argument("name")
@@ -2711,6 +2733,8 @@ def build_parser():
     s.add_argument("--bump", action="store_true")
     s.add_argument("--base")
     s.add_argument("--seconds", type=int, default=60)
+    s.add_argument("--report", action="store_true",
+                   help="after the log, pull the local detection report and print its verdict")
     s.set_defaults(fn=cmd_run)
 
     s = sub.add_parser("status")

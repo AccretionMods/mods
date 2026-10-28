@@ -9,9 +9,10 @@
 // They unlock nothing: they only replace answers the re-signed copy can never get.
 //
 // Everything here changes data, never code: Objective-C method tables and the app's own import
-// pointers (fishhook-style rebinding). On a phone without JIT, iOS kills an app as soon as it runs
-// a code page that was patched (CODESIGNING "Invalid Page"), and ElleKit's MSHookFunction patches
-// code, so this file must not use it.
+// pointers, rewritten in place by AMImportBindImage at each image load (a direct import-table
+// rewrite -- no trampoline is allocated and no code page is touched). On a phone without JIT, iOS
+// kills an app as soon as it runs a code page that was patched (CODESIGNING "Invalid Page"), and
+// ElleKit's MSHookFunction patches code, so this file must not use it.
 
 #import <Foundation/Foundation.h>
 #import <Security/Security.h>
@@ -22,6 +23,13 @@
 #include <mach-o/loader.h>
 #include <mach-o/nlist.h>
 #include <string.h>
+#include "AMImportBindings.c"  // one shared walker; existing mod Makefiles need no extra source
+#if __has_include("AMDetectionProfile.gen.h")
+#define AM_DETECTION_ENABLED 1
+#include "AMDetection.m"
+#else
+#define AM_DETECTION_ENABLED 0
+#endif
 
 // Each part can be left out at build time (-DAM_COMPAT_KEYCHAIN=0 and so on) to find which one a
 // game doesn't get along with. All are on by default.
@@ -79,79 +87,58 @@ static const struct { const char *name; void *replacement; } am_rebindings[] = {
     {"SecItemDelete", (void *)am_SecItemDelete},
 };
 
-static void am_write_pointer(void **slot, void *value) {
+static bool am_write_pointer(void **slot, void *expected, void *value, void *context) {
+    (void)context;
+    if (*slot != expected) return false;
     vm_address_t region = (vm_address_t)slot;
     vm_size_t size = 0;
     vm_region_basic_info_data_64_t info;
     mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
     mach_port_t object = MACH_PORT_NULL;
     vm_prot_t protection = VM_PROT_READ | VM_PROT_WRITE;
-    if (vm_region_64(mach_task_self(), &region, &size, VM_REGION_BASIC_INFO_64, (vm_region_info_t)&info, &count,
-                     &object) == KERN_SUCCESS)
-        protection = info.protection;
+    kern_return_t found = vm_region_64(mach_task_self(), &region, &size, VM_REGION_BASIC_INFO_64,
+                                       (vm_region_info_t)&info, &count, &object);
+    if (object != MACH_PORT_NULL) mach_port_deallocate(mach_task_self(), object);
+    if (found != KERN_SUCCESS || (uintptr_t)slot < region || sizeof(void *) > size ||
+        (uintptr_t)slot - region > size - sizeof(void *) || (info.protection & VM_PROT_EXECUTE)) return false;
+    protection = info.protection;
     if (!(protection & VM_PROT_WRITE)) {
         vm_address_t page = (vm_address_t)slot & ~(vm_address_t)(vm_page_size - 1);
         if (vm_protect(mach_task_self(), page, vm_page_size, FALSE, VM_PROT_READ | VM_PROT_WRITE) != KERN_SUCCESS &&
             vm_protect(mach_task_self(), page, vm_page_size, FALSE, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY) !=
                 KERN_SUCCESS)
-            return;
+            return false;
+        if (*slot != expected) {
+            vm_protect(mach_task_self(), page, vm_page_size, FALSE, protection);
+            return false;
+        }
         *slot = value;
-        vm_protect(mach_task_self(), page, vm_page_size, FALSE, protection);
-        return;
+        if (vm_protect(mach_task_self(), page, vm_page_size, FALSE, protection) != KERN_SUCCESS) {
+            *slot = expected;
+            vm_protect(mach_task_self(), page, vm_page_size, FALSE, protection);
+            return false;
+        }
+        return *slot == value;
     }
     *slot = value;
+    return *slot == value;
 }
 
 // Points the image's import slots (__got, __la_symbol_ptr) for the SecItem functions at the
-// replacements above, the way fishhook does.
+// replacements above, via AMImportBindImage: a direct rewrite of the resolved import table, with
+// no trampoline. Runs per image from am_image_added, so slots bound lazily are caught at load.
 static void am_rebind_image(const struct mach_header_64 *header, intptr_t slide) {
-    if (header->magic != MH_MAGIC_64) return;
-    const struct segment_command_64 *linkedit = NULL;
-    const struct symtab_command *symtab = NULL;
-    const struct dysymtab_command *dysymtab = NULL;
-    const struct load_command *command = (const struct load_command *)(header + 1);
-    for (uint32_t i = 0; i < header->ncmds; i++) {
-        if (command->cmd == LC_SEGMENT_64 && !strcmp(((const struct segment_command_64 *)command)->segname, SEG_LINKEDIT))
-            linkedit = (const struct segment_command_64 *)command;
-        else if (command->cmd == LC_SYMTAB) symtab = (const struct symtab_command *)command;
-        else if (command->cmd == LC_DYSYMTAB) dysymtab = (const struct dysymtab_command *)command;
-        command = (const struct load_command *)((const char *)command + command->cmdsize);
-    }
-    if (!linkedit || !symtab || !dysymtab || !dysymtab->nindirectsyms) return;
-
-    uintptr_t linkedit_base = (uintptr_t)slide + linkedit->vmaddr - linkedit->fileoff;
-    const struct nlist_64 *symbols = (const struct nlist_64 *)(linkedit_base + symtab->symoff);
-    const char *strings = (const char *)(linkedit_base + symtab->stroff);
-    const uint32_t *indirect = (const uint32_t *)(linkedit_base + dysymtab->indirectsymoff);
-
-    command = (const struct load_command *)(header + 1);
-    for (uint32_t i = 0; i < header->ncmds; i++) {
-        const struct segment_command_64 *segment = (const struct segment_command_64 *)command;
-        command = (const struct load_command *)((const char *)command + command->cmdsize);
-        if (segment->cmd != LC_SEGMENT_64 || (strcmp(segment->segname, SEG_DATA) &&
-                                              strcmp(segment->segname, "__DATA_CONST") &&
-                                              strcmp(segment->segname, "__AUTH_CONST")))
-            continue;
-        const struct section_64 *sections = (const struct section_64 *)(segment + 1);
-        for (uint32_t s = 0; s < segment->nsects; s++) {
-            const struct section_64 *section = &sections[s];
-            uint32_t type = section->flags & SECTION_TYPE;
-            if (type != S_LAZY_SYMBOL_POINTERS && type != S_NON_LAZY_SYMBOL_POINTERS) continue;
-            void **slots = (void **)((uintptr_t)slide + section->addr);
-            uint64_t slot_count = section->size / sizeof(void *);
-            for (uint64_t k = 0; k < slot_count; k++) {
-                uint32_t index = section->reserved1 + (uint32_t)k;
-                if (index >= dysymtab->nindirectsyms) break;
-                uint32_t symbol = indirect[index];
-                if (symbol & (INDIRECT_SYMBOL_ABS | INDIRECT_SYMBOL_LOCAL) || symbol >= symtab->nsyms) continue;
-                uint32_t string = symbols[symbol].n_un.n_strx;
-                if (string >= symtab->strsize || strings[string] != '_') continue;
-                const char *name = strings + string + 1;  // C names carry a leading underscore
-                for (size_t r = 0; r < sizeof am_rebindings / sizeof am_rebindings[0]; r++)
-                    if (!strcmp(name, am_rebindings[r].name)) am_write_pointer(&slots[k], am_rebindings[r].replacement);
-            }
-        }
-    }
+    AMImportBinding bindings[sizeof am_rebindings / sizeof *am_rebindings];
+    size_t count=AM_COMPAT_KEYCHAIN ? sizeof bindings / sizeof *bindings : 0;
+    for (size_t i=0;i<count;i++)
+        bindings[i]=(AMImportBinding){am_rebindings[i].name,NULL,am_rebindings[i].replacement,NULL};
+#if AM_DETECTION_ENABLED
+    AMDetectionBindImage(header,sizeof *header+header->sizeofcmds,slide,bindings,count,am_write_pointer,NULL);
+#else
+    if (count)
+    AMImportBindImage(header,sizeof *header+header->sizeofcmds,slide,bindings,
+                     count,am_write_pointer,NULL);
+#endif
 }
 
 // MARK: iCloud: report no account and no container, so saves stay local
@@ -241,17 +228,26 @@ static void am_image_added(const struct mach_header *header, intptr_t slide) {
     Dl_info info;
     if (header == am_own_header || !am_bundle_path[0] || !dladdr(header, &info) || !info.dli_fname) return;
     if (strncmp(info.dli_fname, am_bundle_path, strlen(am_bundle_path)) != 0) return;  // the app's own images only
-    if (AM_COMPAT_KEYCHAIN) am_rebind_image((const struct mach_header_64 *)header, slide);
+    if (AM_COMPAT_KEYCHAIN || AM_DETECTION_ENABLED) am_rebind_image((const struct mach_header_64 *)header, slide);
     // Look the class up outside dyld's callback, once the main queue runs (before the game's first frame).
     if (AM_COMPAT_AGE) dispatch_async(dispatch_get_main_queue(), ^{ am_hook_age_helper(); });
 }
 
-__attribute__((constructor)) static void am_sideload_compat_init(void) {
+#ifndef AM_COMPAT_AUTOSTART
+#define AM_COMPAT_AUTOSTART 1
+#endif
+#if AM_COMPAT_AUTOSTART
+__attribute__((constructor))
+#endif
+static void am_sideload_compat_init(void) {
     @autoreleasepool {
         Dl_info own;
         if (dladdr((const void *)am_sideload_compat_init, &own)) am_own_header = own.dli_fbase;
         const char *bundle = NSBundle.mainBundle.bundlePath.fileSystemRepresentation;
         if (bundle) snprintf(am_bundle_path, sizeof am_bundle_path, "%s/", bundle);
+#if AM_DETECTION_ENABLED
+        AMDetectionStart(sizeof am_rebindings/sizeof *am_rebindings);
+#endif
         _dyld_register_func_for_add_image(am_image_added);
 
         if (AM_COMPAT_ICLOUD) {

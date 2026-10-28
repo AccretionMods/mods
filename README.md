@@ -10,7 +10,7 @@ Downloads need an Accretion account: they go through the store's download server
 `mods.json` link in this repo no longer installs anything on its own.
 
 For AltStore / SideStore / Feather, use your personal source link from the store:
-Edit profile → "Your download links" → Accretion Mods.
+Edit profile â†’ "Your download links" â†’ Accretion Mods.
 
 ## Rules
 
@@ -108,7 +108,7 @@ never copy, restyle or replace it. Change the look only in `menu/AMMenu.m`, so e
   with the reason in small red text under the title ("Start a fight to see it work"). Report it with
   `AMMenuStatus`.
 - **Confirmation:** every tap glows its row: a switch cyan on and line colour off; a slider when released; a list
-  pick cyan with "✓ Added…", or red with the reason. All come with a haptic. A list pick reports what the game did
+  pick cyan with "âœ“ Addedâ€¦", or red with the reason. All come with a haptic. A list pick reports what the game did
   with `AMMenuPickResult(ok, text)` inside `onPick`.
 - **Lists (`addList`):** the menu's look with search on long lists. Give each entry a `group`, and list the best
   first: by kind (Weapons, Ammo, Wearables, Medical, Food & drink, Water, Materials, Misc) and by quality tier
@@ -116,10 +116,10 @@ never copy, restyle or replace it. Change the look only in `menu/AMMenu.m`, so e
 - **Display category (last):** Pulsing dot and Toggles, both on by default, kept per game. They are not cheats:
   All off and the counts ignore them.
 - **Background:** only the two slow drifting lights and the moving line under the title.
-- **Cloud saves:** a "Log in · back up your saves" capsule under the title (moving edge) opens Accretion's sign-in in
+- **Cloud saves:** a "Log in Â· back up your saves" capsule under the title (moving edge) opens Accretion's sign-in in
   iOS's sign-in sheet with a one-time code; once linked (the sheet closes by itself) a Cloud saves category above
   Display has Back up now, Restore a backup (newest first, any device), Back up when the menu opens (only after a
-  first manual backup or restore) and Unlink. Back up now shows "Last saved: 5 min ago" ("Saving…" while a backup
+  first manual backup or restore) and Unlink. Back up now shows "Last saved: 5 min ago" ("Savingâ€¦" while a backup
   runs, including the one when the menu opens). A backup is a zip of the game's saved settings, Documents and
   Application Support (50 MB at most, the newest 5 per game, unchanged saves not uploaded again); a restore keeps
   the current save first and is put in place at the next launch. The store's `saves` function and #/link page
@@ -234,7 +234,7 @@ ones with a decrypted copy waiting, labels online or multiplayer games (shown by
 Get .ipa, New mod (or Open mod) and Like this on each card. Enter in its box searches the
 whole App Store (a name or a bundle ID); `am games` gives the same lists in a console (below). Console
 runs any `dev.py` command typed as `am ...` (dump, `find` with any regex, fields, add, pin, build, sign, run,
-log, update, games, fetch…), with buttons that fill in the selected mod, ↑/↓ history, an answer box under a
+log, update, games, fetchâ€¦), with buttons that fill in the selected mod, â†‘/â†“ history, an answer box under a
 job for its questions (pick's number, the Apple ID 2FA code), and a prompt builder: pick a task (add a
 feature, narrow down the best approach, explore the dump, fix a switch or crash, update to the newest game,
 start a mod for another game, check before publishing), type one line, and it writes a prompt for Claude
@@ -266,7 +266,7 @@ dev.py fields my-game-plus Enemy                                      # a class'
 dev.py add my-game-plus Enemy.DamagePlayer --as noDamage --title "Player takes no damage"
 dev.py add my-game-plus Enemy.UseHealthPotion --to noDamage           # a second hook on the same switch
 dev.py add my-game-plus Enemy.get_AttackSuccessRate --title "Enemies miss" --value 0
-dev.py add my-game-plus ItemStack.GetScaledDamage --title "Weapon damage ×" --action multiply --slider 1 20 1
+dev.py add my-game-plus ItemStack.GetScaledDamage --title "Weapon damage Ã—" --action multiply --slider 1 20 1
 dev.py add my-game-plus StatHandler.set_Hunger --title "Hunger never drops" --action custom
 dev.py build my-game-plus --ipa [--bump]                             # .dylib and unsigned .ipa in builds/
 dev.py sign builds/my-game-plus_1.2-mod1.0.0_accretion.ipa --install  # Apple ID signing (plumesign), onto the phone
@@ -397,7 +397,7 @@ am pin my-game-plus StatHandler.set_Hunger --value 100 --when lower --as keepSta
 am pin my-game-plus StatHandler.set_Health --value getter:get_HealthMax --when lower --to keepStats
 am pin my-game-plus Lock.set_LockPickHealth --object Lock --value peak --when lower --title "Lockpicks never break"
 am pin my-game-plus Enemy.EnemyDamage --object "Enemy[]" --value 0 --title "Enemies deal no damage"
-am pin my-game-plus PlayerCompanion.Damage --class FightCompanion --multiply --slider 1 20 1 --title "Weapon damage ×"
+am pin my-game-plus PlayerCompanion.Damage --class FightCompanion --multiply --slider 1 20 1 --title "Weapon damage Ã—"
 am pin my-game-plus PlayerStats.Rads --object StatHandler.instance --via get_playerStats --value 0 --title "No rads"
 am call my-game-plus InventoryData.GiveRandomItem --args -1 --every 10 --title "Give a random item every 10 s"
 ```
@@ -430,7 +430,7 @@ minutes) by running `scripts/register_intake_auto.ps1` once.
 
 ## Build and publish
 
-**In the cloud (recommended, works from a phone):** Actions → **Mods: build a mod** → Run workflow → pick the mod from the list (a new public mod is added to the list in build.yml and publish.yml; CI fails until it is).
+**In the cloud (recommended, works from a phone):** Actions â†’ **Mods: build a mod** â†’ Run workflow â†’ pick the mod from the list (a new public mod is added to the list in build.yml and publish.yml; CI fails until it is).
 It runs on GitHub's macOS runner with Theos and cyan pinned to exact commits, downloads
 the base .ipa from `base.ipa_url` (or private storage) and refuses it unless it matches `base.sha256`, builds and injects
 the tweak, sets the version, checks the result, uploads it straight to Accretion's private storage
@@ -478,7 +478,7 @@ per newer version with the update steps: new `base.ipa_url` and `base.sha256`, n
 ## Tweak library
 
 `tweaks.json` is the tweak catalog the Accretion app reads. When someone signs an app listed in a
-tweak's `targets`, the app suggests it under Advanced → Modify → Tweaks, and one tap downloads and
+tweak's `targets`, the app suggests it under Advanced â†’ Modify â†’ Tweaks, and one tap downloads and
 injects it. Files download from each tweak's own project; nothing is re-hosted here.
 
 Each entry needs `id`, `name`, `description`, `targets` (bundle IDs), `version`, `debURL` (https
@@ -488,3 +488,96 @@ Each entry needs `id`, `name`, `description`, `targets` (bundle IDs), `version`,
 ```
 python3 scripts/validate_tweaks.py --check-links
 ```
+
+## Local detection profiles (no JIT)
+
+Compatible builds using the shared `runtime/SideloadCompat.m` receive a minimal filtering
+default, bound to `mod.json`'s `tested_app_version`: 22 exact artifact paths, native `stat`
+and Foundation `fileExistsAtPath:`, scoped to the app executable and UnityFramework. Shared
+defaults disable diagnostic counters, report files and phase polling. A missing
+or invalid tested version leaves defaults unavailable. Other engine frameworks require an
+explicit image selection; importing this policy does not establish runtime coverage.
+
+An optional `mods/<name>/detection.json` overrides the default, including `mode: "off"` to
+disable it or `observe` to preserve results while collecting counters. The game version must
+match the tested version; changes require a rebuild and restart. Existing installed copies
+are unchanged. The builder redirects the recognized, uncustomized legacy compatibility
+copy to the shared source through a Make override, without rewriting the game's files.
+The normalized source hash must match; custom copies are preserved and require integration.
+Ready-made external tweaks that do not compile this runtime cannot receive these hooks
+automatically. Existing per-game profiles retain their explicit settings.
+
+```json
+{
+  "schema_version": 1,
+  "game_version": "1.2.0",
+  "mode": "observe",
+  "diagnostics": true,
+  "images": ["@executable", "Frameworks/UnityFramework.framework/UnityFramework"],
+  "adapters": ["filesystem", "foundation", "urls", "environment", "images"],
+  "paths": ["/private/jailbreak.txt"],
+  "path_prefixes": [],
+  "url_schemes": ["cydia"],
+  "environment_names": ["DYLD_INSERT_LIBRARIES"],
+  "image_basenames": []
+}
+```
+
+For a minimal profile, select only the observed caller image and required adapters, then
+set `"apis": ["stat", "foundation_exists"]` to install only native `stat` and Foundation
+`fileExistsAtPath:` interception. Other supported API names are `access`, `lstat`, `open`,
+`fopen`, `getenv`, `foundation_attributes` and `urls`. Each API requires its adapter;
+unknown or duplicate entries are rejected. An explicit empty list installs no detection
+entry points. Omit `apis` only to retain the older adapter-wide selection. Unselected entry
+points are not resolved or installed by this detection layer and report as disabled.
+
+Use exact paths for known checks. Requests outside the configured caller images or path
+rules reach the original functions; these rules are not a filesystem-wide deny policy.
+Selecting a path in filter mode returns the existing missing-file result for that rule.
+It does not prove the caller would have detected a present artifact or accepted a modified game.
+
+Supported filtering covers selected imported `access`, `stat`, `lstat`, `open`, `fopen` and
+`getenv` calls, plus selected Foundation path queries and `canOpenURL:` calls whose caller
+belongs to a configured game image. The adapters preserve ordinary calls, ABI and error
+conventions. Existing foreign hooks, unresolved imports, unsupported layouts and failed writes
+are reported; they do not count as working coverage. Reports distinguish architecture,
+chained fixups, authenticated segments, missing classic tables, and malformed layout failures
+with fixed counters, without recording image paths. Direct syscalls and other lookup paths
+remain outside this coverage. Profile rules reject broad roots and ambiguous paths.
+Already resolved arm64 images with chained pointer formats 2/6 are supported when they
+retain classic indirect import metadata. Encoded chains are never traversed; authenticated
+pointers, unknown formats and images without retained metadata remain unsupported.
+
+Modes are `off`, `observe`, and `filter`. Observation still changes import/method pointers;
+it is not an invisible operation. Explicit profiles retain diagnostics by default; set
+`"diagnostics": false` to disable counters, report writes and phase polling. A diagnostic
+profile writes one bounded counter/status report
+to the app's `Documents/am_detection.json` after 30 seconds, then refreshes it every 15 seconds
+while the app runs. It contains a profile hash and elapsed time, with no raw query arguments,
+environment values, credentials, device identifiers or network data. It stays local; check its elapsed time and
+profile identity before treating an old file as a new observation.
+`am detection report` validates the file against a per-schema field allowlist (shape and
+bounds at every nesting level) and refuses it, naming only the field path, if it holds any
+field the runtime is not known to emit. Raw report files remain private.
+After the JSON it prints a short verdict on standard error: mode, phase, elapsed time,
+version and fingerprint problems, telemetry gaps, and each entry's state with its reason.
+`--wait` (default 20 s, up to 120) keeps polling until the file is pullable. `am run --report`
+does the same after the log capture, so one command builds, installs, opens and reports.
+Image/class concealment, kernel helpers, executable patches, attestation and server acceptance
+are unsupported. A local filter test does not prove that a game accepts modified gameplay.
+
+Static preflight can inspect a private IPA without executing it. Unsupported layouts and
+inspection limits remain explicit; static support does not prove a runtime pointer write.
+Use an explicit observation profile when collecting diagnostics:
+
+```sh
+am detection preflight /private/game.ipa --output /private/preflight.json --profile /private/detection.json
+am detection report my-mod
+am detection phase my-mod menu
+```
+
+Generated observation presets never overwrite an existing file. Report/phase commands also
+accept a private trial folder containing mod.json. Phase requests are bound to the current
+launch and require acknowledgement. They classify subsequent calls and never drive gameplay.
+Schema 3 reports include bounded attribution and matched-call outcomes with explicit drop
+counts. A negative result is different from a filtered call whose original was not invoked.

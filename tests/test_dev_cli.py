@@ -191,5 +191,17 @@ class Cli(unittest.TestCase):
         self.assertIn("0x60    long EnemyDamage", out)
 
 
+class ReportFlags(unittest.TestCase):
+    def test_run_report_and_detection_wait_parse(self):
+        parser = dev.build_parser()
+        args = parser.parse_args(["run", "example", "--report"])
+        self.assertTrue(args.report)
+        self.assertFalse(parser.parse_args(["run", "example"]).report)
+        args = parser.parse_args(["detection", "report", "example", "--wait", "120"])
+        self.assertEqual(args.wait, 120)
+        with self.assertRaises(dev.DevError):
+            dev.cmd_detection(parser.parse_args(["detection", "report", "example", "--wait", "121"]))
+
+
 if __name__ == "__main__":
     unittest.main()
