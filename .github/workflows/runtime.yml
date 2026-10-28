@@ -26,6 +26,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # SideloadCompat.m is compiled by no other automatic workflow (ci.yml only validates;
+      # the probe below excludes it). Compile it here so a break in the shim, or in
+      # AMImportBindings.c which it #includes, fails the PR. Default config: AM_DETECTION_ENABLED=0
+      # (no per-mod AMDetectionProfile.gen.h) and every AM_COMPAT_* on. -c only: no linking, so
+      # the SDK resolves the framework headers and no -framework is needed.
+      - name: Compile the sideload shim
+        run: |
+          set -euo pipefail
+          sudo xcode-select -s /Applications/Xcode_26.3.0.app
+          xcrun --sdk iphoneos clang -arch arm64 -miphoneos-version-min=15.0 -fobjc-arc -c -I runtime runtime/SideloadCompat.m -o "$RUNNER_TEMP/SideloadCompat.o"
+          echo "SideloadCompat.m compiles (arm64, iOS 15.0)" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Install Theos
         run: |
           set -euo pipefail
