@@ -177,7 +177,8 @@ class Cli(unittest.TestCase):
         code, out = run(["pin", "game-plus", "StatHandler.instance", "--value", "1", "--to", "keep"])
         self.assertEqual(code, 1)  # static field
         gen = (self.mod / "AMTweaks.gen.m").read_text()
-        self.assertIn('AMIl2cppCall(obj, "StatHandler", "get_Hunger", 0, NULL, &boxed)', gen)
+        name = dev.gen_tweaks.hidden  # game names as the generator writes them (encoded in a real build)
+        self.assertIn(f'AMIl2cppCall(obj, {name("StatHandler")}, {name("get_Hunger")}, 0, NULL, &boxed)', gen)
         self.assertNotIn("stringByAppendingString:jit", gen)  # pins: no (JIT) label
 
     def test_call_with_default_argument(self):

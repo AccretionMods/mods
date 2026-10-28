@@ -14,9 +14,16 @@ import gen_tweaks
 import hide
 
 # The generated code hides game names (AMS_BYTES, runtime/am_hide.h); these tests read the plain names, and
-# HiddenNames checks the hiding itself.
+# HiddenNames checks the hiding itself. Only while this module's tests run: other test files see the real one.
 HIDDEN = gen_tweaks.hidden
-gen_tweaks.hidden = gen_tweaks.c_string
+
+
+def setUpModule():
+    gen_tweaks.hidden = gen_tweaks.c_string
+
+
+def tearDownModule():
+    gen_tweaks.hidden = HIDDEN
 
 HOOKS = {
     "engine": "unity-il2cpp",
