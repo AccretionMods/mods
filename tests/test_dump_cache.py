@@ -1,4 +1,4 @@
-"""scripts/dump_cache.py and dev.py dump: one dump per game build, shared by mods; Auto-build's review memory."""
+"""scripts/dump_cache.py and dev.py dump: one dump per game build, shared by mods; marks carried across versions."""
 
 import io
 import os
@@ -98,6 +98,47 @@ class DumpCache(unittest.TestCase):
         lean = (self.root / "tools" / "il2cppdumper-lean" / "config.json").read_text(encoding="utf-8")
         self.assertIn('"GenerateStruct": false', lean)
         self.assertIn('"GenerateStruct": true', (tools / "config.json").read_text(encoding="utf-8"))  # tool untouched
+
+
+OLD = """// Image 0: Assembly-CSharp.dll - 0
+
+// Namespace:
+public class Player : MonoBehaviour // TypeDefIndex: 1
+{
+\tpublic float Health; // 0x10
+\tpublic int Gold; // 0x14
+\tpublic Stats stats; // 0x18
+}
+
+// Namespace:
+public class Stats // TypeDefIndex: 2
+{
+\tpublic float Might; // 0x10
+}
+"""
+
+
+class CarryMarks(unittest.TestCase):
+    def classes(self, text):
+        with tempfile.NamedTemporaryFile("w", suffix=".cs", delete=False, encoding="utf-8") as f:
+            f.write(text)
+        try:
+            return dump_scan.parse(f.name)
+        finally:
+            os.remove(f.name)
+
+    def test_moved_fields_keep_the_signature_and_changed_or_gone_ones_do_not(self):
+        old = self.classes(OLD)
+        moved = self.classes(OLD.replace("// 0x10\n\tpublic int Gold; // 0x14", "// 0x20\n\tpublic int Gold; // 0x24"))
+        retyped = self.classes(OLD.replace("public int Gold", "public long Gold"))
+        gone = self.classes(OLD.replace("\tpublic float Might; // 0x10\n", ""))
+        gold = {"object": "Player[]", "field": "Gold"}
+        might = {"object": "Player[]", "path": [{"field": "stats", "class": "Stats"}], "field": "Might"}
+        self.assertIsNotNone(dump_scan.pin_signature(old, gold))
+        self.assertEqual(dump_scan.pin_signature(old, gold), dump_scan.pin_signature(moved, gold))
+        self.assertNotEqual(dump_scan.pin_signature(old, gold), dump_scan.pin_signature(retyped, gold))
+        self.assertIsNotNone(dump_scan.pin_signature(old, might))
+        self.assertIsNone(dump_scan.pin_signature(gone, might))
 
 
 class Reviewed(unittest.TestCase):
