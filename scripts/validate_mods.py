@@ -99,7 +99,7 @@ def detection_problems(folder, meta):
         errors.append("detection.json requires a Makefile with runtime/SideloadCompat.m")
     else:
         with open(makefile, encoding="utf-8") as f:
-            if "runtime/SideloadCompat.m" not in f.read() and detection_profile.build_sources(folder, "SideloadCompat.m") != "runtime/SideloadCompat.m":
+            if "runtime/SideloadCompat.m" not in f.read():
                 errors.append("detection.json requires runtime/SideloadCompat.m in the Makefile")
     return errors
 

@@ -39,7 +39,6 @@ files_override=()
 name="$(sed -n -e 's/^TWEAK_NAME *= *//p' -e 's/^LIBRARY_NAME *= *//p' "$dir/Makefile" | head -1 | tr -d '[:space:]')"
 files="$(sed -n "s/^${name}_FILES *= *//p" "$dir/Makefile" | head -1)"
 original_files="$files"
-files="$(python3 "$root/scripts/detection_profile.py" --build-sources "$dir" "$files")"
 rm -f "$dir/Tweak.hidden.x"
 if [ -f "$dir/Tweak.x" ] && grep -q 'AMS("' "$dir/Tweak.x"; then
     python3 "$root/scripts/hide_strings.py" "$dir/Tweak.x" "$dir/Tweak.hidden.x" >&2
