@@ -123,7 +123,7 @@ class DetectionProfile(unittest.TestCase):
                 "TWEAK_NAME = Test\nTest_FILES = SideloadCompat.m\n"
             )
             shutil.copyfile(
-                ROOT / "mods/thewanderer-plus/SideloadCompat.m",
+                ROOT / "tests/fixtures/legacy_sideload_compat.m",
                 folder / "SideloadCompat.m",
             )
             self.assertEqual(
@@ -136,7 +136,7 @@ class DetectionProfile(unittest.TestCase):
     def test_known_legacy_build_sources_migrate_without_writing_the_mod(self):
         with tempfile.TemporaryDirectory() as d:
             folder = Path(d)
-            original = (ROOT / "mods/thewanderer-plus/SideloadCompat.m").read_bytes()
+            original = (ROOT / "tests/fixtures/legacy_sideload_compat.m").read_bytes()
             legacy = folder / "SideloadCompat.m"
             legacy.write_bytes(original)
             sources = "Tweak.x SideloadCompat.m menu/AMMenu.m"
