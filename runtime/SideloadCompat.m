@@ -9,9 +9,10 @@
 // They unlock nothing: they only replace answers the re-signed copy can never get.
 //
 // Everything here changes data, never code: Objective-C method tables and the app's own import
-// pointers (fishhook-style rebinding). On a phone without JIT, iOS kills an app as soon as it runs
-// a code page that was patched (CODESIGNING "Invalid Page"), and ElleKit's MSHookFunction patches
-// code, so this file must not use it.
+// pointers, rewritten in place by AMImportBindImage at each image load (a direct import-table
+// rewrite -- no trampoline is allocated and no code page is touched). On a phone without JIT, iOS
+// kills an app as soon as it runs a code page that was patched (CODESIGNING "Invalid Page"), and
+// ElleKit's MSHookFunction patches code, so this file must not use it.
 
 #import <Foundation/Foundation.h>
 #import <Security/Security.h>
@@ -124,7 +125,8 @@ static bool am_write_pointer(void **slot, void *expected, void *value, void *con
 }
 
 // Points the image's import slots (__got, __la_symbol_ptr) for the SecItem functions at the
-// replacements above, the way fishhook does.
+// replacements above, via AMImportBindImage: a direct rewrite of the resolved import table, with
+// no trampoline. Runs per image from am_image_added, so slots bound lazily are caught at load.
 static void am_rebind_image(const struct mach_header_64 *header, intptr_t slide) {
     AMImportBinding bindings[sizeof am_rebindings / sizeof *am_rebindings];
     size_t count=AM_COMPAT_KEYCHAIN ? sizeof bindings / sizeof *bindings : 0;
