@@ -78,7 +78,8 @@ def _encrypted(binary):
 
 
 def inspect_ipa(path):
-    """Facts from the .ipa: {"bundle", "version", "decrypted", "engine", "metadata_version", "markers", "size"}."""
+    """Facts from the .ipa: {"bundle", "name", "version", "decrypted", "engine", "metadata_version",
+    "il2cpp_exports" (None when not Unity IL2CPP), "markers", "size"}."""
     with zipfile.ZipFile(path) as z:
         names = z.namelist()
         apps = sorted({n.split("/")[1] for n in names if n.startswith("Payload/") and n.count("/") >= 2 and n.split("/")[1].endswith(".app")})
@@ -107,6 +108,10 @@ def inspect_ipa(path):
                 markers[kind] = found
         size = sum(i.file_size for i in z.infolist())
         name = app_name(z, app, info)
+        exports = None  # the runtime finds Unity through IL2CPP's exported API (dlsym il2cpp_domain_get...)
+        if unity and il2cpp:
+            libs = [f"{app}/Frameworks/UnityFramework.framework/UnityFramework", main]
+            exports = any(b"il2cpp_domain_get\0" in z.read(lib) for lib in libs if lib in names)
     return {
         "bundle": info.get("CFBundleIdentifier"),
         "name": name,
@@ -114,6 +119,7 @@ def inspect_ipa(path):
         "decrypted": decrypted,
         "engine": engine,
         "metadata_version": meta_version,
+        "il2cpp_exports": exports,
         "markers": markers,
         "size": size,
     }
@@ -126,6 +132,10 @@ def verdict(facts, scan=None):
         return "not supported", ["The main binary is still FairPlay-encrypted: get a decrypted copy (am fetch)."]
     if facts["engine"] != "Unity IL2CPP":
         return "not supported", [f"Engine: {facts['engine']}. Our dump, scan, pins and hooks need Unity IL2CPP."]
+    if facts.get("il2cpp_exports") is False:
+        return "not supported", ["UnityFramework has no il2cpp_* exports (the game strips or renames them): the "
+                                 "dump still works, but on the phone the runtime can't find Unity, so no switch "
+                                 "or hook runs (\"Unity runtime not found\")."]
     level = "good"
     m = facts["markers"]
     if "multiplayer" in m:
