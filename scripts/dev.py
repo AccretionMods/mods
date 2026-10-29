@@ -2,7 +2,8 @@
 
 Runs on Windows (uv run --no-project --python 3.12 scripts/dev.py ...  or  py -3 scripts/dev.py ...) and in
 WSL/Linux (python3 scripts/dev.py ...). Theos builds run in WSL either way; dumping needs .NET (Windows has
-it); signing and device logs need the phone on USB and run on Windows (plumesign, pymobiledevice3).
+it); signing uses the owner's certificate with zsign in WSL (keeps each app's own ID), or the Apple ID with
+plumesign (--apple-id, Windows); installs and device logs need the phone on USB (pymobiledevice3).
 
   dev.py new <name> <base.ipa> [--title T] [--category games]   personal mod folder from a decrypted .ipa
   dev.py dump <mod> [--base file.ipa] [--force]                  Il2CppDumper -> work/dump-<mod>-<ver>/dump.cs
@@ -20,13 +21,14 @@ it); signing and device logs need the phone on USB and run on Windows (plumesign
   dev.py tweak <mod> <key> --title T [--slider MIN MAX DEFAULT]  a switch or slider with no hook (for Tweak.x code)
   dev.py remove <mod> <key or Class.method>                      drop a tweak (and hooks nothing else uses)
   dev.py gen <mod>                                               regenerate AMTweaks.gen.m from tweaks.json
+  dev.py snapshots <mod> [--restore ID]                         configuration snapshots (taken before every change)
   dev.py check <mod>                                             hooks.json against the current dump
-  dev.py build <mod> [--ipa] [--bump] [--base file.ipa]          .dylib (and .ipa) in C:\\AccretionMods\\builds
-  dev.py sign <file.ipa> [--install] [-o out.ipa]                Apple ID signing with plumesign (Windows)
+  dev.py build <mod> [--ipa] [--bump] [--base file.ipa] [--no-hooks]  .dylib (and .ipa) in C:\\AccretionMods\\builds
+  dev.py sign <file.ipa> [--install] [--mod M] [--apple-id] [--minimal-entitlements]  certificate signing (zsign, keeps the ID); --apple-id: plumesign
   dev.py install <signed.ipa>                                    pymobiledevice3 apps install (USB)
   dev.py log <mod> [--seconds 60]                                device log lines of the mod and the runtime
   dev.py status <mod>                                            base, dump, tweaks, hooks, last build
-  dev.py run <mod> [--bump] [--seconds 60]                       build .ipa + sign + install + open + log, in one go
+  dev.py run <mod> [--bump] [--seconds 60] [--no-hooks]          build .ipa + sign + install + open + log, in one go
   dev.py update <mod> [new.ipa]                                  newer game version: re-dump, hooks ok/changed/missing,
                                                                  mod.json base + tested version refreshed
   dev.py pick <mod> <regex>                                      numbered find; type a number, answer 2-3 questions
@@ -40,6 +42,8 @@ it); signing and device logs need the phone on USB and run on Windows (plumesign
   dev.py learn <mod>                                             import an existing mod's hooks.json into the patterns
   dev.py fetch <bundle-id | name | --mod M> [--region us]        a decrypted .ipa from the decrypt site into intake/
          [--platform iphone] [--force]                           (AM_DECRYPT_URL; default decrypt.34306.lol, a third party)
+         [--version 1.2.3]                                       (decrypt.whoeevee.com first, the Telegram bot next)
+  dev.py fetch --save-key | --forget-key                         decrypt.whoeevee.com's access token (hidden input)
   dev.py fetch --login [--email E] | --logout | --account        the site account a new decrypt needs
   dev.py fetch --save-login | --forget-login                     keep it in Windows Credential Manager; fetch signs in
   dev.py start <bundle-id | file.ipa> [--name N] [--title T]      new game in one go: decrypted copy, report,
@@ -89,11 +93,39 @@ ROOT = (
 )  # AM_REPO: the tests point it at a temp repo
 sys.path.insert(0, str(HERE))
 
+import appstore
 import dev_learn
+import dump_cache
 import dump_scan
 import moddability
 import games
 import gen_tweaks
+import mod_tweaks
+from dev_signing import (  # noqa: E402,F401  signing, installing and the phone (scripts/dev_signing.py)
+    CERT_DIR,
+    INSTALL_MODES,
+    bash,
+    certificate_ready,
+    certificate_sign,
+    cmd_install,
+    cmd_install_mode,
+    cmd_sign,
+    install_bundle,
+    install_mode,
+    installed_bundles,
+    installed_id,
+    launch_app,
+    minimal_entitlements,
+    phone_apps,
+    plumesign,
+    profile_entitlements,
+    pymobiledevice3_cli,
+    pymobiledevice3_python,
+    replacing_original,
+    signer_for,
+    tool_path,
+    usbmux_device_id,
+)
 import ipa_fetch
 from il2cpp_dump import methods
 
@@ -148,6 +180,15 @@ def write_json(path, data):
     with open(path, "w", encoding="utf-8", newline="\n") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
         f.write("\n")
+
+
+def save_tweaks(folder, tweaks):
+    """A mod's tweaks.json, written through scripts/mod_tweaks.py: the previous file is kept in
+    <AM_ROOT>/dev/history/<mod>, and a template switch Tweak.x still uses is put back if it went missing."""
+    folder = Path(folder)
+    restored = mod_tweaks.save(folder, tweaks, history=am_root() / "dev" / "history" / folder.name)
+    if restored:
+        print(f"==> tweaks.json: put back {', '.join(restored)} (Tweak.x uses it)")
 
 
 def state_path(mod):
@@ -272,19 +313,51 @@ def run_dumper(folder, binary, metadata, out):
         raise DevError(f"Il2CppDumper failed ({r.returncode})")
 
 
-def dump(mod, base=None, force=False):
-    meta = read_json(mod_dir(mod) / "mod.json")
-    ipa = find_base(mod, meta, base)
+def index_old_dumps():
+    """Dumps made before the dump cache, registered in place the first time the cache is used."""
+    states = {p.stem: read_json(p) for p in (am_root() / "dev").glob("*.json") if (ROOT / "mods" / p.stem).is_dir()}
+    for key, folder, how in dump_cache.index_existing(am_root(), states):
+        print(f"==> dump cache: {folder.name} registered ({how})")
+
+
+def engine_check(ipa, bundle, version):
+    """Refuses a game our scan and switches can't mod, saying which engine it is; the verdict is remembered for
+    Studio's game list (appstore.remember, the same file the App Store check writes)."""
+    with zipfile.ZipFile(ipa) as z:
+        names = z.namelist()
+    engine, ok = appstore.engine_of(names)
+    try:
+        appstore.remember(bundle, {"engine": engine, "compatible": ok, "version": version, "files": len(names),
+                                   "checked": time.strftime("%Y-%m-%d"), "source": "local .ipa"})
+    except OSError:
+        pass  # a verdict Studio can't save still stops the dump below
+    if ok:
+        return
+    why = ("its IL2CPP functions aren't exported, so no switch could run on it" if engine.startswith("Unity IL2CPP")
+           else "the scan and the switches need a Unity IL2CPP game")
+    raise DevError(f"{ipa.name} is {engine}: {why}")
+
+
+def dump_build(ipa, force=False, structs=False, fallback_dir=None):
+    """dump.cs of an .ipa's game build, dumped once (scripts/dump_cache.py): a build already dumped is reused
+    without running the dumper; force dumps it again in the same folder; structs also writes il2cpp.h and
+    script.json. Touches no mod's state (dump() does). fallback_dir: where a build without a cache key goes."""
+    ipa = Path(ipa)
     info, app = ipa_info(ipa)
     version = info.get("CFBundleShortVersionString", "0")
-    work = am_root() / "work" / f"dump-{mod}-{version}"
+    bundle = info.get("CFBundleIdentifier") or "game"
+    engine_check(ipa, bundle, version)  # before any folder: a game we can't mod leaves nothing behind
+    if not dump_cache.index_path(am_root()).is_file():
+        index_old_dumps()
+    key = dump_cache.key_of_ipa(ipa, app)
+    hit = dump_cache.find(am_root(), key) if key else None
+    if hit and not force and (hit.get("structs") or not structs):
+        print(f"==> dump cached: {bundle} {version} is a build already dumped ({hit['dir']}); no dumper run"
+              " (--force to redo)")
+        return Path(hit["dir"]) / "out" / "dump.cs", key
+    work = Path(hit["dir"]) if hit else (dump_cache.new_dir(am_root(), bundle, version, key) if key
+                                         else Path(fallback_dir or am_root() / "work" / f"dump-{bundle}-{version}"))
     out = work / "out"
-    state = load_state(mod)
-    state.update(base_ipa=str(ipa), app_version=version, dump_dir=str(work))
-    save_state(mod, state)
-    if (out / "dump.cs").is_file() and not force:
-        print(f"==> dump exists: {out / 'dump.cs'} (--force to redo)")
-        return out / "dump.cs"
     work.mkdir(parents=True, exist_ok=True)
     binary = work / "UnityFramework"
     metadata = work / "global-metadata.dat"
@@ -304,14 +377,80 @@ def dump(mod, base=None, force=False):
                 shutil.copyfileobj(src, dst, 1 << 20)
     mv = metadata_version(metadata)
     folder, label = dumper_for(mv)
-    print(f"==> Metadata v{mv}: {label}")
+    print(f"==> Metadata v{mv}: {label}" + ("" if structs else " (lean: no il2cpp.h / script.json; --structs writes them)"))
     out.mkdir(exist_ok=True)
-    run_dumper(folder, binary, metadata, out)
+    run_dumper(folder if structs else dump_cache.lean_dumper(folder), binary, metadata, out)
     if not (out / "dump.cs").is_file():
         raise DevError("the dumper wrote no dump.cs")
+    if key:
+        dump_cache.register(am_root(), key, work, bundle, version, label, structs)
     size = (out / "dump.cs").stat().st_size
     print(f"==> {out / 'dump.cs'} ({size / 1e6:.1f} MB)")
-    return out / "dump.cs"
+    return out / "dump.cs", key
+
+
+def dump(mod, base=None, force=False, structs=False):
+    """The mod's base .ipa dumped once per game build (dump_build), and the mod pointed at that dump."""
+    meta = read_json(mod_dir(mod) / "mod.json")
+    ipa = find_base(mod, meta, base)
+    info, _ = ipa_info(ipa)
+    version = info.get("CFBundleShortVersionString", "0")
+    dump_cs, key = dump_build(ipa, force, structs, am_root() / "work" / f"dump-{mod}-{version}")
+    state = load_state(mod)
+    state.update(base_ipa=str(ipa), app_version=version, dump_dir=str(dump_cs.parent.parent), dump_key=key)
+    save_state(mod, state)
+    return dump_cs
+
+
+def cmd_dump(args):
+    """dump, then the scan, so a dumped game never waits unscanned (its result is cached for Studio's Scan tab)."""
+    if not dump(args.mod, args.base, args.force, args.structs):
+        return 1
+    if getattr(args, "no_scan", False):
+        return 0
+    try:
+        result, _ = scan_rows(args.mod)
+        print(f"==> scanned: {len(result['rows'])} candidates in {result['classes']} game classes"
+              f" (dev.py scan {args.mod} lists them)")
+    except (DevError, OSError, ValueError) as error:  # the dump stands; the scan can be run again on its own
+        print(f"==> dumped, but the scan didn't finish: {error} (dev.py scan {args.mod} retries it)")
+    return 0
+
+
+def cmd_dumps(args):
+    """Every dumped game build: folder, size, the mods using it; old per-mod copies of one build are named (their
+    space can be freed by hand: nothing here deletes)."""
+    if args.index or not dump_cache.index_path(am_root()).is_file():
+        index_old_dumps()
+    states = {p.stem: read_json(p) for p in (am_root() / "dev").glob("*.json") if (ROOT / "mods" / p.stem).is_dir()}
+    users = {}
+    for mod, st in states.items():
+        if st.get("dump_dir"):
+            users.setdefault(str(Path(st["dump_dir"])), []).append(mod)
+    index = dump_cache.load(am_root())
+
+    def size(folder):
+        return sum(f.stat().st_size for f in Path(folder).rglob("*") if f.is_file()) if Path(folder).is_dir() else 0
+
+    total = 0
+    for key, e in sorted(index.items(), key=lambda kv: kv[1]["dir"]):
+        n = size(e["dir"])
+        total += n
+        mods = users.get(str(Path(e["dir"])), [])
+        print(f"  {key}  {Path(e['dir']).name:44} {n / 1e6:7.0f} MB  {', '.join(mods) or '(no mod)'}"
+              + ("  +structs" if e.get("structs") else ""))
+    print(f"==> {len(index)} dumped builds, {total / 1e6:.0f} MB")
+    known = {str(Path(e["dir"])) for e in index.values()}
+    spare = [(d, size(d)) for d in sorted((am_root() / "work").glob("dump-*")) if str(d) not in known and size(d)]
+    if spare:
+        print("    not in the cache (a second copy of a build above, or a mod's older dump); free them by hand if unused:")
+        for d, n in spare:
+            same = ""
+            if (d / "UnityFramework").is_file() and (d / "global-metadata.dat").is_file():
+                twin = index.get(dump_cache.key_of_files(d / "UnityFramework", d / "global-metadata.dat"))
+                same = f"  same build as {Path(twin['dir']).name}" if twin else ""
+            print(f"      {d.name:44} {n / 1e6:7.0f} MB  {', '.join(users.get(str(d), [])) or '(no mod)'}{same}")
+    return 0
 
 
 def dump_path(mod):
@@ -323,6 +462,18 @@ def dump_path(mod):
 
 
 _dump_cache = {}
+_class_cache = {}
+
+
+def dump_classes(mod, assemblies=None, bundle_id=None):
+    """Immutable dump metadata reused while Auto-build adds several pins in this process."""
+    source = dump_path(mod)
+    st = source.stat()
+    key = (source, st.st_mtime_ns, st.st_size, tuple(sorted(assemblies or [])), bundle_id)
+    if key not in _class_cache:
+        _class_cache.clear()
+        _class_cache[key] = dump_scan.parse(source, assemblies=assemblies, bundle_id=bundle_id)
+    return _class_cache[key]
 
 
 def dump_methods(mod):
@@ -354,21 +505,34 @@ def type_kinds(mod):
 
 
 def fields_of(mod, cls):
-    """[(offset, static?, type, name)] of a class, from dump.cs. cls may carry its namespace (Core.PlayerLife)."""
+    """[(offset, static?, type, name)] of a class, from dump.cs. cls may carry its namespace (Core.PlayerLife)
+    and its assembly (HotFix:GameManager)."""
+    assembly, sep, name = cls.partition(":")
+    cls = name if sep else cls
+    images = []
     found, inside, depth, ns = [], False, 0, ""
     with open(dump_path(mod), encoding="utf-8", errors="ignore") as f:
         for line in f:
             if not inside:
+                image = dump_scan.IMAGE.match(line)
+                if image:
+                    images.append((int(image.group(2)), image.group(1)))
+                    continue
                 if line.startswith("// Namespace:"):
                     ns = line[13:].strip()
                     continue
                 m = TYPE_KIND.match(line)
                 name = m.group(2).split("<")[0] if m else None
                 if m and (name == cls or (ns and f"{ns}.{name}" == cls)):
+                    if sep:
+                        index = re.search(r"// TypeDefIndex: (\d+)", line)
+                        image = next((n for start, n in reversed(images) if index and start <= int(index.group(1))), None)
+                        if image != assembly:
+                            continue
                     inside, depth = True, 0
                 continue
             depth += line.count("{") - line.count("}")
-            if depth < 0:
+            if depth <= 0 and line.lstrip().startswith("}"):
                 break
             if "// Methods" in line:
                 break
@@ -501,7 +665,8 @@ def key_for(method_name):
 
 
 def resolve_method(mod, name, argc=None):
-    """The dump's Method for "Class.method" (or Namespace.Class.method), one overload."""
+    """The dump's Method for "Class.method" (or Namespace.Class.method, or Assembly:Class.method), one overload."""
+    name = name.rpartition(":")[2]
     found = dump_methods(mod)
     rows = [
         m for m in found if m.full_name == name or f"{m.class_name}.{m.name}" == name
@@ -610,7 +775,7 @@ def cmd_add(args):
     if problems:
         raise DevError("not written:\n  " + "\n  ".join(problems))
     write_json(folder / "hooks.json", hooks)
-    write_json(folder / "tweaks.json", tweaks)
+    save_tweaks(folder, tweaks)
     # remember the choice, so the next game's `suggest` starts from it
     store = dev_learn.load(patterns_path())
     tweak_item = next(t for t in tweaks["tweaks"] if t["key"] == key)
@@ -657,6 +822,18 @@ def cmd_pin(args):
         )
         pin["setter"] = member
         what = f"{m.full_name}({', '.join(m.params)})"
+    elif "." in cls and not fields_of(args.mod, cls) and fields_of(args.mod, cls.rpartition(".")[0]):
+        # Class.outer.inner: a value inside a struct field; the runtime adds the two offsets
+        cls, _, outer = cls.rpartition(".")
+        member = f"{outer}.{member}"
+        data = dump_classes(args.mod, assemblies=meta.get("scan_assemblies"), bundle_id=meta.get("target_bundle_id"))
+        resolve = dump_scan._type_resolver(data)
+        decl = dump_scan._declaration(data, resolve, resolve(cls, cls) or cls, member)
+        if not decl:
+            raise DevError(f"{cls}.{member}: {outer} is not a struct field with a number or bool {member.split('.')[1]}")
+        cs_type = ctype_ = decl[2].rpartition(":")[2]
+        pin["field"] = member
+        what = f"{cls}.{member} ({ctype_} inside the {decl[2].rpartition('.')[0]} struct; read by name at run time)"
     else:
         rows = [f for f in fields_of(args.mod, cls) if f[3] == member]
         if not rows:
@@ -675,6 +852,9 @@ def cmd_pin(args):
         )
         pin["field"] = member
         what = f"{cls}.{member} ({cs_type} at 0x{offset:X} in 10.x; read by name at run time)"
+    if cs_type.rsplit(".", 1)[-1] == "FP":  # Photon's fixed point: a long holding value * 65536
+        ctype_ = "int64_t"
+        pin["scale"] = gen_tweaks.FP_SCALE
     if ctype_ not in gen_tweaks.NUMERIC and ctype_ != "bool":
         raise DevError(f"{args.target} is {cs_type}: a pin needs a number or bool")
     pin["ctype"] = ctype_
@@ -685,7 +865,16 @@ def cmd_pin(args):
             if f[1]
             and f[3] in ("instance", "Instance", "p", "I", "_instance", "singleton")
         ]
-        pin["object"] = f"{cls}.{statics[0][3]}" if statics else cls
+        singleton = None
+        if not statics:  # GameManager : Singleton<GameManager>: the instance lives on the generic base
+            try:
+                m_ = read_json(mod_dir(args.mod) / "mod.json")
+                cache = dump_scan.cache_file(dump_path(args.mod), m_.get("scan_assemblies"), m_.get("target_bundle_id"))
+                data = json.loads(cache.read_text(encoding="utf-8"))["data"]
+                singleton = (data.get(cls) or {}).get("singleton")
+            except (OSError, ValueError, KeyError):
+                singleton = None
+        pin["object"] = f"{cls}.{statics[0][3]}" if statics else f"{cls}.{singleton}" if singleton else cls
     raw = args.value
     if (args.slider and raw in (None, "slider")) or (raw == "slider" and args.to):
         value = "slider"  # with --to, the slider is the existing tweak's (checked below)
@@ -708,6 +897,20 @@ def cmd_pin(args):
         pin["via"] = args.via
     if args.cls:
         pin["class"] = args.cls
+    if getattr(args, "path", None) is not None:
+        try:
+            pin["path"] = json.loads(args.path) if isinstance(args.path, str) else args.path
+        except ValueError as error:
+            raise DevError(f"path must be JSON: {error}") from error
+        pin["root_class"] = getattr(args, "root_class", None)
+        pin["class"] = cls
+        errors = gen_tweaks.path_problems(pin)
+        if errors:
+            raise DevError("not written: " + "; ".join(errors))
+        data = dump_classes(args.mod, assemblies=meta.get("scan_assemblies"), bundle_id=meta.get("target_bundle_id"))
+        errors = dump_scan.path_errors(data, pin["object"], pin["root_class"], pin["path"])
+        if errors:
+            raise DevError("not written: " + "; ".join(errors))
     if args.multiply:
         pin["op"] = "multiply"
 
@@ -737,7 +940,7 @@ def cmd_pin(args):
     problems = gen_tweaks.problems(tweaks, load_hooks(folder))
     if problems:
         raise DevError("not written:\n  " + "\n  ".join(problems))
-    write_json(folder / "tweaks.json", tweaks)
+    save_tweaks(folder, tweaks)
     store = dev_learn.load(patterns_path())
     dev_learn.record_pin(store, pin.get("class") or cls, member, ctype_, pin, tweak, meta["target_bundle_id"])
     dev_learn.save(patterns_path(), store)
@@ -805,7 +1008,7 @@ def cmd_call(args):
     problems = gen_tweaks.problems(tweaks, load_hooks(folder))
     if problems:
         raise DevError("not written:\n  " + "\n  ".join(problems))
-    write_json(folder / "tweaks.json", tweaks)
+    save_tweaks(folder, tweaks)
     store = dev_learn.load(patterns_path())
     dev_learn.record(store, m.hook(), "call", values, tweak, meta["target_bundle_id"])
     dev_learn.save(patterns_path(), store)
@@ -829,7 +1032,7 @@ def cmd_tweak(args):
     problems = gen_tweaks.problems(tweaks, load_hooks(folder))
     if problems:
         raise DevError("not written:\n  " + "\n  ".join(problems))
-    write_json(folder / "tweaks.json", tweaks)
+    save_tweaks(folder, tweaks)
     print(f"==> tweak {args.key} ({tweak['kind']}): read am_{args.key} in Tweak.x")
     return cmd_gen(args)
 
@@ -854,7 +1057,7 @@ def cmd_remove(args):
     ]
     removed_hooks = len(hooks["hooks"]) - len(kept)
     hooks["hooks"] = kept
-    write_json(folder / "tweaks.json", tweaks)
+    save_tweaks(folder, tweaks)
     write_json(folder / "hooks.json", hooks)
     print(
         f"==> removed {before - len(tweaks['tweaks'])} tweak(s) and {removed_hooks} unused hook(s)"
@@ -872,7 +1075,7 @@ def cmd_gen(args):
         print(f"tweaks.json: {p}")
     if problems:
         return 1
-    tweaks = read_json(folder / "tweaks.json")
+    tweaks = mod_tweaks.load(folder)
     n = sum(len(t.get("hooks", [])) for t in tweaks["tweaks"])
     print(f"==> AMTweaks.gen.m: {len(tweaks['tweaks'])} tweaks, {n} hooks")
     return 0
@@ -887,8 +1090,10 @@ def pin_problems_in_dump(mod):
     folder = mod_dir(mod)
     meta = read_json(folder / "mod.json")
     tweaks = load_tweaks(folder, meta)
-    dump_scan.scan(dump_path(mod), tweaks)  # builds or refreshes scan.json, whose class data is read below
-    data = json.loads((dump_path(mod).with_name("scan.json")).read_text(encoding="utf-8"))["data"]
+    dump_scan.scan(dump_path(mod), tweaks, assemblies=meta.get("scan_assemblies"),
+                   bundle_id=meta.get("target_bundle_id"))  # refreshes the scan cache (read below)
+    cache = dump_scan.cache_file(dump_path(mod), meta.get("scan_assemblies"), meta.get("target_bundle_id"))
+    data = json.loads(cache.read_text(encoding="utf-8"))["data"]
     methods = {}
     for m in dump_methods(mod):
         methods.setdefault((m.class_name.split(".")[-1], m.name), []).append(m)
@@ -896,7 +1101,7 @@ def pin_problems_in_dump(mod):
     out = []
 
     def has_method(cls, name, argc=None):
-        found = methods.get((cls.split(".")[-1], name), [])  # the method list keys classes by short name
+        found = methods.get((cls.rpartition(":")[2].split(".")[-1], name), [])  # keyed by short name
         return [m for m in found if argc is None or len(m.params) == argc]
 
     def getter(key, cls, name, why):
@@ -910,16 +1115,24 @@ def pin_problems_in_dump(mod):
         for p in t.get("pins", []):
             key = t["key"]
             obj = p["object"]
+            if "path" in p:
+                errors = gen_tweaks.path_problems(p)
+                if not errors:
+                    errors = dump_scan.path_errors(data, obj, p["root_class"], p["path"])
+                if errors:
+                    out.extend(("error", key, error) for error in errors)
+                    continue
             cls = obj[:-2] if obj.endswith("[]") else (obj.rpartition(".")[0] if obj.rpartition(".")[0] in data else obj.split(".")[0])
             info = data.get(cls)
-            if info is None and not methods.get((cls, ".ctor")) and not any(k[0] == cls for k in methods):
+            short = cls.rpartition(":")[2].split(".")[-1]
+            if info is None and not methods.get((short, ".ctor")) and not any(k[0] == short for k in methods):
                 out.append(("error", key, f"no class {cls} in the dump"))
                 continue
             if "." in obj and not obj.endswith("[]") and info is not None and not p.get("class"):
                 static = obj.rpartition(".")[2]
-                if static not in info.get("statics", []):
+                if static not in info.get("statics", []) and static != info.get("singleton"):
                     out.append(("warn", key, f"{obj}: not a static field of {cls}'s own type in the dump"))
-            target = p.get("class") or cls
+            target = p.get("class") or (p["path"][-1]["class"] if p.get("path") else p.get("root_class")) or cls
             if p.get("via"):
                 vias = has_method(cls, p["via"], 0)
                 if not vias:
@@ -931,6 +1144,9 @@ def pin_problems_in_dump(mod):
             tinfo = data.get(target) or {}
             if p.get("field"):
                 f = (tinfo.get("fields") or {}).get(p["field"])
+                if f is None and "." in p["field"]:  # "outer.inner": a value inside a struct field
+                    decl = dump_scan._declaration(data, dump_scan._type_resolver(data), target, p["field"])
+                    f = {"ctype": decl[2].rpartition(":")[2]} if decl else None
                 if f is None:
                     out.append(("error", key, f"{target}.{p['field']} is not a number or bool field in the dump"))
                 elif f["ctype"] != p.get("ctype"):
@@ -1051,6 +1267,26 @@ Depends: mobilesubstrate
 """
 
 
+def keep_out_of_git(name):
+    """A personal mod never goes into the public repository: list its folder in this checkout's own
+    .git/info/exclude (local, never pushed), so `git add -A` can't pick it up."""
+    try:
+        r = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--git-path", "info/exclude"],
+                           capture_output=True, text=True, check=False)
+        if r.returncode != 0:
+            return
+        exclude = Path(r.stdout.strip())
+        exclude = exclude if exclude.is_absolute() else ROOT / exclude
+        line = f"/mods/{name}/"
+        current = exclude.read_text(encoding="utf-8") if exclude.is_file() else ""
+        if line not in current.splitlines():
+            exclude.parent.mkdir(parents=True, exist_ok=True)
+            with open(exclude, "a", encoding="utf-8", newline="\n") as f:
+                f.write(("" if not current or current.endswith("\n") else "\n") + line + "\n")
+    except OSError:
+        pass  # a checkout without git: nothing to protect
+
+
 def cmd_new(args):
     name = args.name
     if not re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", name):
@@ -1125,12 +1361,13 @@ def cmd_new(args):
         },
     )
     gen_tweaks.generate(str(folder))
-    save_state(name, {"base_ipa": str(ipa), "app_version": version})
+    save_state(name, {"base_ipa": str(ipa), "app_version": version, "install_mode": "original"})  # new mods: the game's ID
     r = subprocess.run(
         [sys.executable, str(HERE / "validate_mods.py"), name], check=False
     )
     if r.returncode != 0:
         raise DevError("validate_mods.py failed")
+    keep_out_of_git(name)
     print(f"==> Made mods/{name} for {app} {version}")
     print(
         f'    Next: dev.py dump {name}; dev.py find {name} Damage; dev.py add {name} Player.TakeDamage --title "No damage"'
@@ -1204,6 +1441,11 @@ def cmd_build(args):
             f"==> Note: {newer[0][0].name} is {newer[0][1]}, newer than the {meta.get('tested_app_version')} this mod is built for (dev.py update {args.mod})"
         )
     if (folder / "tweaks.json").is_file():
+        missing = mod_tweaks.undeclared(folder)
+        if missing:
+            raise DevError(
+                f"Tweak.x uses {', '.join(missing)}, which tweaks.json doesn't have: add the switch back (the "
+                f"previous tweaks.json versions are in {am_root() / 'dev' / 'history' / folder.name})")
         problems = gen_tweaks.generate(str(folder))
         if problems:
             raise DevError("tweaks.json:\n  " + "\n  ".join(problems))
@@ -1216,13 +1458,16 @@ def cmd_build(args):
     if m:
         tweak = m.group(1)
     t0 = time.time()
-    print(f"==> Building {args.mod} {meta['version']} in WSL (Theos)")
-    code, out = run_in_wsl(f'cd "{repo}" && scripts/build.sh {args.mod}')
+    # --no-hooks: nothing in the game is hooked (scripts/build.sh AM_HOOKS=off); the menu and pins stay
+    no_hooks = getattr(args, "no_hooks", False)
+    hooks_env = "AM_HOOKS=off " if no_hooks else ""
+    print(f"==> Building {args.mod} {meta['version']} in WSL (Theos){' without hooks' if no_hooks else ''}")
+    code, out = run_in_wsl(f'cd "{repo}" && {hooks_env}scripts/build.sh {args.mod}')
     if code != 0:
         raise DevError("build failed (Theos output above)")
     dylib_wsl = out.strip().splitlines()[-1]
     dylib_src = Path(win_path(dylib_wsl)) if WINDOWS else Path(dylib_wsl)
-    dylib = builds / f"{tweak}-{meta['version']}.dylib"
+    dylib = builds / f"{tweak}-{meta['version']}{'-nohooks' if no_hooks else ''}.dylib"
     shutil.copyfile(dylib_src, dylib)
     print(f"==> {dylib} ({dylib.stat().st_size // 1024} KB, {time.time() - t0:.0f} s)")
     state = load_state(args.mod)
@@ -1235,8 +1480,12 @@ def cmd_build(args):
                 f"{base.name} is not the base mod.json names (sha256 differs); pass --base or update mod.json"
             )
         print(f"==> Injecting into {base.name}")
+        bundle = install_bundle(args.mod, meta)  # the install mode's ID; CI and publish.py keep mod.json's bundle_id
+        if not re.fullmatch(r"[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)+", bundle):
+            raise DevError(f"{bundle!r} is not a bundle ID")
+        print(f"==> Install ID: {bundle} ({INSTALL_MODES[install_mode(args.mod)]})")
         code, out = run_in_wsl(
-            f'cd "{repo}" && scripts/local_ipa.sh {args.mod} "{wsl_path(base)}" "{wsl_path(builds)}"'
+            f'cd "{repo}" && {hooks_env}AM_INSTALL_BUNDLE={bundle} scripts/local_ipa.sh {args.mod} "{wsl_path(base)}" "{wsl_path(builds)}"'
         )
         if code != 0:
             raise DevError("local_ipa.sh failed")
@@ -1253,241 +1502,45 @@ def cmd_build(args):
         if ipa:
             print(f"==> {ipa} ({ipa.stat().st_size / 1e6:.1f} MB, unsigned)")
             state["last_ipa"] = str(ipa)
+            state["last_hooks"] = not no_hooks  # Studio marks a last .ipa built with --no-hooks
             print(f'    Next: dev.py sign "{ipa}" --install')
     save_state(args.mod, state)
     return 0
-
-
-# ---------------------------------------------------------------- sign / install / log
-
-
-def plumesign():
-    for candidate in (
-        os.environ.get("PLUMESIGN_PATH"),
-        Path(os.environ.get("APPDATA", "")) / "AccretionLink" / "bin" / "plumesign.exe",
-        shutil.which("plumesign"),
-    ):
-        if candidate and Path(candidate).is_file():
-            return str(candidate)
-    raise DevError(
-        "plumesign not found: set PLUMESIGN_PATH (Accretion Link keeps one in %APPDATA%\\AccretionLink\\bin)"
-    )
-
-
-def tool_path(name):
-    """A tool on PATH, or in uv's bin folder (~/.local/bin), which a server started outside a login shell may lack."""
-    found = shutil.which(name)
-    if found:
-        return found
-    exe = Path.home() / ".local" / "bin" / (name + (".exe" if WINDOWS else ""))
-    return str(exe) if exe.is_file() else None
-
-
-def pymobiledevice3_cli():
-    exe = tool_path("pymobiledevice3")
-    if not exe:
-        raise DevError("pymobiledevice3 not found (uv tool install pymobiledevice3)")
-    return exe
-
-
-def pymobiledevice3_python():
-    """The Python of the installed pymobiledevice3 (uv tool, or the one next to the pymobiledevice3 on PATH)."""
-    candidates = []
-    uv = tool_path("uv")
-    r = (
-        subprocess.run([uv, "tool", "dir"], capture_output=True, text=True, check=False)
-        if uv
-        else None
-    )
-    if r and r.returncode == 0 and r.stdout.strip():
-        candidates.append(
-            Path(r.stdout.strip())
-            / "pymobiledevice3"
-            / ("Scripts" if WINDOWS else "bin")
-            / ("python.exe" if WINDOWS else "python")
-        )
-    if WINDOWS:
-        candidates.append(
-            Path(os.environ.get("APPDATA", ""))
-            / "uv"
-            / "tools"
-            / "pymobiledevice3"
-            / "Scripts"
-            / "python.exe"
-        )
-    exe = tool_path("pymobiledevice3")
-    if exe:
-        candidates.append(
-            Path(exe).resolve().parent / ("python.exe" if WINDOWS else "python")
-        )
-    for c in candidates:
-        if c.is_file():
-            return str(c)
-    return None
-
-
-def usbmux_device_id():
-    """usbmux's numeric DeviceID of the phone on USB (what plumesign --udid wants), via pymobiledevice3."""
-    python = pymobiledevice3_python()
-    if not python:
-        raise DevError("pymobiledevice3 not found (uv tool install pymobiledevice3)")
-    # one line on purpose: multi-line string literals have been mangled on the owner's PC (handbook rule 8)
-    code = (
-        "import asyncio, inspect; from pymobiledevice3 import usbmux; r = usbmux.list_devices(); "
-        "r = asyncio.run(r) if inspect.isawaitable(r) else r; "
-        "usb = [d for d in r if str(getattr(d, 'connection_type', 'USB')).upper() == 'USB']; "
-        "print(usb[0].devid if usb else '')"
-    )
-    r = subprocess.run(
-        [python, "-c", code],
-        capture_output=True,
-        text=True,
-        stdin=subprocess.DEVNULL,
-        check=False,
-    )
-    devid = r.stdout.strip()
-    if r.returncode != 0 or not devid:
-        detail = (" " + r.stderr.strip().splitlines()[-1]) if r.stderr.strip() else ""
-        raise DevError(
-            "no iPhone on USB (pymobiledevice3 sees no device: unlock the phone, trust this PC, check the cable)"
-            + detail
-        )
-    return devid
-
-
-def cmd_sign(args):
-    if not WINDOWS:
-        raise DevError(
-            "sign runs on Windows (plumesign with the saved Apple ID); from WSL use scripts/sign.sh with a certificate"
-        )
-    ipa = Path(args.ipa)
-    if not ipa.is_file():
-        raise DevError(f"no file at {ipa}")
-    out = (
-        Path(args.out)
-        if args.out
-        else ipa.with_name(ipa.stem.replace("_accretion", "") + "_signed.ipa")
-    )
-    cmd = [plumesign(), "sign", "-p", str(ipa), "--apple-id", "-o", str(out)]
-    if args.install:
-        cmd += ["--register-and-install", "--udid", usbmux_device_id()]
-    print("==> " + " ".join(cmd))
-    r = subprocess.run(
-        cmd, check=False
-    )  # interactive: Apple ID prompts (2FA) go to this console
-    if r.returncode != 0:
-        raise DevError(f"plumesign failed ({r.returncode})")
-    print(f"==> {out}")
-    if args.install:
-        # plumesign's install has left the app missing minutes later (2026-10-21, FBSApplicationLibrary NotFound);
-        # check the phone's list and install the signed copy over USB if it is not there
-        info, _ = ipa_info(out)
-        bundle = info["CFBundleIdentifier"]
-        if bundle in installed_bundles(bundle.rsplit(".", 2)[0]):
-            print(f"==> installed as {bundle}")
-        else:
-            print(
-                f"==> {bundle} is not on the phone after plumesign's install; installing the signed copy over USB"
-            )
-            if (
-                subprocess.run(
-                    [pymobiledevice3_cli(), "apps", "install", str(out)],
-                    stdin=subprocess.DEVNULL,
-                    check=False,
-                ).returncode
-                != 0
-            ):
-                raise DevError("pymobiledevice3 apps install failed")
-        if getattr(args, "launch", False):
-            launch_app(bundle)
-    return 0
-
-
-def installed_bundles(prefix):
-    """Bundle IDs on the USB phone that start with prefix (an Apple ID-signed copy carries a team suffix)."""
-    r = subprocess.run(
-        [pymobiledevice3_cli(), "apps", "list"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        stdin=subprocess.DEVNULL,
-        check=False,
-    )
-    if r.returncode != 0:
-        detail = r.stderr.strip().splitlines()[-1] if r.stderr.strip() else ""
-        raise DevError(f"could not list the phone's apps: {detail}")
-    try:
-        apps = json.loads(r.stdout[r.stdout.index("{") :])
-    except ValueError:
-        raise DevError("pymobiledevice3 apps list printed no JSON") from None
-    return [b for b in apps if b.startswith(prefix)]
-
-
-def launch_app(bundle):
-    """Opens an app on the USB phone through the developer tunnel (Developer Mode on, phone unlocked)."""
-    print(f"==> launching {bundle}")
-    r = subprocess.run(
-        [pymobiledevice3_cli(), "developer", "dvt", "launch", bundle],
-        stdin=subprocess.DEVNULL,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if r.returncode != 0:
-        detail = r.stderr.strip().splitlines()[-1] if r.stderr.strip() else ""
-        raise DevError(
-            f"launch failed ({detail}); open the app by hand, then dev.py log"
-        )
-    return True
 
 
 def cmd_run(args):
     """The whole loop: build the .ipa, sign and install it, open it, read the log."""
     mod_dir(args.mod)  # fails early on an unknown mod
     code = cmd_build(
-        argparse.Namespace(mod=args.mod, ipa=True, bump=args.bump, base=args.base)
+        argparse.Namespace(mod=args.mod, ipa=True, bump=args.bump, base=args.base,
+                           no_hooks=getattr(args, "no_hooks", False))
     )
     if code:
         return code
     ipa = load_state(args.mod).get("last_ipa")
     if not ipa:
         raise DevError("no .ipa from the build")
-    cmd_sign(argparse.Namespace(ipa=ipa, install=True, out=None, launch=False))
-    signed = Path(ipa).with_name(
-        Path(ipa).stem.replace("_accretion", "") + "_signed.ipa"
-    )
-    bundle = ipa_info(signed)[0]["CFBundleIdentifier"]
-    state = load_state(args.mod)
-    state["installed_bundle"] = bundle
-    save_state(args.mod, state)
-    launch_app(bundle)
+    cmd_sign(argparse.Namespace(ipa=ipa, install=True, out=None, launch=False, mod=args.mod,
+                                replace_original=getattr(args, "replace_original", False),
+                                apple_id=getattr(args, "apple_id", False),
+                                minimal_entitlements=getattr(args, "minimal_entitlements", False)))
+    launch_app(load_state(args.mod)["installed_bundle"])  # the ID sign verified on the phone
     code = cmd_log(argparse.Namespace(mod=args.mod, seconds=args.seconds, launch=False))
-    if code or not args.report:
+    if code or not getattr(args, "report", False):
         return code
     return cmd_detection(argparse.Namespace(action="report", target=args.mod, phase=None,
                                             profile=None, output=None, wait=45))
 
 
-def cmd_install(args):
-    ipa = Path(args.ipa)
-    if not ipa.is_file():
-        raise DevError(f"no file at {ipa}")
-    r = subprocess.run(
-        [pymobiledevice3_cli(), "apps", "install", str(ipa)],
-        stdin=subprocess.DEVNULL,
-        check=False,
-    )
-    return r.returncode
-
-
-def push_live(mod, bundle, test=None):
-    """The mod's pinned tweaks (and an am test block) to the phone as Documents/live_tweaks.json."""
+def push_live(mod, bundle, test=None, snapshot=None):
+    """The mod's pinned tweaks (and an am test / am snap block) to the phone as Documents/live_tweaks.json."""
     folder = mod_dir(mod)
     tweaks = load_tweaks(folder, read_json(folder / "mod.json"))
     live = {"title": tweaks.get("title"), "tweaks": [t for t in tweaks.get("tweaks", []) if t.get("pins")]}
     if test:
         live["test"] = test
+    if snapshot:
+        live["snapshot"] = snapshot
     tmp = am_root() / "work" / f"live_tweaks-{mod}.json"
     tmp.parent.mkdir(parents=True, exist_ok=True)
     tmp.write_text(json.dumps(live), encoding="utf-8")
@@ -1504,9 +1557,9 @@ def cmd_push(args):
     it, so the build's own switches apply again. Needs a build that has AMLivePins (built after it existed)."""
     folder = mod_dir(args.mod)
     meta = read_json(folder / "mod.json")
-    found = installed_bundles(meta["bundle_id"])
+    found = [b for b in [installed_id(args.mod, meta)] if b]  # the verified installed ID (install mode aware)
     if not found:
-        raise DevError(f"{meta['bundle_id']} is not on the phone (dev.py run {args.mod})")
+        raise DevError(f"{args.mod} is not on the phone (dev.py run {args.mod})")
     cli = pymobiledevice3_cli()
     if args.off:
         r = subprocess.run([cli, "apps", "rm", found[0], "Documents/live_tweaks.json"], capture_output=True, text=True)
@@ -1525,11 +1578,72 @@ def cmd_push(args):
     return 0
 
 
+def snaps_dir(mod):
+    path = am_root() / "dev" / "snaps" / mod
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def cmd_snap(args):
+    """Reads the current value of every pushed switch's target in the running game (AMLivePins.h snapshot) into
+    AM_ROOT/dev/snaps/<mod>/<label>.json. Take one, do something in play (get hit, level up, pick a skill), take
+    another, then am snap-diff shows which values the game really uses: the switches worth keeping."""
+    folder = mod_dir(args.mod)
+    meta = read_json(folder / "mod.json")
+    found = [b for b in [installed_id(args.mod, meta)] if b]  # the verified installed ID (install mode aware)
+    if not found:
+        raise DevError(f"{args.mod} is not on the phone (dev.py run {args.mod})")
+    if not re.fullmatch(r"[\w.-]{1,40}", args.label):
+        raise DevError("label: letters, digits, dots and dashes")
+    snap_id = f"{args.label}-{int(time.time())}"
+    push_live(args.mod, found[0], snapshot={"id": snap_id})
+    cli, local = pymobiledevice3_cli(), snaps_dir(args.mod) / f"{args.label}.json"
+    print(f"==> asked the game for snapshot {snap_id} (the game must be open)")
+    for _ in range(int(args.wait / 2)):
+        time.sleep(2)
+        r = subprocess.run([cli, "apps", "pull", found[0], "Documents/am_snapshot.json", str(local)],
+                           capture_output=True, text=True)
+        try:
+            data = json.loads(local.read_text(encoding="utf-8")) if r.returncode == 0 else {}
+        except (OSError, ValueError):
+            data = {}
+        if data.get("id") == snap_id:
+            values = data["values"]
+            read = sum(1 for v in values.values() if v["values"])
+            print(f"==> {local}: {len(values)} switches, {read} with a value read now")
+            return 0
+    raise DevError("no snapshot came back: is the game open (with a build from 1.0.12 on)?")
+
+
+def cmd_snap_diff(args):
+    """The switches whose value changed between two snapshots (am snap), most objects changed first."""
+    a, b = (json.loads((snaps_dir(args.mod) / f"{x}.json").read_text(encoding="utf-8"))["values"]
+            for x in (args.before, args.after))
+    tweaks = {t["key"]: t for t in load_tweaks(mod_dir(args.mod), read_json(mod_dir(args.mod) / "mod.json"))["tweaks"]}
+    changed, only = [], 0
+    for key in sorted(set(a) | set(b)):
+        va, vb = (a.get(key) or {}).get("values", []), (b.get(key) or {}).get("values", [])
+        if not va and not vb:
+            continue
+        if va != vb:
+            changed.append((key, va[:4], vb[:4]))
+        else:
+            only += 1
+    for key, va, vb in changed:
+        title = tweaks.get(key, {}).get("title", "")
+        print(f"  {key:<44} {title[:40]:<40} {va} -> {vb}")
+    print(f"==> {len(changed)} changed, {only} read but unchanged, between {args.before} and {args.after}")
+    out = snaps_dir(args.mod) / f"changed-{args.before}-{args.after}.txt"
+    out.write_text("\n".join(k for k, _, _ in changed) + "\n", encoding="utf-8")
+    print(f"==> keys in {out}")
+    return 0
+
+
 def cmd_log(args):
     folder = mod_dir(args.mod)
     meta = read_json(folder / "mod.json")
     if getattr(args, "launch", False):
-        found = installed_bundles(meta["bundle_id"])
+        found = [b for b in [installed_id(args.mod, meta)] if b]  # the verified installed ID (install mode aware)
         if not found:
             raise DevError(
                 f"{meta['bundle_id']} is not on the phone (dev.py sign <ipa> --install)"
@@ -1555,8 +1669,8 @@ def stream_log(mod, seconds, on_line, quiet=False, on_ready=None):
     tag = meta.get("display_name") or meta["name"]
     if (folder / "tweaks.json").is_file():
         tag = (
-            read_json(folder / "tweaks.json").get("log_tag")
-            or read_json(folder / "tweaks.json").get("title")
+            mod_tweaks.load(folder).get("log_tag")
+            or mod_tweaks.load(folder).get("title")
             or tag
         )
     pattern = f"\\[{re.escape(tag)}\\]|AccretionMods"
@@ -1782,12 +1896,19 @@ def cmd_test(args):
     folder = mod_dir(args.mod)
     meta = read_json(folder / "mod.json")
     tweaks = load_tweaks(folder, meta)
-    found = installed_bundles(meta["bundle_id"])
+    found = [b for b in [installed_id(args.mod, meta)] if b]  # the verified installed ID (install mode aware)
     if not found:
-        raise DevError(f"{meta['bundle_id']} is not on the phone (dev.py run {args.mod})")
+        raise DevError(f"{args.mod} is not on the phone (dev.py run {args.mod})")
     rounds = test_rounds(tweaks, args.section, args.keys)
     titles = {t["key"]: t["title"] for t in tweaks["tweaks"]}
     results = {}
+    # switches the owner pushed before the test (am push) go back afterwards; none: the file is removed
+    prior = am_root() / "work" / f"live_tweaks-{args.mod}.before-test.json"
+    prior.parent.mkdir(parents=True, exist_ok=True)
+    prior.unlink(missing_ok=True)
+    pulled = subprocess.run([pymobiledevice3_cli(), "apps", "pull", found[0], "Documents/live_tweaks.json", str(prior)],
+                            capture_output=True, text=True, check=False)
+    prior = prior if pulled.returncode == 0 and prior.is_file() else None
     print(f"==> {sum(len(k) for _, k in rounds)} switches in {len(rounds)} round(s) of {args.seconds} s. Keep the game "
           "open in a save (or in a fight, for combat switches); every switch goes off again after its round.")
     try:
@@ -1805,6 +1926,16 @@ def cmd_test(args):
                     print(f"      {k} ({titles.get(k, k)}): {got[k]}")
     finally:
         push_live(args.mod, found[0])  # no test block: the app turns the test switches off and restores values
+        # then the phone goes back to how the test found it: the owner's own pushed switches, or the build's own
+        # (a left-behind file keeps running every pinned switch live, removed ones included)
+        time.sleep(4)  # the app reads the file within 2 s
+        cli = pymobiledevice3_cli()
+        if prior is not None:
+            subprocess.run([cli, "apps", "push", found[0], str(prior), "Documents/live_tweaks.json"],
+                           capture_output=True, text=True, check=False)
+        else:
+            subprocess.run([cli, "apps", "rm", found[0], "Documents/live_tweaks.json"],
+                           capture_output=True, text=True, check=False)
     ok = sum(1 for v in results.values() if v == "reached")
     print(f"==> {ok} of {len(results)} reached the game; all test switches are off again")
     store = dev_learn.load(patterns_path())
@@ -1848,7 +1979,7 @@ def cmd_status(args):
     jit = sum(1 for h in hooks if h.get("needs_jit"))
     print(f"  hooks.json: {len(hooks)} hooks ({jit} need JIT)")
     if (folder / "tweaks.json").is_file():
-        tweaks = read_json(folder / "tweaks.json")["tweaks"]
+        tweaks = mod_tweaks.load(folder)["tweaks"]
         print(f"  tweaks.json: {len(tweaks)} tweaks")
         for t in tweaks:
             hs = (
@@ -1902,6 +2033,72 @@ def newer_bases(meta):
     return found
 
 
+def carry_marks(folder, old_classes, new_classes, old_version, new_version, hook_status, write=True):
+    """A works/fails mark made on old_version moves to new_version when every target of the switch is unchanged:
+    each hook "ok" in the new dump, each pin's declarations equal in both (dump_scan.pin_signature). The mark keeps
+    its date and says where it came from ("carried_from"); Studio shows it. Returns (carried keys, retest keys);
+    write=False only counts (update --dry-run)."""
+    path = folder / "tweaks.json"
+    tweaks = read_json(path)
+    carried, retest = [], []
+    for t in tweaks.get("tweaks", []):
+        v = t.get("verified") or {}
+        if v.get("result") not in ("works", "fails") or v.get("app_version") != old_version:
+            continue
+        same = old_classes is not None and new_classes is not None
+        for h in t.get("hooks", []):
+            same = same and hook_status.get(h.get("method", "")) == "ok"
+        for p in t.get("pins", []):
+            if not same:
+                break
+            before = dump_scan.pin_signature(old_classes, p)
+            same = before is not None and before == dump_scan.pin_signature(new_classes, p)
+        if same and (t.get("hooks") or t.get("pins")):
+            t["verified"] = dict(v, app_version=new_version, carried_from=v.get("carried_from") or old_version)
+            carried.append(t["key"])
+        else:
+            retest.append(t["key"])
+    if carried and write:
+        write_json(path, tweaks)
+    return carried, retest
+
+
+def update_preview(mod, folder, meta, ipa, old_classes, old_version, version, check_hooks):
+    """update --dry-run: the new build dumped into the cache (the mod still points at its old dump), then every
+    hook, pin and mark compared; nothing in the mod is written."""
+    new_cs, _ = dump_build(ipa)
+    new_classes = dump_scan.parse(new_cs, meta.get("scan_assemblies"), meta.get("target_bundle_id"))
+    results = check_hooks.check(load_hooks(folder)["hooks"], methods(str(new_cs)))
+    counts = {"ok": 0, "changed": 0, "missing": 0}
+    for status, _, _ in results:
+        counts[status] += 1
+    hook_status = {f"{h['class']}.{h['method']}": s for s, h, _ in results}
+    hook_status.update({gen_tweaks.hook_name(h): s for s, h, _ in results})
+    print(f"==> {mod} {old_version} -> {version} (dry run: nothing written)")
+    print(f"    hooks: {counts['ok']} ok, {counts['changed']} changed, {counts['missing']} missing of {len(results)}")
+    if (folder / "tweaks.json").is_file():
+        same = moved = gone = 0
+        lost = []
+        for t in mod_tweaks.load(folder).get("tweaks", []):
+            for p in t.get("pins", []):
+                before = dump_scan.pin_signature(old_classes, p) if old_classes else None
+                after = dump_scan.pin_signature(new_classes, p)
+                if after is None:
+                    gone += 1
+                    lost.append(t["key"])
+                elif before == after:
+                    same += 1
+                else:
+                    moved += 1
+        print(f"    pins: {same} unchanged, {moved} changed type or route, {gone} not found in {version}"
+              + (": " + ", ".join(dict.fromkeys(lost[:10])) if lost else ""))
+        carried, retest = carry_marks(folder, old_classes, new_classes, old_version, version, hook_status, write=False)
+        print(f"    marks: {len(carried)} would carry to {version}, {len(retest)} would need a retest"
+              + (": " + ", ".join(retest[:12]) if retest else ""))
+    print(f"    the new dump is cached ({new_cs.parent.parent}); `dev.py update {mod}` applies it without dumping again")
+    return 0
+
+
 def cmd_update(args):
     """A newer base .ipa: dump it, check every hook, refresh hooks.json and mod.json, say what needs a look."""
     import check_hooks
@@ -1932,6 +2129,13 @@ def cmd_update(args):
         print(f"==> {ipa.name} is already the base of {args.mod} ({version})")
         return 0
     print(f"==> {args.mod}: {meta.get('tested_app_version')} -> {version} ({ipa.name})")
+    old_version = meta.get("tested_app_version")
+    try:  # the old build's classes, for carrying works/fails marks whose targets did not change
+        old_classes = dump_scan.parse(dump_path(args.mod), meta.get("scan_assemblies"), meta.get("target_bundle_id"))
+    except (DevError, OSError):
+        old_classes = None
+    if args.dry_run:
+        return update_preview(args.mod, folder, meta, ipa, old_classes, old_version, version, check_hooks)
     dump(args.mod, str(ipa), False)
     _dump_cache.clear()
     found = dump_methods(args.mod)
@@ -1960,6 +2164,16 @@ def cmd_update(args):
     state.update(base_ipa=str(ipa), app_version=version)
     save_state(args.mod, state)
     if (folder / "tweaks.json").is_file():
+        hook_status = {f"{h['class']}.{h['method']}": status for status, h, _ in results}
+        hook_status.update({gen_tweaks.hook_name(h): status for status, h, _ in results})
+        try:
+            new_classes = dump_scan.parse(dump_path(args.mod), meta.get("scan_assemblies"), meta.get("target_bundle_id"))
+        except (DevError, OSError):
+            new_classes = None
+        carried, retest = carry_marks(folder, old_classes, new_classes, old_version, version, hook_status)
+        if carried or retest:
+            print(f"    marks: {len(carried)} carried to {version} (every target unchanged), {len(retest)} need a retest"
+                  + (": " + ", ".join(retest[:12]) + (" …" if len(retest) > 12 else "") if retest else ""))
         problems = gen_tweaks.generate(str(folder))
         for p in problems:
             print(f"  tweaks.json: {p}")
@@ -2137,7 +2351,7 @@ def cmd_mark(args):
         "date": dev_learn.date.today().isoformat(),
         "app_version": meta.get("tested_app_version"),
     }
-    write_json(folder / "tweaks.json", tweaks)
+    save_tweaks(folder, tweaks)
     dev_learn.save(patterns_path(), store)
     print(
         f"==> {args.key}: {'works' if works else 'fails'} on {meta.get('tested_app_version')}; patterns updated: {', '.join(touched) or 'none (no hooks or pins)'}"
@@ -2150,7 +2364,7 @@ def cmd_learn(args):
     meta = read_json(folder / "mod.json")
     hooks = load_hooks(folder)["hooks"]
     tweaks = (
-        read_json(folder / "tweaks.json")
+        mod_tweaks.load(folder)
         if (folder / "tweaks.json").is_file()
         else None
     )
@@ -2208,15 +2422,61 @@ def mods_by_target():
 
 
 def mark_games(rows):
-    """Each game with our mods of it and a decrypted copy waiting, if any."""
+    """Each game with our mods of it, a decrypted copy waiting, and its engine when a check found it
+    (scripts/appstore.py: the App Store .ipa's file list)."""
     mods = mods_by_target()
     have = {}
     for ipa in local_ipas():
         have.setdefault(ipa["bundle"], ipa)
+    engines = appstore.known()
     for r in rows:
         r["mods"] = mods.get(r["bundle"], [])
         r["ipa"] = have.get(r["bundle"])
+        r["engine"] = engines.get(r["bundle"])
+        r["verdict"] = moddable(r)
     return rows
+
+
+def moddable(game):
+    """One verdict for a game card and its details page, from what we know: {label, tone (good, warn, bad,
+    unknown), moddable, why}. Moddable means our runtime can run switches on it; online games are moddable but
+    only for offline play (our mods policy: no online or store cheats)."""
+    engine, online = game.get("engine") or {}, game.get("online")
+
+    def verdict(label, tone, ok, why):
+        return {"label": label, "tone": tone, "moddable": ok, "why": why}
+
+    if game.get("mods"):
+        return verdict("Modded", "good", True, "we have a mod of it")
+    if not engine:
+        return verdict("Engine not checked", "unknown", False, "Check engine reads its App Store file list")
+    name = engine.get("engine", "")
+    if not engine.get("compatible"):
+        if name.startswith("Unity IL2CPP, old"):
+            return verdict("Old Unity: no switches", "bad", False,
+                           "the game is built into the main app without its IL2CPP functions exported")
+        return verdict(f"Not moddable: {name}", "bad", False, "our scan and switches need a Unity IL2CPP game")
+    if engine.get("hot_update"):
+        return verdict("Moddable · hot-update code", "warn", True,
+                       "Unity IL2CPP, but part of its code may load at run time (HybridCLR or similar), which the dump "
+                       "doesn't see")
+    if online:
+        return verdict("Moddable · online", "warn", True,
+                       "Unity IL2CPP, but online: switches only for offline single-player parts, nothing for "
+                       "accounts, purchases or other players")
+    return verdict("Moddable", "good", True, "Unity IL2CPP: the scan and switches work on it")
+
+
+def games_engine(app_id, bundle, license_ok=False):
+    """The Games tab's engine check for one game: {"verdict"} or {"needs_license": True} (Studio asks first)."""
+    if not re.fullmatch(r"\d{5,12}", str(app_id or "")):
+        raise DevError("engine check: the game's App Store id")
+    try:
+        return {"verdict": appstore.check(app_id, bundle, license_ok)}
+    except appstore.NeedsLicense:
+        return {"needs_license": True}
+    except appstore.AppStoreError as e:
+        raise DevError(str(e)) from e
 
 
 def games_list(kind, region="us", term=None, bundle=None, games_only=False):
@@ -2255,7 +2515,8 @@ def scan_rows(mod, area=None, find=None, flagged=False):
     store = dev_learn.load(patterns_path())
     game = meta.get("target_bundle_id")
     result = dump_scan.scan(dump_path(mod), load_tweaks(folder, meta),
-                            learned=lambda name, ctype, cls: dev_learn.member_boost(store, name, ctype, game, cls))
+                            learned=dev_learn.booster(store, game),  # member_boost, indexed once for the scan
+                            assemblies=meta.get("scan_assemblies"), bundle_id=meta.get("target_bundle_id"))
     rows = (result["flagged"] if flagged else result["rows"]) + result.get("inventory", [])
     if area:
         rows = [r for r in rows if r["area"].lower().startswith(area.lower())]
@@ -2283,7 +2544,9 @@ def report_for(target):
     scan = None
     if mod:
         try:
-            scan = dump_scan.scan(dump_path(mod), load_tweaks(mod_dir(mod), read_json(mod_dir(mod) / "mod.json")))
+            meta = read_json(mod_dir(mod) / "mod.json")
+            scan = dump_scan.scan(dump_path(mod), load_tweaks(mod_dir(mod), meta), assemblies=meta.get("scan_assemblies"),
+                                  bundle_id=meta.get("target_bundle_id"))
         except DevError:
             scan = None
     return facts, scan
@@ -2338,6 +2601,15 @@ def cmd_post(args):
         "credits": "\n".join(f"- {c}" for c in meta.get("post_credits", POST_CREDITS)),
     }.items():
         text = text.replace("{" + k + "}", v)
+    # the mod's screenshot links (Mod Studio: Phone screenshot), the live ones, newest first: {screenshots}, or in
+    # place of the template's "LINK ONLY" line
+    now = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime())
+    links = "\n".join(s["url"] for s in state.get("shots", []) if s.get("expires_at", "") > now)
+    if links:
+        text = text.replace("{screenshots}", links) if "{screenshots}" in text else re.sub(
+            r"(?m)^LINK ONLY\s*$", lambda _m: links, text)
+    else:
+        text = text.replace("{screenshots}", "LINK ONLY")
     head = []
     if args.draft and left:
         head.append(f"DRAFT, not validated yet: {', '.join(t['key'] for t in left)}")
@@ -2397,7 +2669,9 @@ def cmd_start(args):
     print(f"==> making mods/{name} and its dump (a minute or two)")
     cmd_new(argparse.Namespace(name=name, ipa=str(ipa), title=args.title or f"{facts['name']}+",
                                category="games", no_dump=False))
-    scan = dump_scan.scan(dump_path(name), load_tweaks(mod_dir(name), read_json(mod_dir(name) / "mod.json")))
+    meta_ = read_json(mod_dir(name) / "mod.json")
+    scan = dump_scan.scan(dump_path(name), load_tweaks(mod_dir(name), meta_), assemblies=meta_.get("scan_assemblies"),
+                          bundle_id=meta_.get("target_bundle_id"))
     level, lines = moddability.verdict(facts, scan)
     print(f"==> verdict with the dump: {level.upper()}")
     for line in lines:
@@ -2420,6 +2694,13 @@ def cmd_scan(args):
         print(dump_scan.as_text(rows, args.limit))
         return 0
     print(f"{len(result['rows'])} candidates in {result['classes']} game classes; {len(result['flagged'])} flagged")
+    cov = result.get("coverage") or {}
+    if cov:
+        print(f"  read: {', '.join(cov['read'])}" + (f"; {cov['package_rows']} rows from bought packages (ranked low)"
+                                                     if cov.get("package_rows") else ""))
+        if cov.get("unread"):
+            print("  not read (game-code score): " + ", ".join(f"{u['assembly']} ({u['score']})" for u in cov["unread"])
+                  + '; add one to mod.json "scan_assemblies" if it holds game values')
     for r in rows:
         tag = f"FLAG: {r['flag']}" if r.get("flag") else ("in the mod" if r["has"] else f"score {r['score']}")
         hints = [h for h, on in (("lower is better", r.get("direction") == "lower"), ("kept in the save", r.get("saved"))) if on]
@@ -2486,6 +2767,23 @@ def cmd_games(args):
 
 
 def cmd_fetch(args):
+    if args.save_key or args.forget_key:  # decrypt.whoeevee.com's personal access token
+        vault = ipa_fetch.Vault(ipa_fetch.EEVEE_SITE)
+        try:
+            if args.forget_key:
+                vault.forget()
+                print("decrypt.whoeevee.com token removed from Windows Credential Manager")
+                return 0
+            import getpass
+
+            token = getpass.getpass("decrypt.whoeevee.com access token (hidden, kept in Windows Credential Manager): ").strip()
+            if not ipa_fetch.TOKEN.match(token):
+                raise DevError("that doesn't look like an access token (letters, digits and dashes): nothing saved")
+            vault.save("apiKey", token)
+        except ipa_fetch.FetchError as e:
+            raise DevError(str(e)) from e
+        print(f"saved in Windows Credential Manager as {vault.target}; fetch uses it for decrypt.whoeevee.com")
+        return 0
     client = ipa_fetch.Client(am_root())
     try:
         vault = ipa_fetch.Vault(client.base)
@@ -2532,7 +2830,7 @@ def cmd_fetch(args):
         target = args.target or read_json(mod_dir(args.mod) / "mod.json")["target_bundle_id"]
         ipa_fetch.fetch(
             am_root(), target, args.region, args.platform, args.force,
-            browser=not args.no_browser, source=args.source,
+            browser=not args.no_browser, source=args.source, version=args.app_version,
         )
     except ipa_fetch.FetchError as e:
         raise DevError(str(e)) from e
@@ -2572,11 +2870,17 @@ def build_parser():
     s.add_argument("--no-dump", action="store_true")
     s.set_defaults(fn=cmd_new)
 
-    s = sub.add_parser("dump")
+    s = sub.add_parser("dump", help="dump the base .ipa once per game build (a build already dumped is reused)")
     s.add_argument("mod")
     s.add_argument("--base")
-    s.add_argument("--force", action="store_true")
-    s.set_defaults(fn=lambda a: 0 if dump(a.mod, a.base, a.force) else 1)
+    s.add_argument("--force", action="store_true", help="run the dumper again for this build")
+    s.add_argument("--structs", action="store_true", help="also write il2cpp.h and script.json (~500 MB)")
+    s.add_argument("--no-scan", action="store_true", help="skip the scan that follows the dump")
+    s.set_defaults(fn=cmd_dump)
+
+    s = sub.add_parser("dumps", help="the dump cache: every dumped game build, its size and the mods using it")
+    s.add_argument("--index", action="store_true", help="register dumps made before the cache (in place)")
+    s.set_defaults(fn=cmd_dumps)
 
     s = sub.add_parser("find")
     s.add_argument("mod")
@@ -2633,6 +2937,8 @@ def build_parser():
         "--via",
         help="0-arg getter on the object that returns the real target (StatHandler.instance via get_playerStats)",
     )
+    s.add_argument("--path", help="JSON reference path steps from the root object (field/getter, class, optional each)")
+    s.add_argument("--root-class", help="class of the object at the start of --path")
     s.add_argument(
         "--class",
         dest="cls",
@@ -2690,6 +2996,11 @@ def build_parser():
     s.add_argument("mod")
     s.set_defaults(fn=cmd_gen)
 
+    s = sub.add_parser("snapshots", help="a mod's configuration snapshots; --restore ID puts one back")
+    s.add_argument("mod")
+    s.add_argument("--restore", metavar="ID", help="the snapshot to put back (its id from the list)")
+    s.set_defaults(fn=cmd_snapshots)
+
     s = sub.add_parser("check")
     s.add_argument("mod")
     s.set_defaults(fn=cmd_check)
@@ -2700,15 +3011,26 @@ def build_parser():
     s.add_argument("--bump", action="store_true")
     s.add_argument("--base")
     s.add_argument("--no-check", action="store_true", help="build even when a pin fails the dump check")
+    s.add_argument("--no-hooks", action="store_true",
+                   help="hook nothing in the game (no method hooks, no sideload compatibility): menu and pins only")
     s.set_defaults(fn=cmd_build)
 
     s = sub.add_parser("sign")
     s.add_argument("ipa")
     s.add_argument("--install", action="store_true")
+    s.add_argument("--mod", help="the mod this build is from: its install mode, signed and installed IDs")
+    s.add_argument("--replace-original", action="store_true",
+                   help="install even though the original game (an app Studio did not install) has this ID")
+    s.add_argument("--apple-id", action="store_true",
+                   help="sign with the Apple ID (plumesign) instead of the certificate: appends the team to the app "
+                        "ID, but gives JIT")
     s.add_argument(
         "--launch", action="store_true", help="with --install: open the app afterwards"
     )
     s.add_argument("-o", "--out")
+    s.add_argument("--minimal-entitlements", action="store_true",
+                   help="certificate signing with only the app identifier, team, one keychain group (and "
+                        "get-task-allow for JIT hooks when the profile allows it), not the profile's full set")
     s.set_defaults(fn=cmd_sign)
 
     s = sub.add_parser("install")
@@ -2727,15 +3049,27 @@ def build_parser():
 
     s = sub.add_parser(
         "run",
-        help="build .ipa, sign + install with the Apple ID, open it, read the log",
+        help="build .ipa, sign (certificate, keeps the app's ID) + install, open it, read the log",
     )
     s.add_argument("mod")
     s.add_argument("--bump", action="store_true")
     s.add_argument("--base")
     s.add_argument("--seconds", type=int, default=60)
+    s.add_argument("--replace-original", action="store_true",
+                   help="replace the original game on the phone when it has the same ID (asked for when it is there)")
+    s.add_argument("--apple-id", action="store_true", help="sign with the Apple ID instead (team-suffixed ID, JIT)")
+    s.add_argument("--minimal-entitlements", action="store_true",
+                   help="certificate signing with only the entitlements a mod needs (see dev.py sign)")
+    s.add_argument("--no-hooks", action="store_true",
+                   help="hook nothing in the game (no method hooks, no sideload compatibility): menu and pins only")
     s.add_argument("--report", action="store_true",
                    help="after the log, pull the local detection report and print its verdict")
     s.set_defaults(fn=cmd_run)
+
+    s = sub.add_parser("install-mode", help="how the mod installs: original (the game's ID) or separate (its own)")
+    s.add_argument("mod")
+    s.add_argument("mode", nargs="?", choices=sorted(INSTALL_MODES))
+    s.set_defaults(fn=cmd_install_mode)
 
     s = sub.add_parser("status")
     s.add_argument("mod")
@@ -2746,6 +3080,8 @@ def build_parser():
     )
     s.add_argument("mod")
     s.add_argument("ipa", nargs="?")
+    s.add_argument("--dry-run", action="store_true",
+                   help="dump the new build (cached) and say what would stay, change or need a retest; write nothing")
     s.set_defaults(fn=cmd_update)
 
     s = sub.add_parser("pick", help="numbered find, then add one with a few questions")
@@ -2773,6 +3109,17 @@ def build_parser():
     s = sub.add_parser("learn", help="import a mod's hooks.json into the pattern store")
     s.add_argument("mod")
     s.set_defaults(fn=cmd_learn)
+
+    s = sub.add_parser("snap", help="read every pushed switch's current value in the running game")
+    s.add_argument("mod")
+    s.add_argument("label", help="a name for this moment (before, after-hit...)")
+    s.add_argument("--wait", type=int, default=30, help="seconds to wait for the game's answer")
+    s.set_defaults(fn=cmd_snap)
+    s = sub.add_parser("snap-diff", help="switches whose value changed between two snapshots")
+    s.add_argument("mod")
+    s.add_argument("before")
+    s.add_argument("after")
+    s.set_defaults(fn=cmd_snap_diff)
 
     s = sub.add_parser("push", help="switches to the phone without rebuilding (live_tweaks.json)")
     s.add_argument("mod")
@@ -2821,7 +3168,7 @@ def build_parser():
     s.add_argument("--name", help="mod folder name (default: <app>-plus)")
     s.add_argument("--title", help="menu title (default: <app>+)")
     s.add_argument("--region", default="us", choices=ipa_fetch.REGIONS)
-    s.add_argument("--source", default="34306", choices=list(ipa_fetch.SOURCES))
+    s.add_argument("--source", default="eevee", choices=list(ipa_fetch.SOURCES))
     s.set_defaults(fn=cmd_start)
 
     s = sub.add_parser("scan", help="no-JIT switch candidates in the dump, scored; sold/online flagged")
@@ -2864,11 +3211,66 @@ def build_parser():
     s.add_argument("--import", dest="import_file", help="check a downloaded .ipa and move it into intake/")
     s.add_argument("--no-browser", action="store_true", help="fail instead of opening the site for a captcha")
     s.add_argument(
-        "--source", default="34306", choices=list(ipa_fetch.SOURCES),
-        help="34306: decrypt.34306.lol (API, captcha -> browser); decrypt.day, armconverter: in the browser",
+        "--source", default="eevee", choices=list(ipa_fetch.SOURCES),
+        help="eevee (default): decrypt.whoeevee.com's API (--save-key once), the Telegram bot when it has "
+        "nothing; telegram: the owner's Telegram decrypt bot (telegram_fetch.py login once); 34306: "
+        "decrypt.34306.lol (API, captcha -> browser); decrypt.day, armconverter: in the browser",
     )
+    s.add_argument("--version", dest="app_version", help="eevee: this bundle version (e.g. 9.0.62) instead of the newest")
+    s.add_argument("--save-key", action="store_true", help="keep decrypt.whoeevee.com's access token (hidden input)")
+    s.add_argument("--forget-key", action="store_true", help="remove the saved decrypt.whoeevee.com token")
     s.set_defaults(fn=cmd_fetch)
     return p
+
+
+# Commands that change a mod's files: the same snapshot Studio takes first (its Snapshots dialog and
+# `dev.py snapshots` list them), so a change made from the command line or a script can be undone too.
+SNAPSHOT_BEFORE = {"add", "pin", "call", "tweak", "remove", "mark", "gen", "build", "update", "run"}
+
+
+def _workspace():
+    studio = str(Path(__file__).resolve().parent.parent / "studio")  # this checkout's, whatever ROOT points at
+    if studio not in sys.path:
+        sys.path.insert(0, studio)
+    import workspace
+
+    return workspace
+
+
+def snapshot_before(mod, label):
+    """A snapshot of the mod's configuration (skipped when it is the same as the newest); never stops the command."""
+    try:
+        folder = mod_dir(mod)
+        _workspace().snapshot_create(am_root() / "studio", mod, folder, label)
+    except DevError:
+        pass  # an unknown mod: the command itself says so
+    except (ImportError, OSError, ValueError) as error:
+        print(f"(no snapshot: {error})", file=sys.stderr)
+
+
+def cmd_snapshots(args):
+    """The mod's configuration snapshots, newest first; --restore ID puts one back (after a recovery snapshot)."""
+    workspace = _workspace()
+    state, folder = am_root() / "studio", mod_dir(args.mod)
+    if not args.restore:
+        rows = workspace.snapshot_list(state, args.mod)
+        if not rows:
+            print(f"no snapshots of {args.mod} yet")
+        for row in rows:
+            print(f"{row['id']}  {row['created_at'][:19].replace('T', ' ')}  {row['label']}")
+        return 0
+    try:
+        preview = workspace.snapshot_preview(state, args.mod, folder, args.restore)
+        changed = [f["name"] for f in preview["files"] if f.get("diff") or f["before_present"] != f.get("after_present")]
+        if not changed:
+            print("that snapshot matches the mod's current files: nothing to restore")
+            return 0
+        result = workspace.snapshot_restore(state, args.mod, folder, args.restore, preview["expected"])
+    except (OSError, ValueError) as error:
+        raise DevError(f"restore failed: {error}")
+    print(f"==> restored {', '.join(changed)} from {args.restore}")
+    print(f"    the files before it: snapshot {result['recovery_id']} (dev.py snapshots {args.mod} --restore it to undo)")
+    return 0
 
 
 def main(argv=None):
@@ -2877,6 +3279,9 @@ def main(argv=None):
         p.print_help()
         return 0
     args = p.parse_args(argv)
+    command = (argv if argv is not None else sys.argv[1:])[:1]
+    if command and command[0] in SNAPSHOT_BEFORE and getattr(args, "mod", None):
+        snapshot_before(args.mod, "before " + command[0] + " (command line)")
     try:
         return args.fn(args) or 0
     except DevError as e:

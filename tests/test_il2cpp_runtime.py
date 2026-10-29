@@ -14,6 +14,20 @@ import validate_mods
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CC = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
 
+
+def _posix_target(cc):
+    """The harness links -ldl and uses dlfcn.h: a compiler that builds Windows programs (MinGW, such as the gcc that
+    Strawberry Perl puts on PATH) can't build it, so those runs skip instead of failing in setup."""
+    try:
+        target = subprocess.run([cc, "-dumpmachine"], capture_output=True, text=True, timeout=30, check=False).stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return not any(word in target.lower() for word in ("mingw", "windows", "msys", "cygwin"))
+
+
+if CC and not _posix_target(CC):
+    CC = None
+
 HOOKS = {
     "engine": "unity-il2cpp",
     "hooks": [
@@ -98,7 +112,7 @@ class MakefileCheck(unittest.TestCase):
         self.assertEqual(self.check(None), [])
 
 
-@unittest.skipUnless(CC, "needs a C compiler")
+@unittest.skipUnless(CC, "needs a C compiler that targets Linux or macOS (dlfcn, -ldl)")
 class Runtime(unittest.TestCase):
     """Compiles runtime/am_il2cpp.c against a fake IL2CPP VM and runs it."""
 

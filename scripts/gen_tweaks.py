@@ -293,14 +293,24 @@ def problems(tweaks, hooks):
                 if "value" not in hk:
                     out.append(f'{hwhere}: arg needs "value"')
         for j, pin in enumerate(t.get("pins", [])):
-            out += [f"{where} pin {j}: {p}" for p in pin_problems(pin, kind)]
+            if t.get("live_only") and "command" in pin:  # a game command object (AMLivePins.h): pushed switches only
+                found = [] if isinstance(pin.get("command"), str) and isinstance(pin.get("run"), str) else [
+                    '"command" needs the command class and "run" (its method)']
+                out += [f"{where} pin {j}: {p}" for p in found]
+                continue
+            found = pin_problems(pin, kind)
+            out += [f"{where} pin {j}: {p}" for p in found]
     if "watch" in tweaks:
         out += watch_problems(tweaks["watch"], tweaks.get("watch_every", 10))
     return out
 
 
 PIN_WHEN = ("always", "lower", "higher")
-OBJECT_SPEC = re.compile(r"^[A-Za-z_][\w.]*(\[\])?$")
+# "HotFix:GameManager.m_t": a class outside Assembly-CSharp carries its assembly (AMIl2cppClass reads it)
+# "Class.<Prop>k__BackingField" reaches a static auto-property (a game's ClientWorld.Base, say) as a root.
+OBJECT_SPEC = re.compile(r"^(?:[A-Za-z_][\w.-]*:)?[A-Za-z_][\w.]*(?:\.<[A-Za-z_]\w*>k__BackingField)?(\[\])?$")
+# a fixed-point number (Photon's FP: a long holding value * 65536): the pin's "scale"
+FP_SCALE = 65536
 NAME = re.compile(r"^[A-Za-z_<][\w<>]*$")
 
 
@@ -334,6 +344,80 @@ def value_problems(value, ctype_, kind, what="value"):
     ]
 
 
+def multiple_objects(pin):
+    return pin.get("object", "").endswith("[]") or any(
+        isinstance(s, dict) and s.get("each") for s in pin.get("path", [])
+    )
+
+
+MULTIPLY_SLOTS = 512  # objects one list multiply tracks at once; more stay as the game has them
+
+
+def per_object_multiply(pin):
+    """A multiply over every object of a list (Enemy[]): each object keeps its own base value."""
+    return pin.get("op") == "multiply" and bool(pin.get("field")) and multiple_objects(pin)
+
+
+def path_problems(pin):
+    if "path" not in pin:
+        return ['"root_class" needs a path'] if "root_class" in pin else []
+    path = pin["path"]
+    cls_name = re.compile(r"^(?:[\w.-]+:)?[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$")
+    if not isinstance(pin.get("root_class"), str) or not cls_name.fullmatch(pin["root_class"]):
+        return ['"path" needs a qualified "root_class"']
+    if not isinstance(path, list) or len(path) > 8:
+        return ['"path" must be a list of at most 8 steps']
+    out = []
+    if pin.get("via"):
+        out.append('use "path" or "via", not both')
+    for step in path:
+        if (not isinstance(step, dict) or set(step) - {"field", "getter", "class", "each"}
+                or not isinstance(step.get("class"), str) or not cls_name.fullmatch(step["class"])):
+            out.append('each path step needs a result "class" and only field/getter/each keys')
+            continue
+        members = [k for k in ("field", "getter") if k in step]
+        if len(members) > 1 or any(not isinstance(step[k], str) or not NAME.fullmatch(step[k]) for k in members):
+            out.append('a path step takes one field or getter name (or just class to filter)')
+        if "each" in step and (step["each"] not in ("array", "list", "values") or not members):
+            out.append('"each" must be array, list or values on a field/getter step')
+    if not out and pin.get("class") and pin["class"] != (path[-1]["class"] if path else pin["root_class"]):
+        out.append('"class" must match the final path class; add a class-only step to filter another type')
+    return out
+
+
+ATTR_GET, ATTR_SET = "GetAttributeValue", "SetAttributeValue"
+
+
+def attr_problems(pin, kind):
+    """A named-attribute pin: a stat kept in a by-name table, read and written through the game's own
+    GetAttributeValue(string) / SetAttributeValue(string, FP) (runtime/AMAttrPins.h).
+    {"object"..., "path"..., "attr": "Attack", "op": "multiply", "value": 2}   attack x2 (the game's value tracked)
+    {"attr": "FireCD", "op": "set", "value": 0, "when": "higher"}             a plain number, FP-scaled for the game
+    "get"/"set" name other methods when a game calls them differently."""
+    out = []
+    if any(pin.get(k) for k in ("field", "setter", "call")):
+        out.append('"attr" goes alone: no "field", "setter" or "call" beside it')
+    if not isinstance(pin.get("attr"), str) or not re.fullmatch(r"[A-Za-z_][\w.]{0,63}", pin["attr"]):
+        out.append('"attr" is the stat\'s name in the game\'s table (Attack, CritRate, MoveSpeed...)')
+    for k in ("get", "set"):
+        if k in pin and not (isinstance(pin[k], str) and NAME.match(pin[k])):
+            out.append(f'"{k}" must be a method name')
+    op = pin.get("op", "set")
+    if op not in ("set", "multiply"):
+        out.append('"op" must be set or multiply')
+    value = pin.get("value")
+    if value == "slider":
+        if kind != "slider":
+            out.append('"value": "slider" needs a slider tweak')
+    elif isinstance(value, bool) or not isinstance(value, (int, float)):
+        out.append('"value" must be a number (the factor for multiply, the stat for set) or "slider"')
+    elif op == "multiply" and value <= 0:
+        out.append('a multiply factor must be above 0')
+    if pin.get("when", "always") not in PIN_WHEN:
+        out.append(f'"when" must be one of {", ".join(PIN_WHEN)}')
+    return out
+
+
 def pin_problems(pin, kind):
     """A pin runs every tick on the live object(s) of a class: the no-JIT path.
     {"object": "StatHandler.instance" | "Enemy" | "Enemy[]",   static field, first live object, every live object
@@ -346,6 +430,9 @@ def pin_problems(pin, kind):
     out = []
     if not isinstance(pin, dict):
         return ["must be an object"]
+    out += path_problems(pin)
+    if out:
+        return out
     obj = pin.get("object")
     if not isinstance(obj, str) or not OBJECT_SPEC.match(obj):
         out.append(
@@ -353,9 +440,11 @@ def pin_problems(pin, kind):
         )
     for key in ("via", "class"):
         if key in pin and not (
-            isinstance(pin[key], str) and NAME.match(pin[key].replace(".", ""))
+            isinstance(pin[key], str) and NAME.match(pin[key].rpartition(":")[2].replace(".", ""))
         ):
             out.append(f'"{key}" must be a name')
+    if "attr" in pin:
+        return out + attr_problems(pin, kind)
     targets = [k for k in ("field", "setter", "call") if pin.get(k)]
     if len(targets) != 1:
         out.append('needs exactly one of "field", "setter" or "call"')
@@ -394,18 +483,26 @@ def pin_problems(pin, kind):
         out.append('"when" lower/higher needs a numeric field or setter')
     if "threshold" in pin and not isinstance(pin["threshold"], (int, float)):
         out.append('"threshold" must be a number')
+    if "scale" in pin and (not isinstance(pin["scale"], int) or pin["scale"] <= 0 or ctype_ != "int64_t"):
+        out.append('"scale" is a whole number above 0 on an int64_t (a fixed-point FP field: 65536)')
     op = pin.get("op", "set")
     if op not in ("set", "multiply"):
         out.append('"op" must be set or multiply')
     if op == "multiply" and (target != "field" or ctype_ not in NUMERIC):
         out.append('"op": "multiply" works on a numeric field')
-    if op == "multiply" and isinstance(obj, str) and obj.endswith("[]"):
-        out.append('"op": "multiply" tracks one base value, so it needs a single object (not Class[])')
     return out
 
 
 def pin_objects(pin):
     """C lines that bind `obj` to each target object and open a block per object: (lines, closers, class)."""
+    if "path" in pin:
+        steps = "@[" + ", ".join("@{" + ", ".join(
+            f'@"{k}": @({hidden(v)})' for k, v in step.items()) + "}" for step in pin["path"]) + "]"
+        cls = pin["path"][-1]["class"] if pin["path"] else pin["root_class"]
+        return [
+            f"        NSArray *targets = AMIl2cppPathObjects(AMIl2cppRootObjects({hidden(pin['object'])}), {hidden(pin['root_class'])}, {steps});",
+            "        for (NSValue *target in targets) { void *obj = target.pointerValue; if (obj) {",
+        ], ["            }", "        }"], cls
     obj = pin["object"]
     every = obj.endswith("[]")
     obj = obj[:-2] if every else obj
@@ -447,8 +544,10 @@ def pin_objects(pin):
 def pin_value(pin, var, ctype_, cls, state):
     """(setup lines, C expression) for the value a pin writes."""
     value = pin["value"]
+    # a fixed-point field holds value * scale; a multiply factor is not scaled (base * factor stays raw)
+    scale = pin.get("scale") if pin.get("op") != "multiply" else None
     if value == "slider":
-        return [], f"({ctype_}){var}"
+        return [], f"({ctype_})({var} * {scale})" if scale else f"({ctype_}){var}"
     if value == "peak":
         return [], f"{state}_peak"
     if isinstance(value, dict) and "getter" in value:
@@ -461,6 +560,8 @@ def pin_value(pin, var, ctype_, cls, state):
             f"            {ctype_} *vp = AMIl2cppField(obj, {hidden(cls)}, {hidden(value['field'])});",
             f"            if (!vp) goto {state}_next;",
         ], "(*vp)"
+    if scale and not isinstance(value, bool):
+        return [], c_value(round(value * scale), ctype_)
     return [], c_value(value, ctype_)
 
 
@@ -473,7 +574,9 @@ def restorable(pin):
     the game has, and so do refills ({"getter"}/{"field"} values) and pins or tweaks with "restore": false (a
     resource like radiation, where the old value coming back would hurt). The value goes back only while the field still holds what the pin wrote (the game moving it
     since wins)."""
-    if pin["object"].endswith("[]") or pin.get("call") or pin.get("value") == "peak":
+    if "attr" in pin:
+        return pin.get("restore") is not False  # AMAttrPins.h keeps each object's own value
+    if (multiple_objects(pin) and not per_object_multiply(pin)) or pin.get("call") or pin.get("value") == "peak":
         return False
     if pin.get("restore") is False or isinstance(pin.get("value"), dict):  # opted out, or a refill (health = max)
         return False
@@ -487,6 +590,13 @@ def pin_globals(pin, key, index):
     state = f"s_{key}_{index}"
     ctype_ = pin.get("ctype")
     out = []
+    if "attr" in pin:
+        return out  # its state lives in AMAttrPins.h, per object
+    if per_object_multiply(pin):  # each object's own base and what the pin last wrote, by object
+        n = MULTIPLY_SLOTS
+        out.append(f"static void *{state}_objs[{n}]; static {ctype_} {state}_bases[{n}], {state}_sets[{n}];"
+                   f" static bool {state}_seen[{n}]; static int32_t {state}_used;")
+        return out
     if pin.get("op") == "multiply":
         out.append(f"static {ctype_} {state}_base, {state}_set;")
         if restorable(pin):
@@ -501,8 +611,24 @@ def pin_globals(pin, key, index):
 def render_restore(pin, key, index):
     """C lines (in am_pin_<key>, when the switch goes off) that put the game's value back on the same object."""
     state = f"s_{key}_{index}"
+    if "attr" in pin:
+        objects, closers, cls = pin_objects(pin)
+        names = f"{hidden(pin.get('get', ATTR_GET))}, {hidden(pin.get('set', ATTR_SET))}, {hidden(pin['attr'])}"
+        return ([f"        {{  // restore pin {index}: attribute {pin['attr']}"] + ["    " + line for line in objects]
+                + [f"                if (AMAttrRestore({c_string(f'{key}/{index}')}, obj, {hidden(cls)}, {names})) restored = true;"]
+                + ["    " + c for c in closers]
+                + [f"            AMAttrForget({c_string(f'{key}/{index}')});", "        }"])
     ctype_ = pin["ctype"]
     objects, closers, cls = pin_objects(pin)
+    if per_object_multiply(pin):  # every object gets its own base back, while it still holds what the pin wrote
+        lines = [f"        {{  // restore pin {index}: each object's own base"] + ["    " + line for line in objects]
+        lines.append(f"                int32_t slot = 0; while (slot < {state}_used && {state}_objs[slot] != obj) slot++;")
+        lines.append(f"                {ctype_} *p = slot < {state}_used ? AMIl2cppField(obj, {hidden(cls)}, {hidden(pin['field'])}) : NULL;")
+        lines.append(f"                if (p && *p == {state}_sets[slot]) {{ *p = {state}_bases[slot]; restored = true; }}")
+        lines += ["    " + c for c in closers]
+        lines.append(f"            {state}_used = 0;")
+        lines.append("        }")
+        return lines
     lines = [f"        {{  // restore pin {index}"] + ["    " + line for line in objects]
     lines.append(f"                if (obj == {state}_obj) {{")
     if pin.get("op") == "multiply":
@@ -530,7 +656,7 @@ def note_pin(t):
     if t.get("kind") != "slider" or not t.get("pins"):
         return None
     pin = t["pins"][0]
-    if pin["object"].endswith("[]") or pin.get("call") or not (pin.get("field") or str(pin.get("setter", "")).startswith("set_")):
+    if "attr" in pin or multiple_objects(pin) or pin.get("call") or not (pin.get("field") or str(pin.get("setter", "")).startswith("set_")):
         return None
     return pin
 
@@ -548,7 +674,7 @@ def render_note(t):
     if pin.get("op") == "multiply":
         lines.append(f"    if ({on}) {{ if ({state}_set) AMNoteValue({c_string(key)}, (double){state}_base); return; }}")
     elif restorable(pin):
-        lines.append(f"    if ({on}) {{ if ({state}_has) AMNoteValue({c_string(key)}, (double){state}_orig); return; }}")
+        lines.append(f"    if ({on}) {{ if ({state}_has) AMNoteValue({c_string(key)}, (double){state}_orig{' / ' + str(pin['scale']) if pin.get('scale') else ''}); return; }}")
     else:
         lines.append(f"    if ({on}) return;")
     lines.append("    {")
@@ -557,7 +683,7 @@ def render_note(t):
         lines.append(f"            {ctype_} *v = AMIl2cppField(obj, {hidden(cls)}, {hidden(pin['field'])});")
     else:
         lines.append(f"            void *b = NULL; {ctype_} *v = AMIl2cppCall(obj, {hidden(cls)}, {hidden('get_' + pin['setter'][4:])}, 0, NULL, &b) ? AMIl2cppUnbox(b) : NULL;")
-    lines.append(f"            if (v) AMNoteValue({c_string(key)}, (double)*v);")
+    lines.append(f"            if (v) AMNoteValue({c_string(key)}, (double)*v{' / ' + str(pin['scale']) if pin.get('scale') else ''});")
     lines += closers
     lines.append("    }")
     lines.append("}")
@@ -568,9 +694,24 @@ def render_note(t):
 def render_pin(pin, var, kind, key, index, waiting=None):
     """C lines (inside am_pin_<key>) that apply one pin to its object(s) once."""
     state = f"s_{key}_{index}"
-    what = pin.get("field") or pin.get("setter") or pin.get("call")
+    what = pin.get("field") or pin.get("setter") or pin.get("call") or pin.get("attr")
     lines = [f"    {{  // pin {index}: {pin['object']} {what}"]
     objects, closers, cls = pin_objects(pin)
+    if "attr" in pin:
+        missing = c_string(waiting or "Waiting for the game: load a save first")
+        unreachable = hidden(f"Needs an update for this game version ({cls} {pin['attr']}): run am check")
+        value = f"(double){var}" if pin.get("value") == "slider" else repr(float(pin["value"]))
+        op = 1 if pin.get("op") == "multiply" else 0
+        when = {"always": 0, "lower": 1, "higher": 2}[pin.get("when", "always")]
+        names = f"{hidden(pin.get('get', ATTR_GET))}, {hidden(pin.get('set', ATTR_SET))}, {hidden(pin['attr'])}"
+        lines.append(f"            tried = true; if (!why) why = {missing};")
+        lines += objects
+        lines.append(f"            found = true; why = {unreachable};")
+        lines.append(f"            int r = AMAttrApply({c_string(f'{key}/{index}')}, obj, {hidden(cls)}, {names}, {op}, {value}, {when});")
+        lines.append("            if (r >= 0) reached = true; if (r > 0) applied = true;")
+        lines += closers
+        lines.append("    }")
+        return lines
     # the menu's status dot (AMMenuStatus): tried this tick, found the object, reached (read or wrote) it
     # what the player reads under a red dot: the tweak's own hint ("Start a fight to see it work"), or a default
     missing = c_string(waiting or "Waiting for the game: load a save first")
@@ -604,6 +745,10 @@ def render_pin(pin, var, kind, key, index, waiting=None):
         lines.append("    }")
         return lines
     lines.append(status_start)
+    per_object = per_object_multiply(pin)
+    if per_object:  # which tracked objects are still in the list this tick
+        lines.append(f"        for (int32_t slot = 0; slot < {state}_used; slot++) {state}_seen[slot] = false;")
+        lines.append("        bool any_seen = false;")
     lines += objects
     lines.append(status_found)
     ctype_ = pin["ctype"]
@@ -613,14 +758,25 @@ def render_pin(pin, var, kind, key, index, waiting=None):
     if pin["value"] == "peak":
         lines.insert(1, f"    static {ctype_} {state}_peak;")
     lines += setup
-    limit = c_value(pin["threshold"], ctype_) if "threshold" in pin else value
+    limit = c_value(round(pin["threshold"] * pin.get("scale", 1)), ctype_) if "threshold" in pin and pin.get("scale") \
+        else c_value(pin["threshold"], ctype_) if "threshold" in pin else value
     if pin.get("field"):
         lines.append(
             f"            {ctype_} *p = AMIl2cppField(obj, {hidden(cls)}, {hidden(pin['field'])});"
         )
         lines.append(f"            if (!p) goto {state}_next;")
         lines.append("            reached = true;")
-        if pin.get("op") == "multiply":
+        if per_object:
+            # this object's slot; a new one starts from the game's value (a full table leaves it as the game has it)
+            lines.append(f"            int32_t slot = 0; while (slot < {state}_used && {state}_objs[slot] != obj) slot++;")
+            lines.append(f"            if (slot == {state}_used) {{ if (slot == {MULTIPLY_SLOTS}) goto {state}_next;"
+                         f" {state}_objs[slot] = obj; {state}_bases[slot] = {state}_sets[slot] = *p; {state}_used++; }}")
+            lines.append(f"            {state}_seen[slot] = any_seen = true;")
+            lines.append(f"            if (*p != {state}_sets[slot]) {state}_bases[slot] = *p;  // the game recalculated it: a new base")
+            lines.append(
+                f"            {ctype_} want = ({ctype_})({state}_bases[slot] * {value}); if (want > 0 && *p != want) {{ *p = want; applied = true; }} {state}_sets[slot] = *p;"
+            )
+        elif pin.get("op") == "multiply":
             lines.append(
                 f"            if (*p != {state}_set) {state}_base = *p; {state}_obj = obj;"
             )
@@ -683,6 +839,12 @@ def render_pin(pin, var, kind, key, index, waiting=None):
     if any(f"goto {state}_next" in line for line in lines):
         lines.append(f"            {state}_next:;")
     lines += closers
+    if pin.get("field") and per_object_multiply(pin):
+        # objects gone from the list free their slots; a tick that found none (a scene loading) keeps them all, so a
+        # unit that comes back doesn't take what the pin wrote as its new base
+        lines.append(f"        if (any_seen) {{ int32_t kept = 0; for (int32_t slot = 0; slot < {state}_used; slot++) if ({state}_seen[slot]) {{"
+                     f" {state}_objs[kept] = {state}_objs[slot]; {state}_bases[kept] = {state}_bases[slot]; {state}_sets[kept] = {state}_sets[slot]; kept++; }}"
+                     f" {state}_used = kept; }}")
     lines.append("    }")
     return lines
 
@@ -761,6 +923,9 @@ def render_watch(watch, every):
 def render(tweaks, hooks, mod_name):
     """(header, implementation) for a valid tweaks.json."""
     tweaks = json.loads(json.dumps(tweaks))  # a copy: "restore": false moves from the tweak to its pins
+    # "live_only": true runs from the pushed live_tweaks.json alone (am push), never compiled: the live loader adds
+    # its menu item. Lets a mod carry thousands of trial switches without building them in.
+    tweaks["tweaks"] = [t for t in tweaks["tweaks"] if not t.get("live_only")]
     for t in tweaks["tweaks"]:
         if t.get("restore") is False:
             for pin in t.get("pins", []):
@@ -794,6 +959,7 @@ def render(tweaks, hooks, mod_name):
         '#import "runtime/AMIl2cpp.h"',
         '#import "runtime/AMIl2cppData.h"',
         '#import "runtime/AMLivePins.h"',
+        '#import "runtime/AMAttrPins.h"',
         "",
         f"NSString *const AMTweaksTitle = @{c_string(title)};",
         f"NSString *const AMTweaksLogTag = @{c_string(tag)};",

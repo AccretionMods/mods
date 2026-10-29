@@ -58,6 +58,8 @@ def check(mod, meta):
         problems.append("min_os must be like 15.0")
     if meta.get("remove_extensions", "encrypted") not in ("encrypted", "all"):
         problems.append("remove_extensions must be encrypted or all")
+    if "branding" in meta and not isinstance(meta["branding"], bool):
+        problems.append("branding must be true or false (false: the menu has no Accretion link, mark or wording)")
     if meta.get("icon_url") and not https(meta["icon_url"]):
         problems.append("icon_url must be an https link")
     base = meta.get("base") or {}
@@ -114,6 +116,9 @@ def tweaks_problems(folder):
     except json.JSONDecodeError as e:
         return [f"tweaks.json isn't valid JSON ({e})"]
     problems = [f"tweaks.json: {p}" for p in gen_tweaks.problems(tweaks, hooks)]
+    import mod_tweaks
+
+    problems += [f"Tweak.x uses {name}, which tweaks.json doesn't have" for name in mod_tweaks.undeclared(folder)]
     makefile = os.path.join(folder, "Makefile")
     if os.path.isfile(makefile):
         with open(makefile, encoding="utf-8") as f:
@@ -169,7 +174,7 @@ def hooks_problems(path):
 
 WORKFLOWS = ("build.yml", "publish.yml")
 # the "options: [a, b]" line of the "mod:" input in a workflow file
-MOD_OPTIONS = re.compile(r"^      mod:\n(?:        [^\n]*\n)*?        options: \[([^\]]*)\]", re.M)
+MOD_OPTIONS = re.compile(r"^      mod:\n(?:        [^\n]*\n)*?        options: \[([^\]]*)\]", re.MULTILINE)
 
 
 def workflow_mod_options(name):

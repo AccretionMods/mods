@@ -48,6 +48,13 @@ void *AMIl2cppFindObjects(const char *cls, int32_t *count);
 int32_t AMIl2cppArrayCount(void *array);
 void *AMIl2cppArrayAt(void *array, int32_t index);
 
+// Follow reference fields/getters from typed roots, optionally expanding arrays, lists or dictionary values.
+// Steps: {field/getter, class, each?: array/list/values}, or {class} to filter by a derived type.
+// Nulls, wrong types and missing members are skipped. At most 8 steps and 4096 visits per step; main thread only.
+NSArray<NSValue *> *AMIl2cppPathObjects(NSArray<NSValue *> *roots, const char *rootClass, NSArray<NSDictionary *> *path);
+// Root object spec used by both compiled and live pins, capped at 4096 array slots.
+NSArray<NSValue *> *AMIl2cppRootObjects(const char *objectSpec);
+
 // Address of a field inside an object (instance) or of a static field (obj NULL): cast and read or write it.
 // NULL when the class or field is not found. The offset is read from the game, not from a dump.
 void *AMIl2cppField(void *obj, const char *cls, const char *field);
@@ -63,6 +70,8 @@ void *AMIl2cppUnbox(void *boxed);
 // Managed strings.
 NSString *AMIl2cppString(void *str);
 void *AMIl2cppNewString(const char *utf8);
+// A new object of a class with its no-argument constructor run, or NULL.
+void *AMIl2cppNew(const char *cls);
 
 // A repeating main-queue timer (kept alive for the life of the process). The usual home of a no-JIT switch.
 void AMIl2cppEvery(double seconds, void (^block)(void));

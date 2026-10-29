@@ -4,6 +4,8 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
+from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
@@ -12,9 +14,16 @@ import gen_tweaks
 import hide
 
 # The generated code hides game names (AMS_BYTES, runtime/am_hide.h); these tests read the plain names, and
-# HiddenNames checks the hiding itself.
+# HiddenNames checks the hiding itself. Only while this module's tests run: other test files see the real one.
 HIDDEN = gen_tweaks.hidden
-gen_tweaks.hidden = gen_tweaks.c_string
+
+
+def setUpModule():
+    gen_tweaks.hidden = gen_tweaks.c_string
+
+
+def tearDownModule():
+    gen_tweaks.hidden = HIDDEN
 
 HOOKS = {
     "engine": "unity-il2cpp",
@@ -575,6 +584,33 @@ class Pins(unittest.TestCase):
         self.assertEqual(m.count('[menu addSection:@"Other"];'), 2)
         self.assertLess(m.index('[menu addSection:@"Other"];'), m.index('addSwitch:@"keepAwake"'))
 
+    def test_static_auto_property_backing_field_is_a_root(self):
+        pin = {"object": "ClientWorld.<Base>k__BackingField", "root_class": "BaseClientWorld",
+               "path": [{"getter": "get_game", "class": "GameContext"},
+                        {"getter": "get_avatarEntity", "class": "GameEntity"}],
+               "class": "GameEntity", "setter": "set_isNotPursuitTarget", "ctype": "bool", "value": True}
+        self.assertEqual(self.pin(pin), [])
+        for bad in ("ClientWorld.<a b>k__BackingField", "ClientWorld.<Base>k__BackingField.x",
+                    "<Base>k__BackingField", "ClientWorld.<Base>", "ClientWorld.<Base>k__BackingField[]x"):
+            self.assertTrue(self.pin(dict(pin, object=bad)), bad)
+
+    def test_fixed_point_and_assembly_qualified_objects(self):
+        fp = {"object": "HotFix:HotFix.GameManager.m_t", "field": "MoveSpeed", "ctype": "int64_t",
+              "value": 1.5, "when": "lower", "threshold": 1, "scale": 65536}
+        self.assertEqual(self.pin(fp), [])
+        self.assertTrue(self.pin(dict(fp, ctype="int32_t")))  # a scale belongs on an int64_t FP
+        self.assertTrue(self.pin(dict(fp, scale=0)))
+        self.assertEqual(self.pin({"object": "HotFix:Dxx.Battle.Hero[]", "field": "x", "ctype": "bool", "value": True}), [])
+        tweaks = {"title": "Game+", "tweaks": [{"key": "speed", "title": "Speed", "kind": "switch", "hooks": [], "pins": [fp]},
+                             {"key": "pace", "title": "Pace", "kind": "slider", "min": 1, "max": 3, "default": 1,
+                              "hooks": [], "pins": [dict(fp, value="slider", when="always")]}]}
+        self.assertEqual(gen_tweaks.problems(tweaks, {"hooks": []}), [])
+        _, m = gen_tweaks.render(tweaks, {"hooks": []}, "game-plus")
+        self.assertIn("*p = 98304;", m)  # 1.5 * 65536: FP keeps value * 65536 in a long
+        self.assertIn("*p < 65536", m)  # the threshold is scaled too
+        self.assertIn("(int64_t)(am_pace * 65536)", m)  # and a slider
+        self.assertIn("/ 65536", m)  # the slider's "Game value" note shows the plain number
+
     def pin(self, pin, kind="switch"):
         return gen_tweaks.pin_problems(pin, kind)
 
@@ -729,6 +765,137 @@ class Pins(unittest.TestCase):
         }
         _h, m = gen_tweaks.render(data, HOOKS, "x")
         self.assertIn('title:@"A"', m)
+
+
+class ObjectPaths(unittest.TestCase):
+    def pin(self):
+        return {"object": "HotFix:Game.world", "root_class": "HotFix:World",
+                "path": [{"field": "logic", "class": "HotFixBattle:Logic"},
+                         {"getter": "get_Players", "each": "array", "class": "HotFixBattle:Hero"}],
+                "class": "HotFixBattle:Hero", "field": "Health", "ctype": "int64_t", "value": 100}
+
+    def test_generated_pin_walks_path_before_writing_final_class(self):
+        lines, closers, cls = gen_tweaks.pin_objects(self.pin())
+        self.assertEqual(cls, "HotFixBattle:Hero")
+        self.assertIn("AMIl2cppPathObjects", "\n".join(lines))
+        self.assertIn('"get_Players"', "\n".join(lines))
+        self.assertGreater(len(closers), 1)
+
+    def test_collection_path_keeps_a_base_per_object_for_a_multiply_only(self):
+        pin = self.pin()
+        self.assertFalse(gen_tweaks.restorable(pin))  # a plain write on many objects keeps what the game has
+        pin["op"], pin["value"] = "multiply", 2
+        self.assertEqual(gen_tweaks.pin_problems(pin, "switch"), [])
+        self.assertTrue(gen_tweaks.per_object_multiply(pin) and gen_tweaks.restorable(pin))
+        setter = {k: v for k, v in pin.items() if k != "field"} | {"setter": "set_Health"}
+        self.assertTrue(gen_tweaks.pin_problems(setter, "switch"))  # no field to track each base on
+
+    def test_list_multiply_tracks_each_objects_base_and_restores_each(self):
+        pin = {"object": "Enemy[]", "field": "speed", "ctype": "float", "op": "multiply", "value": 0.5}
+        state = "s_slow_0"
+        body = "\n".join(gen_tweaks.render_pin(pin, "am_slow", "switch", "slow", 0))
+        self.assertIn(f"{state}_objs[slot] = obj; {state}_bases[slot] = {state}_sets[slot] = *p;", body)
+        self.assertIn(f"if (*p != {state}_sets[slot]) {state}_bases[slot] = *p;", body)
+        self.assertIn(f"({state}_bases[slot] * 0.5f)", body)
+        self.assertIn(f"if (slot == {gen_tweaks.MULTIPLY_SLOTS}) goto {state}_next;", body)  # full: left as it is
+        self.assertIn("if (any_seen) {", body)  # gone objects free their slots, but not on a tick that found none
+        self.assertIn(f"static void *{state}_objs[{gen_tweaks.MULTIPLY_SLOTS}];", "\n".join(gen_tweaks.pin_globals(pin, "slow", 0)))
+        restore = "\n".join(gen_tweaks.render_restore(pin, "slow", 0))
+        self.assertIn(f"if (p && *p == {state}_sets[slot]) {{ *p = {state}_bases[slot]; restored = true; }}", restore)
+        self.assertIn(f"{state}_used = 0;", restore)
+        self.assertNotIn(f"{state}_obj)", body + restore)  # none of the single-object state
+
+    def test_invalid_paths_are_rejected_before_codegen(self):
+        for path in ("logic", [{}], [{"field": "x", "getter": "get_X", "class": "Hero"}],
+                     [{"field": "x", "class": "Hero", "each": "bogus"}],
+                     [{"field": 'x\";bad', "class": "Hero"}], [{"class": "Hero"}] * 9):
+            pin = dict(self.pin(), path=path)
+            self.assertTrue(gen_tweaks.pin_problems(pin, "switch"), path)
+
+    def test_single_path_can_restore_and_cannot_mix_with_via(self):
+        pin = self.pin()
+        pin["path"] = pin["path"][:1]
+        pin["class"] = "HotFixBattle:Logic"
+        self.assertTrue(gen_tweaks.restorable(pin))
+        self.assertEqual(gen_tweaks.pin_problems(pin, "switch"), [])
+        pin["via"] = "get_Other"
+        self.assertTrue(gen_tweaks.pin_problems(pin, "switch"))
+
+    def test_path_cannot_write_an_unrelated_target_class(self):
+        pin = self.pin()
+        pin["class"] = "HotFixBattle:Enemy"
+        self.assertTrue(gen_tweaks.pin_problems(pin, "switch"))
+
+    def test_field_lookup_respects_assembly_when_names_repeat(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "dump.cs"
+            source.write_text("""// Image 0: HotFix.dll - 0
+// Image 1: HotFixBattle.dll - 10
+// Namespace: Game
+public class Shared // TypeDefIndex: 0
+{
+    public int Health; // 0x10
+}
+// Namespace: Game
+public class Shared // TypeDefIndex: 10
+{
+    public long Health; // 0x20
+}
+""")
+            with patch.object(dev, "dump_path", return_value=source):
+                self.assertEqual(dev.fields_of("demo", "HotFixBattle:Game.Shared"), [(32, False, "long", "Health")])
+
+    def test_cli_writes_valid_path_and_rejects_missing_step_without_changes(self):
+        dump = """// Image 0: HotFix.dll - 0
+// Image 1: HotFixBattle.dll - 10
+// Namespace:
+public static class Game // TypeDefIndex: 0
+{
+    public static World world; // 0x0
+}
+// Namespace:
+public class World // TypeDefIndex: 1
+{
+    public Hero hero; // 0x10
+}
+// Namespace:
+public class Hero // TypeDefIndex: 10
+{
+    public long Health; // 0x10
+}
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            folder = root / "mods" / "demo"
+            folder.mkdir(parents=True)
+            (folder / "mod.json").write_text(json.dumps({"name": "Demo", "target_bundle_id": "example.demo"}))
+            output = root / "dump" / "out"
+            output.mkdir(parents=True)
+            (output / "dump.cs").write_text(dump)
+            path = [{"field": "hero", "class": "HotFixBattle:Hero"}]
+            with patch.object(dev, "ROOT", root), patch.dict(os.environ, {"AM_ROOT": tmp}):
+                dev.save_state("demo", {"dump_dir": str(root / "dump")})
+                argv = ["pin", "demo", "HotFixBattle:Hero.Health", "--object", "HotFix:Game.world",
+                        "--root-class", "HotFix:World", "--path", json.dumps(path), "--value", "100", "--as", "hp"]
+                args = dev.build_parser().parse_args(argv)
+                self.assertEqual(args.fn(args), 0)
+                data = (folder / "tweaks.json").read_bytes()
+                pin = json.loads(data)["tweaks"][0]["pins"][0]
+                self.assertEqual(pin["path"], path)
+                self.assertEqual(pin["class"], "HotFixBattle:Hero")
+                self.assertFalse([e for e in dev.pin_problems_in_dump("demo") if e[0] == "error"])
+                argv[argv.index("--path") + 1] = json.dumps([{"field": "missing", "class": "HotFixBattle:Hero"}])
+                with self.assertRaises(dev.DevError):
+                    args = dev.build_parser().parse_args(argv)
+                    args.fn(args)
+                self.assertEqual((folder / "tweaks.json").read_bytes(), data)
+                sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "studio"))
+                import server
+                result = server.quick("demo", "pin", {"target": "HotFixBattle:Hero.Health", "object": "HotFix:Game.world",
+                                      "root_class": "HotFix:World", "path": path, "value": 200, "key": "studioHp"})
+                self.assertTrue(result["ok"], result)
+                studio_pin = json.loads((folder / "tweaks.json").read_bytes())["tweaks"][-1]["pins"][0]
+                self.assertEqual(studio_pin["path"], path)
 
 
 class HiddenNames(unittest.TestCase):

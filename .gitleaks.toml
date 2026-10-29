@@ -2,3 +2,15 @@ title = "Accretion mods gitleaks config"
 
 [extend]
 useDefault = true
+
+# A mod's switch names ("key": "gen1SynthXPReward") read as API keys to the generic rule. In tweaks.json "key" is
+# the switch's C identifier by design (gen_tweaks makes am_<key> of it), never a secret. Only that rule, only a
+# mod's tweaks.json, and only a "key" line holding an identifier; every other field is still scanned.
+[[rules]]
+id = "generic-api-key"
+[[rules.allowlists]]
+description = "Switch keys in a mod's tweaks.json"
+condition = "AND"
+paths = ['''(^|[\\/])mods[\\/][^\\/]+[\\/]tweaks\.json$''']
+regexTarget = "line"
+regexes = ['''"key":\s*"[A-Za-z_][A-Za-z0-9_]{0,63}",?\s*$''']

@@ -12,12 +12,34 @@ void AMIl2cppDataSetLogTag(const char *tag) {
     if (tag && *tag) sTag = strdup(tag);
 }
 
+// Opt-in copy of the log in Documents/am_il2cpp.log, for a phone whose live syslog relay gives nothing: only
+// while Documents/am_log_request exists (pushed with pymobiledevice3 apps push), one launch per file, 64 KiB
+// at most. A build exports nothing unless that marker was placed by hand.
+static void logToFile(NSString *line) {
+    static NSString *path;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSString *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+        NSFileManager *fm = NSFileManager.defaultManager;
+        if (!docs || ![fm fileExistsAtPath:[docs stringByAppendingPathComponent:@"am_log_request"]]) return;
+        path = [docs stringByAppendingPathComponent:@"am_il2cpp.log"];
+        [fm createFileAtPath:path contents:[NSData data] attributes:nil];
+    });
+    if (!path) return;
+    NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:path];
+    if (!handle) return;
+    unsigned long long size = [handle seekToEndOfFile];
+    if (size < 64 * 1024) [handle writeData:[[line stringByAppendingString:@"\n"] dataUsingEncoding:NSUTF8StringEncoding]];
+    [handle closeFile];
+}
+
 void AMIl2cppLog(NSString *format, ...) {
     va_list args;
     va_start(args, format);
     NSString *text = [[NSString alloc] initWithFormat:format arguments:args];
     va_end(args);
     os_log(OS_LOG_DEFAULT, "[%{public}s] %{public}@", sTag, text);
+    logToFile(text);
 }
 
 // One message per distinct failure, so a ticker that runs twice a second doesn't flood the log.
@@ -116,6 +138,8 @@ static NSString *lookupKey(const char *cls, const char *name, int argc) {
     return [NSString stringWithFormat:@"%s.%s/%d", cls, name, argc];
 }
 
+typedef void *class_get_parent_t(void *klass);
+
 static void *field(const char *cls, const char *name) {
     static NSMutableDictionary<NSString *, NSValue *> *cache;
     NSString *key = lookupKey(cls, name, -1);
@@ -125,6 +149,10 @@ static void *field(const char *cls, const char *name) {
     class_get_field_from_name_t *from_name = IL2CPP(class_get_field_from_name);
     if (!klass || !from_name) return NULL;
     void *f = from_name(klass, name);
+    // a base class's field: Singleton<GameManager>.m_t holds GameManager's instance on the generic base,
+    // which only the class's own parent chain reaches (its inflated Singleton<GameManager>)
+    class_get_parent_t *parent = IL2CPP(class_get_parent);
+    for (void *k = klass; !f && parent && (k = parent(k));) f = from_name(k, name);
     if (!f) { logOnce([NSString stringWithFormat:@"field %s.%s not found", cls, name]); return NULL; }
     if (!cache) cache = [NSMutableDictionary new];
     cache[key] = [NSValue valueWithPointer:f];
@@ -152,18 +180,36 @@ static bool fieldIsStatic(void *f) {
     return flags ? (flags(f) & FIELD_ATTRIBUTE_STATIC) != 0 : true;  // without the export, trust the caller
 }
 
+typedef void *field_get_parent_t(void *field);
+typedef void runtime_class_init_t(void *klass);
+
+// The class a static field's storage belongs to (a generic base for Singleton<T>), set up before the read: an
+// inflated generic class the game hasn't touched yet has no static storage.
+static void *staticOwner(void *f) {
+    field_get_parent_t *owner = IL2CPP(field_get_parent);
+    runtime_class_init_t *init = IL2CPP(runtime_class_init);
+    void *klass = owner ? owner(f) : NULL;
+    if (klass && init) init(klass);
+    return klass;
+}
+
 void *AMIl2cppStaticObject(const char *cls, const char *name) {
     void *f = field(cls, name);
     field_static_get_value_t *get = IL2CPP(field_static_get_value);
     if (!f || !get) return NULL;
     if (!fieldIsStatic(f)) { logOnce([NSString stringWithFormat:@"%s.%s is not a static field", cls, name]); return NULL; }
+    staticOwner(f);
     // the value is copied with the field's own size: room for a struct, not just a pointer
     char value[64] = {0};
     get(f, value);
     return *(void **)value;
 }
 
+static void *structField(void *obj, const char *cls, const char *name);
+
 void *AMIl2cppField(void *obj, const char *cls, const char *name) {
+    // "outer.inner": a value inside a struct the object holds (Stats { float hp; } stats -> "stats.hp")
+    if (obj && strchr(name, '.')) return structField(obj, cls, name);
     void *f = field(cls, name);
     field_get_offset_t *offset = IL2CPP(field_get_offset);
     if (!f || !offset) return NULL;
@@ -177,7 +223,7 @@ void *AMIl2cppField(void *obj, const char *cls, const char *name) {
     // returned, and a write to it changes nothing in the game
     typedef void *class_get_static_field_data_t(void *klass);
     class_get_static_field_data_t *static_data = IL2CPP(class_get_static_field_data);
-    void *klass = AMIl2cppClass(cls);
+    void *klass = staticOwner(f) ?: AMIl2cppClass(cls);
     if (static_data && klass) {
         void *base = static_data(klass);
         if (base) return (char *)base + at;
@@ -189,6 +235,197 @@ void *AMIl2cppField(void *obj, const char *cls, const char *name) {
     get(f, scratch);
     logOnce([NSString stringWithFormat:@"static %s.%s read as a copy (writes won't stick)", cls, name]);
     return scratch;
+}
+
+typedef void *object_get_class_t(void *obj);
+typedef bool class_is_assignable_from_t(void *klass, void *other);
+typedef bool class_is_valuetype_t(void *klass);
+typedef void *field_get_type_t(void *field);
+typedef int type_get_type_t(void *type);
+typedef void *class_from_type_t(void *type);
+typedef void field_get_value_t(void *obj, void *field, void *out);
+typedef void *method_get_return_type_t(void *method);
+
+// A value inside a struct field, "outer.inner" (one level): the outer field's offset in the object, plus the
+// inner field's offset in the struct. IL2CPP counts a value type's field offsets as if it were boxed (after the
+// 16-byte object header), so the header comes off. NULL when the outer field is not a struct or a name is wrong.
+static void *structField(void *obj, const char *cls, const char *name) {
+    char outer[128];
+    const char *dot = strchr(name, '.');
+    size_t n = (size_t)(dot - name);
+    if (n == 0 || n >= sizeof outer || strchr(dot + 1, '.')) return NULL;
+    memcpy(outer, name, n);
+    outer[n] = 0;
+    void *f = field(cls, outer);
+    field_get_offset_t *offset = IL2CPP(field_get_offset);
+    field_get_type_t *get_type = IL2CPP(field_get_type);
+    class_from_type_t *from_type = IL2CPP(class_from_type);
+    class_is_valuetype_t *is_value = IL2CPP(class_is_valuetype);
+    class_get_field_from_name_t *from_name = IL2CPP(class_get_field_from_name);
+    if (!f || fieldIsStatic(f) || !offset || !get_type || !from_type || !from_name) return NULL;
+    void *klass = from_type(get_type(f));
+    if (!klass || (is_value && !is_value(klass))) {
+        logOnce([NSString stringWithFormat:@"%s.%s is not a struct", cls, outer]);
+        return NULL;
+    }
+    void *inner = from_name(klass, dot + 1);
+    if (!inner) {
+        logOnce([NSString stringWithFormat:@"field %s.%s not found", cls, name]);
+        return NULL;
+    }
+    size_t at = offset(inner);
+    if (at < 2 * sizeof(void *)) return NULL;  // not a boxed-layout offset: refuse rather than write elsewhere
+    return (char *)obj + offset(f) + at - 2 * sizeof(void *);
+}
+typedef uint32_t gchandle_new_t(void *obj, bool pinned);
+typedef void gchandle_free_t(uint32_t handle);
+
+NSArray<NSValue *> *AMIl2cppRootObjects(const char *objectSpec) {
+    if (!objectSpec) return @[];
+    NSString *object = @(objectSpec);
+    NSMutableArray *out = [NSMutableArray new];
+    if ([object hasSuffix:@"[]"]) {
+        int32_t n = 0;
+        void *array = AMIl2cppFindObjects([object substringToIndex:object.length - 2].UTF8String, &n);
+        for (int32_t i = 0; i < n && i < 4096; i++) {
+            void *obj = AMIl2cppArrayAt(array, i);
+            if (obj) [out addObject:[NSValue valueWithPointer:obj]];
+        }
+    } else {
+        NSRange dot = [object rangeOfString:@"." options:NSBackwardsSearch];
+        void *obj = dot.location != NSNotFound
+            ? AMIl2cppStaticObject([object substringToIndex:dot.location].UTF8String, [object substringFromIndex:dot.location + 1].UTF8String)
+            : AMIl2cppFindObject(objectSpec);
+        if (obj) [out addObject:[NSValue valueWithPointer:obj]];
+    }
+    return out;
+}
+
+// A reference only: never interpret an inline struct (FP, EntityRef, KeyValuePair...) as an object pointer.
+static bool pathReferenceType(void *type) {
+    type_get_type_t *kind = IL2CPP(type_get_type);
+    class_from_type_t *from = IL2CPP(class_from_type);
+    class_is_valuetype_t *value = IL2CPP(class_is_valuetype);
+    if (!type || !kind) return false;
+    int t = kind(type);
+    if (t == 14 || t == 18 || t == 20 || t == 28 || t == 29) return true;
+    void *klass = t == 21 && from ? from(type) : NULL;
+    return klass && value && !value(klass);
+}
+
+static bool pathMatches(void *obj, void *wanted) {
+    object_get_class_t *get = IL2CPP(object_get_class);
+    class_is_assignable_from_t *assign = IL2CPP(class_is_assignable_from);
+    return obj && wanted && get && assign && assign(wanted, get(obj));
+}
+
+// Enumerators may be boxed value types: runtime_invoke then needs the unboxed receiver.
+static bool pathInvoke(void *obj, const char *name, bool reference, void **out) {
+    object_get_class_t *get = IL2CPP(object_get_class);
+    class_get_method_from_name_t *find = IL2CPP(class_get_method_from_name);
+    runtime_invoke_t *run = IL2CPP(runtime_invoke);
+    class_is_valuetype_t *value = IL2CPP(class_is_valuetype);
+    method_get_return_type_t *returns = IL2CPP(method_get_return_type);
+    if (out) *out = NULL;
+    if (!obj || !get || !find || !run || !value) return false;
+    void *klass = get(obj), *method = find(klass, name, 0);
+    if (!method || (reference && (!returns || !pathReferenceType(returns(method))))) return false;
+    void *receiver = value(klass) ? AMIl2cppUnbox(obj) : obj;
+    if (!receiver) return false;
+    void *exception = NULL;
+    void *result = run(method, receiver, NULL, &exception);
+    if (exception) { logOnce(@"object path getter or collection changed: waiting for the next tick"); return false; }
+    if (out) *out = result;
+    return true;
+}
+
+static void pathCollect(NSMutableArray<NSValue *> *out, void *obj, void *wanted, NSString *each, NSUInteger *budget) {
+    if (!*budget) return;
+    if (!obj) { --*budget; return; }
+    if (!each) {
+        --*budget;
+        if (pathMatches(obj, wanted)) [out addObject:[NSValue valueWithPointer:obj]];
+        return;
+    }
+    if ([each isEqual:@"array"]) {
+        object_get_class_t *get = IL2CPP(object_get_class);
+        class_get_type_t *type = IL2CPP(class_get_type);
+        type_get_type_t *kind = IL2CPP(type_get_type);
+        int t = get && type && kind ? kind(type(get(obj))) : 0;
+        if (t != 20 && t != 29) return;
+        int32_t count = AMIl2cppArrayCount(obj);
+        // Element assignability is checked before reading pointer-sized array elements.
+        typedef void *class_get_element_class_t(void *klass);
+        class_get_element_class_t *element = IL2CPP(class_get_element_class);
+        class_is_valuetype_t *value = IL2CPP(class_is_valuetype);
+        void *e = element ? element(get(obj)) : NULL;
+        if (!e || !value || value(e)) return;
+        for (int32_t i = 0; i < count && *budget; i++) pathCollect(out, AMIl2cppArrayAt(obj, i), wanted, nil, budget);
+        return;
+    }
+    if ([each isEqual:@"values"] && !pathInvoke(obj, "get_Values", true, &obj)) return;
+    if (![each isEqual:@"values"] && ![each isEqual:@"list"]) return;
+    void *enumerator = NULL;
+    if (!pathInvoke(obj, "System.Collections.IEnumerable.GetEnumerator", false, &enumerator)
+        && !pathInvoke(obj, "GetEnumerator", false, &enumerator)) return;
+    gchandle_new_t *hold = IL2CPP(gchandle_new);
+    gchandle_free_t *release = IL2CPP(gchandle_free);
+    if (!enumerator || !hold || !release) return;
+    uint32_t handle = hold(enumerator, true);
+    if (!handle) return;
+    while (*budget) {
+        void *boxed = NULL;
+        if (!pathInvoke(enumerator, "MoveNext", false, &boxed)) break;
+        bool *next = AMIl2cppUnbox(boxed);
+        if (!next || !*next) break;
+        // Count all entries, including null and wrong-type entries, against the visit budget.
+        --*budget;
+        void *item = NULL;
+        if (!pathInvoke(enumerator, "System.Collections.IEnumerator.get_Current", false, &item)
+            && !pathInvoke(enumerator, "get_Current", false, &item)) break;
+        if (pathMatches(item, wanted)) [out addObject:[NSValue valueWithPointer:item]];
+    }
+    pathInvoke(enumerator, "Dispose", false, NULL);
+    release(handle);
+}
+
+NSArray<NSValue *> *AMIl2cppPathObjects(NSArray<NSValue *> *roots, const char *rootClass, NSArray<NSDictionary *> *path) {
+    if (!rootClass || ![path isKindOfClass:NSArray.class] || path.count > 8) return @[];
+    void *owner = AMIl2cppClass(rootClass);
+    NSMutableArray<NSValue *> *current = [NSMutableArray new];
+    NSUInteger budget = 4096;
+    for (NSValue *root in roots) { if (!budget) break; pathCollect(current, root.pointerValue, owner, nil, &budget); }
+    for (NSDictionary *step in path) {
+        if (![step isKindOfClass:NSDictionary.class] || ![step[@"class"] isKindOfClass:NSString.class]) return @[];
+        if ((step[@"field"] && ![step[@"field"] isKindOfClass:NSString.class])
+            || (step[@"getter"] && ![step[@"getter"] isKindOfClass:NSString.class])
+            || (step[@"field"] && step[@"getter"])
+            || (step[@"each"] && (![@[@"array", @"list", @"values"] containsObject:step[@"each"]]
+                || (!step[@"field"] && !step[@"getter"])))) return @[];
+        void *wanted = AMIl2cppClass([step[@"class"] UTF8String]);
+        if (!wanted) return @[];
+        NSMutableArray<NSValue *> *next = [NSMutableArray new];
+        budget = 4096;
+        for (NSValue *box in current) {
+            if (!budget) break;
+            void *obj = box.pointerValue, *child = obj;
+            if (step[@"field"]) {
+                void *f = field(rootClass, [step[@"field"] UTF8String]);
+                field_get_type_t *type = IL2CPP(field_get_type);
+                field_get_value_t *get = IL2CPP(field_get_value);
+                if (!f || fieldIsStatic(f) || !type || !get || !pathReferenceType(type(f))) continue;
+                child = NULL;
+                get(obj, f, &child);
+            } else if (step[@"getter"]) {
+                if (!pathInvoke(obj, [step[@"getter"] UTF8String], true, &child)) continue;
+            }
+            pathCollect(next, child, wanted, step[@"each"], &budget);
+        }
+        if (!budget) logOnce(@"object path visit limit reached");
+        current = next;
+        rootClass = [step[@"class"] UTF8String];
+    }
+    return current;
 }
 
 static void *unityObjectMethod(const char *name, int argc, bool quiet) {
@@ -232,6 +469,25 @@ void *AMIl2cppFindObject(const char *cls) {
     return find ? invoke(find, NULL, args, "FindObjectOfType") : NULL;
 }
 
+// True when cls derives from UnityEngine.ScriptableObject (its parent chain names it); remembered per class.
+static bool isScriptableObject(const char *cls) {
+    static NSMutableDictionary<NSString *, NSNumber *> *cache;
+    NSString *key = [NSString stringWithUTF8String:cls];
+    NSNumber *hit = cache[key];
+    if (hit) return hit.boolValue;
+    bool found = false;
+    class_get_parent_t *parent = IL2CPP(class_get_parent);
+    class_get_name_t *get_name = IL2CPP(class_get_name);
+    void *klass = AMIl2cppClass(cls);
+    for (void *k = klass; k && parent && get_name && !found; k = parent(k)) {
+        const char *name = get_name(k);
+        found = name && strcmp(name, "ScriptableObject") == 0;
+    }
+    if (!cache) cache = [NSMutableDictionary new];
+    cache[key] = @(found);
+    return found;
+}
+
 void *AMIl2cppFindObjects(const char *cls, int32_t *count) {
     if (count) *count = 0;
     void *type = typeObject(cls);
@@ -248,6 +504,18 @@ void *AMIl2cppFindObjects(const char *cls, int32_t *count) {
     } else if ((find = unityObjectMethod("FindObjectsOfType", 1, false))) {
         void *args[1] = {type};
         array = invoke(find, NULL, args, "FindObjectsOfType");
+    }
+    // A ScriptableObject (a game's balance data: weapons, prices, spawn tables) is an asset, never a scene object,
+    // so FindObjectsByType has none of it; Resources.FindObjectsOfTypeAll has the loaded ones. Only for those
+    // classes: for scene classes it would also return prefab assets, which a pin must not change.
+    if (AMIl2cppArrayCount(array) == 0 && isScriptableObject(cls)) {
+        void *resources = AMIl2cppClass("UnityEngine.CoreModule:UnityEngine.Resources");
+        class_get_method_from_name_t *from_name = IL2CPP(class_get_method_from_name);
+        void *all = resources && from_name ? from_name(resources, "FindObjectsOfTypeAll", 1) : NULL;
+        if (all) {
+            void *args[1] = {type};
+            array = invoke(all, NULL, args, "Resources.FindObjectsOfTypeAll");
+        }
     }
     if (array && count) *count = AMIl2cppArrayCount(array);
     return array;
@@ -290,6 +558,17 @@ bool AMIl2cppCall(void *obj, const char *cls, const char *method, int argc, void
     }
     if (out) *out = result;
     return true;
+}
+
+// A new object of a class, its no-argument constructor run through AMIl2cppCall (an exception there is caught and
+// logged, not a crash). NULL when the class or the constructor is missing.
+typedef void *object_new_t(void *klass);
+void *AMIl2cppNew(const char *cls) {
+    void *klass = AMIl2cppClass(cls);
+    object_new_t *make = IL2CPP(object_new);
+    if (!klass || !make) return NULL;
+    void *obj = make(klass);
+    return obj && AMIl2cppCall(obj, cls, ".ctor", 0, NULL, NULL) ? obj : NULL;
 }
 
 void *AMIl2cppUnbox(void *boxed) {

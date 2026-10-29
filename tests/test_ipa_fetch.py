@@ -12,6 +12,7 @@ import unittest
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest import mock
 from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
@@ -207,12 +208,37 @@ class Fetch(unittest.TestCase):
         old = dev.ROOT
         dev.ROOT = repo
         try:
-            self.assertEqual(dev.main(["fetch", "--mod", "game-plus"]), 0)
+            # the decrypt site by name: Telegram is the default source (tested below)
+            self.assertEqual(dev.main(["fetch", "--mod", "game-plus", "--source", "34306"]), 0)
             self.assertEqual(dev.main(["fetch", "--account"]), 0)
-            self.assertEqual(dev.main(["fetch", "com.example.missing"]), 1)
+            self.assertEqual(dev.main(["fetch", "com.example.missing", "--source", "34306"]), 1)
         finally:
             dev.ROOT = old
         self.assertEqual(len(list((self.root / "intake").glob("*.ipa"))), 1)
+
+    def test_telegram_source_runs_the_bot_script_and_takes_its_path(self):
+        lines = ["asked the bot for Game (com.example.game): https://apps.apple.com/us/app/game/id1\n",
+                 json.dumps({"path": str(self.root / "intake" / "Game.ipa")}) + "\n"]
+        said = []
+        proc = mock.Mock(stdout=iter(lines), wait=mock.Mock(return_value=0))
+        with mock.patch("subprocess.Popen", return_value=proc) as popen:
+            got = ipa_fetch.fetch(self.root, "com.example.game", source="telegram", say=said.append)
+        self.assertEqual(got, self.root / "intake" / "Game.ipa")
+        self.assertIn("telegram_fetch.py", " ".join(popen.call_args.args[0]))
+        self.assertEqual(said, [lines[0].strip()])
+        proc = mock.Mock(stdout=iter(["error: not signed in to Telegram\n"]), wait=mock.Mock(return_value=1))
+        with mock.patch("subprocess.Popen", return_value=proc), self.assertRaises(ipa_fetch.FetchError):
+            ipa_fetch.fetch(self.root, "com.example.game", source="telegram", say=said.append)
+
+    def test_telegram_links_come_from_buttons_text_links_and_text(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+        import telegram_fetch
+
+        button = mock.Mock(url="https://dl.example/a.ipa")
+        msg = mock.Mock(buttons=[[button]], entities=[1], message="also https://dl.example/b.ipa and https://apps.apple.com/x",
+                        get_entities_text=lambda: [(mock.Mock(url="https://dl.example/c.ipa"), "here")])
+        self.assertEqual(telegram_fetch.links_in(msg),
+                         ["https://dl.example/a.ipa", "https://dl.example/c.ipa", "https://dl.example/b.ipa"])
 
     def test_captcha_opens_the_browser_and_takes_the_download(self):
         FakeSite.state["captcha"] = True
@@ -288,6 +314,90 @@ class Fetch(unittest.TestCase):
     def test_safe_names(self):
         self.assertEqual(ipa_fetch.safe_name("../../evil"), "evil.ipa")
         self.assertEqual(ipa_fetch.filename_from("attachment; filename*=UTF-8''A%20B.ipa"), "A B.ipa")
+
+
+class FakeResponse(io.BytesIO):
+    def __init__(self, body, headers=None):
+        super().__init__(body)
+        self.headers = headers or {}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+
+class EeveeApi(unittest.TestCase):
+    """decrypt.whoeevee.com's GET /decrypted (appId, apiKey, optional version) -> {"link", "error"}, faked."""
+
+    TOKEN = "test-token-not-real-0000"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.asked = []
+        self.answer = {"link": "https://decrypt.whoeevee.com/packages/x1/com.example.game-2.0.ipa", "error": None}
+        self.lookup = {"trackId": 324684580}
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def opener(self, req, timeout=None):
+        url = urlparse(req.full_url)
+        self.asked.append(url)
+        if url.hostname == "itunes.apple.com":
+            return FakeResponse(json.dumps({"results": [self.lookup]}).encode())
+        if url.path == "/decrypted":
+            return FakeResponse(json.dumps(self.answer).encode())
+        return FakeResponse(ipa_bytes("com.example.game"), {"Content-Length": "1"})
+
+    def get(self, target="com.example.game", **kw):
+        return ipa_fetch.eevee(self.root, target, token=self.TOKEN, opener=self.opener, say=lambda _: None, **kw)
+
+    def test_bundle_id_is_looked_up_and_the_link_lands_in_intake(self):
+        out = self.get(version="2.0")
+        self.assertEqual(out.parent, self.root / "intake")
+        q = parse_qs(self.asked[1].query)
+        self.assertEqual((q["appId"], q["apiKey"], q["version"]), (["324684580"], [self.TOKEN], ["2.0"]))
+        record = json.loads(out.with_name(out.name + ".source.json").read_text())
+        self.assertEqual((record["site"], record["via"]), (ipa_fetch.EEVEE_SITE, "decrypt.whoeevee.com API"))
+        self.assertFalse(list((self.root / "intake" / ".partial").iterdir()))
+
+    def test_store_links_and_raw_ids_give_the_id_and_newest_sends_no_version(self):
+        self.assertEqual(ipa_fetch.app_store_id("https://apps.apple.com/us/app/spotify/id324684580"), "324684580")
+        self.assertEqual(ipa_fetch.app_store_id("324684580"), "324684580")
+        self.get("324684580")
+        api = [u for u in self.asked if u.hostname == "decrypt.whoeevee.com" and u.path == "/decrypted"]
+        self.assertEqual(parse_qs(api[0].query)["appId"], ["324684580"])
+        self.assertNotIn("version", parse_qs(api[0].query))
+
+    def test_a_version_already_in_intake_is_used_without_the_api_and_lookups_are_cached(self):
+        self.lookup = {"trackId": 324684580, "bundleId": "com.example.game", "version": "2.0"}
+        first = self.get(version="2.0")
+        asked = len(self.asked)
+        again = self.get()  # the newest is Apple's 2.0, which intake/ now has
+        self.assertEqual(again, first)
+        self.assertEqual(len(self.asked), asked)  # no lookup (cached), no API call, no download
+
+    def test_no_saved_token_falls_back_to_the_telegram_bot_for_the_newest(self):
+        with mock.patch.object(ipa_fetch.Vault, "load", return_value=None), \
+                mock.patch.object(ipa_fetch, "app_lookup", return_value={"id": "1", "bundle": None, "version": None}), \
+                mock.patch.object(ipa_fetch, "telegram", return_value=Path("bot.ipa")) as bot:
+            said = []
+            self.assertEqual(ipa_fetch.fetch(self.root, "com.example.game", source="eevee", say=said.append), Path("bot.ipa"))
+            self.assertTrue(bot.called and any("--save-key" in s for s in said))
+            with self.assertRaisesRegex(ipa_fetch.FetchError, "--save-key"):
+                ipa_fetch.fetch(self.root, "com.example.game", source="eevee", version="2.0", say=said.append)
+
+    def test_api_error_and_foreign_links_are_refused_without_the_token_in_the_message(self):
+        self.answer = {"link": None, "error": "The application for this identifier is unavailable"}
+        with self.assertRaisesRegex(ipa_fetch.FetchError, "unavailable") as e:
+            self.get("324684580")
+        self.assertNotIn(self.TOKEN, str(e.exception))
+        self.answer = {"link": "https://elsewhere.example/x.ipa", "error": None}
+        with self.assertRaisesRegex(ipa_fetch.FetchError, "outside"):
+            self.get("324684580")
 
 
 if __name__ == "__main__":

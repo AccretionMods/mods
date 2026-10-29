@@ -50,7 +50,22 @@ fi
 
 rm -rf "$dir/.theos" "$dir/packages"
 # hidden visibility: the .dylib exports nothing (nothing links against it; the game only loads it)
-make -C "$dir" FINALPACKAGE=1 ADDITIONAL_CFLAGS=-fvisibility=hidden "${files_override[@]}" >&2
+cflags="-fvisibility=hidden"
+# mod.json "branding": false: the menu is built without Accretion's branding: the "getaccretion.app ›" link, the
+# mark by the title, "Made by Accretion." and the Accretion account: no Log in, no Cloud saves, no call to its
+# server (menu/AMMenu.m); the switches and the Display settings stay
+if python3 -c 'import json, sys; sys.exit(0 if json.load(open(sys.argv[1])).get("branding", True) is False else 1)' \
+        "$dir/mod.json"; then
+    cflags="$cflags -DAM_NO_BRANDING=1"
+fi
+# AM_HOOKS=off (dev.py build/run --no-hooks): a build that hooks nothing: no game-method hooks, no sideload
+# compatibility rebinding, no Objective-C method swaps (runtime/AMIl2cpp.m, runtime/SideloadCompat.m); the menu,
+# pins and pushed switches stay
+if [ "${AM_HOOKS:-on}" = off ]; then
+    cflags="$cflags -DAM_NO_HOOKS=1"
+    echo "==> without hooks (AM_HOOKS=off)" >&2
+fi
+make -C "$dir" FINALPACKAGE=1 ADDITIONAL_CFLAGS="$cflags" "${files_override[@]}" >&2
 
 dylib="$(find "$dir/.theos/obj" -maxdepth 2 -name '*.dylib' -print -quit)"
 [ -n "$dylib" ] || { echo "build made no .dylib" >&2; exit 1; }

@@ -10,6 +10,7 @@
 
 #import <Foundation/Foundation.h>
 #import "AMIl2cppData.h"
+#import "AMAttrPins.h"
 #import "../menu/AMMenu.h"
 
 static NSArray<NSDictionary *> *sLiveTweaks;
@@ -30,7 +31,7 @@ static void AMNoteValue(const char *key, double v) {
     AMMenuNote(key, text);
 }
 
-static BOOL AMLivePinsHas(const char *key) {
+__attribute__((unused)) static BOOL AMLivePinsHas(const char *key) {
     return key && [sLiveKeys containsObject:@(key)];
 }
 
@@ -52,19 +53,33 @@ static void AMLiveWrite(void *p, NSString *t, double v) {
 
 // The live objects a pin acts on: "Class[]" every one, "Class.static" the singleton, "Class" the first found.
 static NSArray<NSValue *> *AMLiveObjects(NSString *object) {
-    NSMutableArray *out = [NSMutableArray new];
-    if ([object hasSuffix:@"[]"]) {
-        int32_t n = 0;
-        void *arr = AMIl2cppFindObjects([object substringToIndex:object.length - 2].UTF8String, &n);
-        for (int32_t i = 0; i < n; i++) { void *o = AMIl2cppArrayAt(arr, i); if (o) [out addObject:[NSValue valueWithPointer:o]]; }
-    } else {
-        NSRange dot = [object rangeOfString:@"." options:NSBackwardsSearch];  // "Core.Entities.Foo.instance"
-        void *o = dot.location != NSNotFound
-            ? AMIl2cppStaticObject([object substringToIndex:dot.location].UTF8String, [object substringFromIndex:dot.location + 1].UTF8String)
-            : AMIl2cppFindObject(object.UTF8String);
-        if (o) [out addObject:[NSValue valueWithPointer:o]];
+    return AMIl2cppRootObjects(object.UTF8String);
+}
+
+static NSArray<NSValue *> *AMLivePinObjects(NSDictionary *pin) {
+    NSArray *roots = AMLiveObjects(pin[@"object"]);
+    if (pin[@"path"]) {
+        if (![pin[@"root_class"] isKindOfClass:NSString.class]) return @[];
+        if (![pin[@"path"] isKindOfClass:NSArray.class]) return @[];
+        NSArray *path = pin[@"path"];
+        NSString *last = [path.lastObject isKindOfClass:NSDictionary.class] ? path.lastObject[@"class"] : pin[@"root_class"];
+        if (pin[@"class"] && ![pin[@"class"] isEqual:last]) return @[];
+        return AMIl2cppPathObjects(roots, [pin[@"root_class"] UTF8String], path);
     }
-    return out;
+    return roots;
+}
+
+static BOOL AMLiveMultiple(NSDictionary *pin) {
+    if ([pin[@"object"] hasSuffix:@"[]"]) return YES;
+    if (pin[@"path"] && ![pin[@"path"] isKindOfClass:NSArray.class]) return YES;
+    for (NSDictionary *step in pin[@"path"]) if (![step isKindOfClass:NSDictionary.class] || step[@"each"]) return YES;
+    return NO;
+}
+
+static NSString *AMLiveFinalClass(NSDictionary *pin, NSString *fallback) {
+    NSArray *path = [pin[@"path"] isKindOfClass:NSArray.class] ? pin[@"path"] : nil;
+    NSDictionary *last = [path.lastObject isKindOfClass:NSDictionary.class] ? path.lastObject : nil;
+    return pin[@"class"] ?: last[@"class"] ?: pin[@"root_class"] ?: fallback;
 }
 
 static BOOL AMLiveGet(void *obj, NSString *cls, NSString *getter, NSString *t, double *out) {
@@ -102,8 +117,7 @@ static BOOL AMLiveValue(NSDictionary *pin, NSString *stateKey, void *obj, NSStri
 // Same rule as gen_tweaks.restorable: a single object whose field or setter the pin forces; not floors, peaks,
 // refills, calls or "restore": false.
 static BOOL AMLiveRestorable(NSDictionary *tweak, NSDictionary *pin) {
-    NSString *object = pin[@"object"];
-    if ([object hasSuffix:@"[]"] || pin[@"call"] || [pin[@"value"] isEqual:@"peak"]) return NO;
+    if (AMLiveMultiple(pin) || pin[@"call"] || [pin[@"value"] isEqual:@"peak"]) return NO;
     if ([pin[@"restore"] isEqual:@NO] || [tweak[@"restore"] isEqual:@NO] || [pin[@"value"] isKindOfClass:NSDictionary.class]) return NO;
     if (pin[@"setter"] && ![pin[@"setter"] hasPrefix:@"set_"]) return NO;
     return [(pin[@"when"] ?: @"always") isEqual:@"always"] || [pin[@"op"] isEqual:@"multiply"];
@@ -118,12 +132,12 @@ static NSString *AMLiveClass(NSString *object) {
 // The object a pin writes (after "via"), or NULL. Single objects only (restore and notes).
 static void *AMLiveTarget(NSDictionary *pin, NSString **tclsOut) {
     NSString *cls = AMLiveClass(pin[@"object"]);
-    void *obj = AMLiveObjects(pin[@"object"]).firstObject.pointerValue;
+    void *obj = AMLivePinObjects(pin).firstObject.pointerValue;
     if (obj && pin[@"via"]) {
         void *via = NULL;
         obj = AMIl2cppCall(obj, cls.UTF8String, [pin[@"via"] UTF8String], 0, NULL, &via) ? via : NULL;
     }
-    if (tclsOut) *tclsOut = pin[@"class"] ?: cls;
+    if (tclsOut) *tclsOut = AMLiveFinalClass(pin, cls);
     return obj;
 }
 
@@ -135,6 +149,27 @@ static void AMLiveRestore(NSDictionary *tweak) {
     for (NSUInteger i = 0; i < pins.count; i++) {
         NSDictionary *pin = pins[i];
         NSString *sk = [NSString stringWithFormat:@"%@/%lu", key, (unsigned long)i];
+        if (pin[@"attr"]) {  // the game's own value back on each object still reachable, then forget the rest
+            NSString *pk = [@"live:" stringByAppendingString:sk], *acls = AMLiveFinalClass(pin, @"");
+            if ([pin[@"get"] isKindOfClass:NSString.class] && [pin[@"set"] isKindOfClass:NSString.class])
+                for (NSValue *box in AMLivePinObjects(pin))
+                    if (AMAttrRestore(pk.UTF8String, box.pointerValue, acls.UTF8String, [pin[@"get"] UTF8String],
+                                      [pin[@"set"] UTF8String], [pin[@"attr"] UTF8String])) restored = YES;
+            AMAttrForget(pk.UTF8String);
+            continue;
+        }
+        if ([pin[@"op"] isEqual:@"multiply"] && pin[@"field"] && AMLiveMultiple(pin)) {  // each object's own base back
+            NSString *t = pin[@"ctype"] ?: @"int32_t", *tcls = AMLiveFinalClass(pin, @"");
+            for (NSValue *box in AMLivePinObjects(pin)) {
+                NSString *ok = [NSString stringWithFormat:@"%@/%p", sk, box.pointerValue];
+                NSNumber *set = sLiveState[[ok stringByAppendingString:@"/set"]], *base = sLiveState[[ok stringByAppendingString:@"/base"]];
+                void *p = set && base ? AMIl2cppField(box.pointerValue, tcls.UTF8String, [pin[@"field"] UTF8String]) : NULL;
+                if (p && AMLiveRead(p, t) == set.doubleValue) { AMLiveWrite(p, t, base.doubleValue); restored = YES; }
+            }
+            NSString *prefix = [sk stringByAppendingString:@"/0x"];
+            for (NSString *k in sLiveState.allKeys) if ([k hasPrefix:prefix]) [sLiveState removeObjectForKey:k];
+            continue;
+        }
         NSNumber *was = sLiveState[[sk stringByAppendingString:@"/obj"]], *orig = sLiveState[[sk stringByAppendingString:@"/orig"]];
         NSNumber *wrote = sLiveState[[sk stringByAppendingString:@"/wrote"]];
         for (NSString *suffix in @[@"/obj", @"/orig", @"/wrote", @"/set"]) [sLiveState removeObjectForKey:[sk stringByAppendingString:suffix]];
@@ -157,11 +192,12 @@ static void AMLiveRestore(NSDictionary *tweak) {
 // "Game value 2" under a live slider (AMLivePinsTick, every 3 s). While it is on, the value from before it.
 static void AMLiveNote(NSDictionary *tweak) {
     NSDictionary *pin = [tweak[@"pins"] firstObject];
-    if (![tweak[@"kind"] isEqual:@"slider"] || ![pin isKindOfClass:NSDictionary.class] || pin[@"call"] || [pin[@"object"] hasSuffix:@"[]"]) return;
+    if (![tweak[@"kind"] isEqual:@"slider"] || ![pin isKindOfClass:NSDictionary.class] || pin[@"call"] || AMLiveMultiple(pin)) return;
     NSString *key = tweak[@"key"], *sk = [key stringByAppendingString:@"/0"];
     if (sLiveState[[key stringByAppendingString:@"/on"]]) {
         NSNumber *v = [pin[@"op"] isEqual:@"multiply"] ? sLiveState[[sk stringByAppendingString:@"/base"]] : sLiveState[[sk stringByAppendingString:@"/orig"]];
-        if (v) AMNoteValue(key.UTF8String, v.doubleValue);
+        double scale = [pin[@"scale"] doubleValue];
+        if (v) AMNoteValue(key.UTF8String, scale > 0 ? v.doubleValue / scale : v.doubleValue);
         return;
     }
     NSString *tcls = nil, *t = pin[@"ctype"] ?: @"int32_t";
@@ -175,7 +211,8 @@ static void AMLiveNote(NSDictionary *tweak) {
     } else if (![pin[@"setter"] hasPrefix:@"set_"] || !AMLiveGet(obj, tcls, [@"get_" stringByAppendingString:[pin[@"setter"] substringFromIndex:4]], t, &v)) {
         return;
     }
-    AMNoteValue(key.UTF8String, v);
+    double scale = [pin[@"scale"] doubleValue];
+    AMNoteValue(key.UTF8String, scale > 0 ? v / scale : v);
 }
 
 static void AMLiveRunTweak(NSDictionary *tweak) {
@@ -196,6 +233,58 @@ static void AMLiveRunTweak(NSDictionary *tweak) {
     for (NSUInteger i = 0; i < pins.count; i++) {
         NSDictionary *pin = pins[i];
         NSString *stateKey = [NSString stringWithFormat:@"%@/%lu", key, (unsigned long)i];
+        if (pin[@"command"]) {
+            // the game's own command object (Survivor: Ace's battle GM FrameCommands): a new one each time, its fields
+            // set, the context from the pin's object(s) handed to it ("context": its setter), then "run" called.
+            // {"command": "Asm:Ns.GmKillAllMonster", "context": "set_WorldContext", "run": "Exec", "every": 3,
+            //  "fields": {"PlayerId": ["uint8_t", 0], "Hp": ["int64_t", 100, 65536]}}  ([type, value, scale])
+            tried = YES;
+            if (!why) why = waiting;
+            double each = [pin[@"every"] doubleValue];
+            NSString *at = [stateKey stringByAppendingString:@"/at"];
+            CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+            if (each > 0 && now - sLiveState[at].doubleValue < each) { reached = sLiveState[[stateKey stringByAppendingString:@"/ok"]] != nil; continue; }
+            sLiveState[at] = @(now);
+            NSString *ccls = pin[@"command"], *ctx = pin[@"context"], *run = pin[@"run"];
+            if (![ccls isKindOfClass:NSString.class] || ![run isKindOfClass:NSString.class]) continue;
+            for (NSValue *box in AMLivePinObjects(pin)) {
+                why = [NSString stringWithFormat:@"Needs an update for this game version (%@): run am check", ccls];
+                void *cmd = AMIl2cppNew(ccls.UTF8String);
+                if (!cmd) continue;
+                NSDictionary *fields = [pin[@"fields"] isKindOfClass:NSDictionary.class] ? pin[@"fields"] : @{};
+                for (NSString *name in fields) {
+                    NSArray *spec = fields[name];
+                    void *p = [spec isKindOfClass:NSArray.class] && spec.count >= 2 ? AMIl2cppField(cmd, ccls.UTF8String, name.UTF8String) : NULL;
+                    if (!p) continue;
+                    double v = [spec[1] doubleValue] * (spec.count > 2 ? [spec[2] doubleValue] : 1);
+                    if ([spec[0] isEqual:@"uint8_t"]) *(uint8_t *)p = (uint8_t)v; else AMLiveWrite(p, spec[0], v);
+                }
+                void *argv[1] = {box.pointerValue};
+                if ([ctx isKindOfClass:NSString.class] && !AMIl2cppCall(cmd, ccls.UTF8String, ctx.UTF8String, 1, argv, NULL)) continue;
+                if (AMIl2cppCall(cmd, ccls.UTF8String, run.UTF8String, 0, NULL, NULL)) {
+                    reached = YES;
+                    sLiveState[[stateKey stringByAppendingString:@"/ok"]] = @YES;
+                }
+            }
+            continue;
+        }
+        if (pin[@"attr"]) {  // a named attribute (AMAttrPins.h); "get"/"set" name the game's methods (no plain names here)
+            tried = YES;
+            if (!why) why = waiting;
+            if (![pin[@"get"] isKindOfClass:NSString.class] || ![pin[@"set"] isKindOfClass:NSString.class]) continue;
+            NSString *acls = AMLiveFinalClass(pin, @"");
+            double v = [pin[@"value"] isEqual:@"slider"] ? sliderValue : [pin[@"value"] doubleValue];
+            int op = [pin[@"op"] isEqual:@"multiply"] ? 1 : 0;
+            NSString *w = pin[@"when"] ?: @"always";
+            int when = [w isEqual:@"lower"] ? 1 : [w isEqual:@"higher"] ? 2 : 0;
+            NSString *pk = [@"live:" stringByAppendingString:stateKey];
+            for (NSValue *box in AMLivePinObjects(pin)) {
+                why = [NSString stringWithFormat:@"Needs an update for this game version (%@ %@): run am check", acls, pin[@"attr"]];
+                if (AMAttrApply(pk.UTF8String, box.pointerValue, acls.UTF8String, [pin[@"get"] UTF8String],
+                                [pin[@"set"] UTF8String], [pin[@"attr"] UTF8String], op, v, when) >= 0) reached = YES;
+            }
+            continue;
+        }
         double every = [pin[@"every"] doubleValue];
         if (pin[@"call"] && every > 0) {
             CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
@@ -210,9 +299,11 @@ static void AMLiveRunTweak(NSDictionary *tweak) {
         BOOL keep = AMLiveRestorable(tweak, pin);
         NSString *objKey = [stateKey stringByAppendingString:@"/obj"], *origKey = [stateKey stringByAppendingString:@"/orig"];
         NSString *wroteKey = [stateKey stringByAppendingString:@"/wrote"];
-        for (NSValue *box in AMLiveObjects(object)) {
+        // a list's field multiply keeps each object's own base (below); a setter has no field to track it on
+        if (AMLiveMultiple(pin) && [pin[@"op"] isEqual:@"multiply"] && !pin[@"field"]) { why = @"A multiplier on a list needs a field"; continue; }
+        for (NSValue *box in AMLivePinObjects(pin)) {
             void *obj = box.pointerValue;
-            NSString *tcls = cls;
+            NSString *tcls = AMLiveFinalClass(pin, cls);
             if (pin[@"via"]) {
                 void *via = NULL;
                 if (!AMIl2cppCall(obj, cls.UTF8String, [pin[@"via"] UTF8String], 0, NULL, &via) || !via) continue;
@@ -256,6 +347,24 @@ static void AMLiveRunTweak(NSDictionary *tweak) {
             }
             if ([pin[@"value"] isEqual:@"peak"] && (!sLiveState[stateKey] || cur > sLiveState[stateKey].doubleValue)) sLiveState[stateKey] = @(cur);
             if (!AMLiveValue(pin, stateKey, obj, tcls, t, sliderValue, &value)) continue;
+            // a fixed-point field (FP: raw = value * 65536) holds raw numbers; a typed value or slider is scaled,
+            // a multiply factor and a refill read from the game ({getter}/{field}, already raw) are not
+            double scale = [pin[@"scale"] doubleValue];
+            BOOL typed = [pin[@"value"] isKindOfClass:NSNumber.class] || [pin[@"value"] isEqual:@"slider"];
+            if (scale > 0 && typed && ![pin[@"op"] isEqual:@"multiply"]) value *= scale;
+            if ([pin[@"op"] isEqual:@"multiply"] && p && AMLiveMultiple(pin)) {
+                // every object of a list (each bullet, weapon mod) keeps its own base: field = its own value * factor
+                NSString *ok = [NSString stringWithFormat:@"%@/%p", stateKey, obj];
+                NSString *setKey = [ok stringByAppendingString:@"/set"], *baseKey = [ok stringByAppendingString:@"/base"];
+                if (!sLiveState[setKey] || cur != sLiveState[setKey].doubleValue) sLiveState[baseKey] = @(cur);
+                double want = sLiveState[baseKey].doubleValue * value;
+                if (want > 0 && cur != want) AMLiveWrite(p, t, want);
+                sLiveState[setKey] = @(AMLiveRead(p, t));  // what the field holds now (an int rounds)
+                if (sLiveState.count > 50000) {  // short-lived objects (bullets) leave keys behind: start this pin over
+                    for (NSString *k in sLiveState.allKeys) if ([k hasPrefix:[stateKey stringByAppendingString:@"/0x"]]) [sLiveState removeObjectForKey:k];
+                }
+                continue;
+            }
             if ([pin[@"op"] isEqual:@"multiply"] && p) {  // field = base * slider; the game recalculating it gives a new base
                 NSString *setKey = [stateKey stringByAppendingString:@"/set"], *baseKey = [stateKey stringByAppendingString:@"/base"];
                 if (!sLiveState[setKey] || cur != sLiveState[setKey].doubleValue) sLiveState[baseKey] = @(cur);
@@ -266,7 +375,7 @@ static void AMLiveRunTweak(NSDictionary *tweak) {
                 sLiveState[wroteKey] = @(want);
                 continue;
             }
-            double limit = pin[@"threshold"] ? [pin[@"threshold"] doubleValue] : value;
+            double limit = pin[@"threshold"] ? [pin[@"threshold"] doubleValue] * (scale > 0 ? scale : 1) : value;
             BOOL go = [when isEqual:@"lower"] ? cur < limit : [when isEqual:@"higher"] ? cur > limit : YES;
             if (!go) continue;
             if (p) {
@@ -299,6 +408,47 @@ static void AMLiveRunTweak(NSDictionary *tweak) {
 // am test: {"id": "...", "on": ["key", ...]} turns those switches on (a slider goes to its max, or its min
 // when the default is the max) and logs "test <id> on <n>". The keys it turned on are kept in the app's
 // settings, so a new id, or a file without the block, turns them off again even after a relaunch.
+// am snap: {"snapshot": {"id": "..."}} reads, once per id, the current value of every pushed switch's target (up to
+// 8 objects each: a field, a set_X's get_X, a named attribute) into Documents/am_snapshot.json. Two snapshots
+// around something done in play (a hit, a level-up) show which values the game really uses (am snap-diff).
+static void AMLiveSnapshot(id snap) {
+    static NSString *done;
+    if (![snap isKindOfClass:NSDictionary.class] || ![snap[@"id"] isKindOfClass:NSString.class]) return;
+    if ([done isEqualToString:snap[@"id"]]) return;
+    done = snap[@"id"];
+    NSMutableDictionary *values = [NSMutableDictionary new];
+    for (NSDictionary *t in sLiveTweaks) {
+        NSDictionary *pin = [t[@"pins"] firstObject];
+        if (![pin isKindOfClass:NSDictionary.class] || pin[@"command"] || pin[@"call"]) continue;
+        NSString *cls = AMLiveFinalClass(pin, AMLiveClass(pin[@"object"] ?: @"")), *type = pin[@"ctype"] ?: @"int32_t";
+        NSMutableArray *read = [NSMutableArray new];
+        NSUInteger seen = 0;
+        for (NSValue *box in AMLivePinObjects(pin)) {
+            if (seen++ >= 8) break;
+            void *obj = box.pointerValue;
+            double v = 0;
+            BOOL ok = NO;
+            if (pin[@"field"]) {
+                void *p = AMIl2cppField(obj, cls.UTF8String, [pin[@"field"] UTF8String]);
+                if (p) { v = AMLiveRead(p, type); ok = YES; }
+            } else if ([pin[@"setter"] hasPrefix:@"set_"]) {
+                ok = AMLiveGet(obj, cls, [@"get_" stringByAppendingString:[pin[@"setter"] substringFromIndex:4]], type, &v);
+            } else if (pin[@"attr"] && [pin[@"get"] isKindOfClass:NSString.class]) {
+                int64_t raw = 0;
+                ok = AMAttrGet(obj, cls.UTF8String, [pin[@"get"] UTF8String], [pin[@"attr"] UTF8String], &raw);
+                v = (double)raw;
+            }
+            if (ok && isfinite(v)) [read addObject:@(v)];
+        }
+        values[t[@"key"]] = @{@"objects": @(seen), @"values": read};
+    }
+    NSDictionary *out = @{@"id": done, @"at": @([NSDate date].timeIntervalSince1970), @"values": values};
+    NSData *data = [NSJSONSerialization dataWithJSONObject:out options:0 error:NULL];
+    NSString *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+    [data writeToFile:[docs stringByAppendingPathComponent:@"am_snapshot.json"] atomically:YES];
+    AMIl2cppLog(@"snapshot %@: %lu switches read", done, (unsigned long)values.count);
+}
+
 static void AMLiveTest(id test) {
     NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
     NSString *runningId = [d stringForKey:@"AM__testId"];
@@ -364,6 +514,7 @@ static void AMLivePinsLoad(void) {
     sLiveTweaks = withPins;
     sLiveKeys = keys;
     AMLiveTest([json isKindOfClass:NSDictionary.class] ? json[@"test"] : nil);
+    AMLiveSnapshot([json isKindOfClass:NSDictionary.class] ? json[@"snapshot"] : nil);
     if (!sLiveState) sLiveState = [NSMutableDictionary new];
     AMIl2cppLog(@"live pins: %lu switches from live_tweaks.json", (unsigned long)withPins.count);
 }

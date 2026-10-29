@@ -199,37 +199,16 @@ def component_classes(classes):
 
 
 def object_paths(classes):
-    paths = {}
+    from dump_scan import object_paths as reference_paths
+
     components = component_classes(classes)
-
-    def resolve(owner, target):
-        local = owner.rpartition(".")[0]
-        candidates = (
-            [target]
-            if "." in target
-            else [f"{local}.{target}" if local else target, target]
-        )
-        return next((c for c in candidates if c in classes), None)
-
-    for cls, info in classes.items():
-        for field in info.get("statics", []):
-            if "<" not in field:
-                paths.setdefault(cls, {"object": f"{cls}.{field}"})
-        if cls in components:
-            paths.setdefault(cls, {"object": cls + "[]"})
-        for field, target in info.get("references", {}).items():
-            target = resolve(cls, target)
-            if target and "<" not in field:
-                paths.setdefault(target, {"object": f"{cls}.{field}"})
-    # Only one hop: this is the path the generator supports, not an inferred arbitrary object graph.
-    for cls, path in list(paths.items()):
-        for getter, target in classes[cls].get("object_getters", {}).items():
-            target = resolve(cls, target)
-            if target:
-                paths.setdefault(
-                    target,
-                    {**path, "via": getter, "via_owner": cls, "target_class": target},
-                )
+    normalized = {cls: dict(info, base="MonoBehaviour") if cls in components else info for cls, info in classes.items()}
+    paths = {}
+    for cls, route in reference_paths(normalized).items():
+        path = {"object": route["object"]}
+        if route["path"] or (not route["object"].endswith("[]") and route["object"].rpartition(".")[0] != cls):
+            path.update(root_class=route["root_class"], path=route["path"], target_class=cls)
+        paths[cls] = path
     return paths
 
 
@@ -273,6 +252,7 @@ def add_alternatives(rows, classes, methods):
                 not r["ambiguous"]
                 and same_owner
                 and not paths[cls].get("via")
+                and "path" not in paths[cls]
                 and method["return_type"] == "void"
                 and not name.startswith(("get_", "set_"))
                 and not re.search(r"\bstatic\b", method.get("signature", ""))

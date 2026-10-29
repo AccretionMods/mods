@@ -34,7 +34,8 @@ jobs:
         id: scripts-parse
         run: |
           for f in scripts/*.sh; do bash -n "$f"; done
-          python3 -m py_compile scripts/*.py
+          python3 -m py_compile scripts/*.py studio/*.py
+          node --check studio/app.js
       - name: Source is up to date
         id: source-up-to-date
         run: |

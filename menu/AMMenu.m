@@ -1220,6 +1220,9 @@ static UITextField *AMSearchField(NSString *placeholder) {
 
 @end
 
+// mod.json "branding": false builds without Accretion's account: no Log in capsule, no Cloud saves, no call to its
+// server (scripts/build.sh). Only the switches and the Display settings stay.
+#ifndef AM_NO_BRANDING
 // The Log in capsule under the title (or, once linked, who is signed in): opens Accretion's sign-in in a browser
 // inside the game; the moving cyan edge runs around it like around the category boxes.
 @interface AMLoginBar : UIView
@@ -1272,6 +1275,7 @@ static UITextField *AMSearchField(NSString *placeholder) {
 }
 
 @end
+#endif
 
 // A category's header: a line above its box, the label at the left, "N on" (and the count with ▾ / › when the
 // menu folds) at the right, then Off in plain text while something in it is on. A folded category is that line.
@@ -1316,6 +1320,7 @@ static UITextField *AMSearchField(NSString *placeholder) {
 
 @end
 
+#ifndef AM_NO_BRANDING
 #pragma mark - Cloud saves
 
 // Cloud saves: the game's save, backed up to the owner's Accretion account and restored from it (any device).
@@ -1690,15 +1695,20 @@ static NSString *AMCloudWhen(NSString *iso) {
     out.timeStyle = NSDateFormatterShortStyle;
     return [out stringFromDate:date];
 }
+#else
+static NSString *const AMCloudSection = @"Cloud saves";  // never shown: the section checks below stay simple
+#endif
 
 #pragma mark - Panel
 
 @interface AMPanel : UITableViewController <UITextFieldDelegate>
 @property (nonatomic, strong) AMCardEdges *edges;
 @property (nonatomic, strong) NSArray<AMItem *> *cheats;  // the mod's own items, as registered
+#ifndef AM_NO_BRANDING
 @property (nonatomic, strong) AMLoginBar *login;
 @property (nonatomic, strong, nullable) UIViewController *browser;  // the sign-in page while it is open (fallback)
 @property (nonatomic, strong, nullable) id authSession;  // ASWebAuthenticationSession while the sign-in sheet is open
+#endif
 @property (nonatomic, strong, nullable) NSTimer *linkTimer;
 @property (nonatomic, strong) NSArray<AMItem *> *items;
 @property (nonatomic, strong) NSArray<NSString *> *allTitles;            // categories in the order first added
@@ -1745,7 +1755,9 @@ static NSString *AMGameName(NSString *fallback) {
 - (void)regroup {
     NSUInteger cheats = self.cheats.count;
     NSMutableArray<AMItem *> *all = [self.cheats mutableCopy];
+#ifndef AM_NO_BRANDING
     [all addObjectsFromArray:[self cloudItems]];
+#endif
     for (NSArray<NSString *> *d in @[@[@"_pulse", @"Pulsing dot"], @[@"_toggles", @"Toggles"]]) {
         AMItem *item = [AMItem new];  // AMKey(@"_pulse") is AMPulseKey
         item.key = d[0];
@@ -1773,6 +1785,7 @@ static NSString *AMGameName(NSString *fallback) {
     }
 }
 
+#ifndef AM_NO_BRANDING
 - (NSArray<AMItem *> *)cloudItems {
     if (!AMCloudLinked()) return @[];  // the Log in capsule under the title stands in for them
     __weak typeof(self) weak = self;
@@ -1955,6 +1968,7 @@ static NSString *AMGameName(NSString *fallback) {
     }]];
     [top presentViewController:ask animated:YES completion:nil];
 }
+#endif
 
 - (BOOL)isOpen:(NSString *)section {
     if (!self.folds || self.query.length || !section.length || [section isEqualToString:AMDisplaySection] ||
@@ -2034,7 +2048,11 @@ static NSString *AMGameName(NSString *fallback) {
     name.text = self.title;
     name.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
     name.textColor = AM_FG;
+#ifdef AM_NO_BRANDING
+    UIStackView *titleView = [[UIStackView alloc] initWithArrangedSubviews:@[name]];  // mod.json "branding": false
+#else
     UIStackView *titleView = [[UIStackView alloc] initWithArrangedSubviews:@[[AMLogo new], name]];
+#endif
     titleView.spacing = 8;
     titleView.alignment = UIStackViewAlignmentCenter;
     self.navigationItem.titleView = titleView;
@@ -2044,16 +2062,23 @@ static NSString *AMGameName(NSString *fallback) {
         self.search.delegate = self;
         [self.search addTarget:self action:@selector(searchChanged:) forControlEvents:UIControlEventEditingChanged];
     }
+#ifndef AM_NO_BRANDING
     self.login = [AMLoginBar new];
     [self.login.button addTarget:self action:@selector(logIn) forControlEvents:UIControlEventTouchUpInside];
     [self.login show:AMCloudState()[@"account"] busy:NO];
-    UIView *head = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 320, self.login.bounds.size.height + (self.search ? 50 : 0))];
-    self.login.frame = CGRectMake(0, 0, 320, self.login.bounds.size.height);
+    CGFloat bar = self.login.bounds.size.height;
+#else
+    CGFloat bar = 6;  // no Log in capsule: the search field (or nothing) sits at the top
+#endif
+    UIView *head = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 320, bar - 6 + (self.search ? 56 : 6))];
+#ifndef AM_NO_BRANDING
+    self.login.frame = CGRectMake(0, 0, 320, bar);
     self.login.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [head addSubview:self.login];
+#endif
     if (self.search) {
         AMSearchHeader *field = [[AMSearchHeader alloc] initWithField:self.search];
-        field.frame = CGRectMake(0, self.login.bounds.size.height - 6, 320, 50);
+        field.frame = CGRectMake(0, bar - 6, 320, 50);
         field.autoresizingMask = UIViewAutoresizingFlexibleWidth;
         [head addSubview:field];
     }
@@ -2074,7 +2099,9 @@ static NSString *AMGameName(NSString *fallback) {
     self.more.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
     self.more.accessibilityLabel = @"More at getaccretion.app";
     [self.more addTarget:self action:@selector(openSite) forControlEvents:UIControlEventTouchUpInside];
-    [foot addSubview:self.more];
+#ifndef AM_NO_BRANDING
+    [foot addSubview:self.more];  // mod.json "branding": false builds without it (scripts/build.sh)
+#endif
     table.tableFooterView = foot;
     [self showNote];
 }
@@ -2113,8 +2140,13 @@ static NSString *AMGameName(NSString *fallback) {
 }
 
 - (void)showNote {
+#ifdef AM_NO_BRANDING
+    NSString *made = @"";  // mod.json "branding": false
+#else
+    NSString *made = @"Made by Accretion. ";
+#endif
     self.note.text = self.shownTitles.count
-        ? @"Made by Accretion. Settings stay on this device. A dot by a switch that is on: green when it reaches the game, red with what to do."
+        ? [made stringByAppendingString:@"Settings stay on this device. A dot by a switch that is on: green when it reaches the game, red with what to do."]
         : [NSString stringWithFormat:@"No switch matches “%@”.", self.query];
 }
 
@@ -2161,9 +2193,11 @@ static NSString *AMGameName(NSString *fallback) {
         NSString *tail = [NSString stringWithFormat:@"%@%lu  %@", on ? @" · " : @"", (unsigned long)self.shownRows[section].count, open ? @"▾" : @"›"];
         [r appendAttributedString:AMLabel(tail, AM_MUTED)];
     }
+#ifndef AM_NO_BRANDING
     if ([title isEqualToString:AMCloudSection] && [AMCloudState()[@"account"] length])
         r = [[NSMutableAttributedString alloc] initWithString:AMCloudState()[@"account"]
                                                    attributes:@{NSFontAttributeName: AMMono(11, UIFontWeightRegular), NSForegroundColorAttributeName: AM_MUTED}];
+#endif
     head.right.attributedText = r;
     head.off.hidden = on == 0;
     head.off.accessibilityIdentifier = title;
@@ -3117,6 +3151,7 @@ static NSString *const AMButtonSpot = @"AM__buttonSpot";  // where the button wa
     [[[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight] impactOccurred];
     if (self.onOpenChange) self.onOpenChange(YES);
     AMPanel *panel = [[AMPanel alloc] initWithItems:_items title:AMGameName(self.title)];
+#ifndef AM_NO_BRANDING
     NSNumber *last = AMCloudState()[@"last_backup"];
     // only once this install has backed up or restored by hand: a fresh install's new game must never push the
     // real save out of the five kept
@@ -3125,6 +3160,7 @@ static NSString *const AMButtonSpot = @"AM__buttonSpot";  // where the button wa
             os_log(OS_LOG_DEFAULT, "[AccretionMods] cloud auto backup: %{public}@", text);
         });
     }
+#endif
     UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:panel];
     AMStyleNav(nav);
     // the floating button sits above everything (zPosition): hide it while the menu is open so it covers no row

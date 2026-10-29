@@ -327,6 +327,18 @@ type-only rows, constructors, constants and metadata are hidden. **Add** creates
 method with its JIT requirement shown; **Inspect** shows signatures and fields needing an object path.
 **Show next 300** loads more matches. Names suggest candidates; phone tests establish their effect.
 
+  Scan also follows reference fields and zero-argument getters from reachable managers, including across
+  hot-update assemblies. It can expand arrays, lists and dictionary values and filter by a concrete class.
+  The Add dialog shows the route; Auto-build keeps it when creating the pin. Temporary work lists are
+  excluded from automatic routes. These are structural candidates, so test each effect during play.
+
+  Nested pins store `root_class` and a `path` list alongside `object`. Each step has `field` or `getter`,
+  its resulting `class`, and optionally `each: "array"`, `"list"` or `"values"`; a class-only step filters
+  by runtime type. `am pin ... --root-class Class --path '<JSON list>'` validates the route against the dump
+  before writing. Compiled and live pins share the resolver (eight steps, 4096 visits per step); missing
+  objects wait for the next tick. Collection paths do not support single-object multipliers, restoration
+  or slider game-value notes. Rebuild the game once to include this runtime before pushing nested pins.
+
 While the game runs, the mod's menu logs each switch's state (`[AccretionMods] status <key> ok|off|waiting:
 ...`), on change and every 20 s. Studio's Switches tab shows them from its log and run jobs ("on the phone:
 working"), and Watch the phone (5 min) keeps them current.

@@ -17,10 +17,132 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import dev
 import server
+import autobuild
 from test_dev_cli import DUMP
 
 
 class Api(unittest.TestCase):
+    def test_measure_probes_read_only_and_drop_numbers_the_game_never_uses(self):
+        row = {"class": "Core.EntityData", "member": "walkSpeed", "object": "Core.Entities.Entity[]",
+               "root_class": "Core.Entities.Entity", "path": [{"field": "PlayData", "class": "Core.EntityData"}],
+               "ctype": "double", "kind": "field"}
+        pin = autobuild.probe(row)
+        self.assertEqual((pin["field"], pin["class"], pin["root_class"], pin["path"]),
+                         ("walkSpeed", "Core.EntityData", "Core.Entities.Entity", row["path"]))
+        self.assertEqual(autobuild.probe(dict(row, member="set_Speed", kind="setter", path=None))["setter"], "set_Speed")
+        self.assertTrue(autobuild.dead(row, 9, [0, 0, 0, 0]))  # Entity._data.speed in 9 Kings
+        self.assertFalse(autobuild.dead(row, 9, [0, 1.52, 4.59]))  # a real walkSpeed
+        self.assertFalse(autobuild.dead(row, 0, []))  # nothing in play right now: not judged
+        self.assertFalse(autobuild.dead(dict(row, ctype="bool"), 9, [0, 0]))  # false is a normal bool
+
+    def test_autobuild_preserves_nested_paths_for_json_and_legacy_answers(self):
+        row = {"class": "HotFixBattle:Hero", "object": "HotFix:Game.world", "root_class": "HotFix:World",
+               "path": [{"field": "hero", "class": "HotFixBattle:Hero"}], "member": "Health",
+               "name": "Health", "ctype": "int64_t", "kind": "field", "area": "Survival"}
+        argv, why = autobuild.pin_argv("demo", row, {"value": 100, "title": "Health"}, set())
+        self.assertIsNone(why)
+        parsed = dev.build_parser().parse_args(argv)
+        self.assertEqual(json.loads(parsed.path), row["path"])
+        found, _ = autobuild.picks("demo", [row], ["am pin demo HotFixBattle:Hero.Health --value 100 --as hp"])
+        parsed = dev.build_parser().parse_args(found[0][1][1:])
+        self.assertEqual(json.loads(parsed.path), row["path"])
+        self.assertEqual(parsed.object, "HotFix:Game.world")
+        self.assertIn("HotFixBattle:Hero.Health", autobuild.table([row]))
+
+    def test_effort_reaches_every_engine_and_gemini_runs_through_aider(self):
+        from unittest import mock
+        with mock.patch.object(server, "claude_exe", return_value="claude"), \
+                mock.patch.object(server, "aider_exe", return_value="aider"), \
+                mock.patch.object(server.shutil, "which", side_effect=lambda name: "codex" if name == "codex" else None), \
+                mock.patch.object(server, "gemini_key", return_value="test-key"):
+            self.assertEqual(server.claude_command("x", True, "high")[-2:], ["--effort", "high"])
+            self.assertNotIn("--effort", server.claude_command("x", True))
+            # a stand-in codex on the PATH: the command is checked without the CLI installed (CI has none)
+            fake = lambda name: "/usr/local/bin/codex" if name == "codex" else None  # noqa: E731
+            with mock.patch.object(server.shutil, "which", side_effect=fake):
+                self.assertIn('model_reasoning_effort="low"', server.codex_command("x", True, "low"))
+            cmd = server.gemini_command("x", None, "medium")
+            self.assertEqual(cmd[1:5], ["--model", "gemini/" + server.GEMINI_MODEL, "--reasoning-effort", "medium"])
+            self.assertNotIn("test-key", " ".join(cmd))  # the key goes through the environment only
+            self.assertNotIn("--model", server.aider_command("x"))
+        with mock.patch.object(server, "gemini_key", return_value=""):
+            with self.assertRaises(dev.DevError):
+                server.gemini_command("x")
+        with self.assertRaises(dev.DevError):
+            server.start_claude("a prompt long enough", True, "claude", "", "max")
+
+    def test_autobuild_reads_json_picks_and_builds_the_pin_itself(self):
+        import autobuild
+        rows = [{"class": "Player", "object": "Player.instance", "member": "health", "name": "health",
+                 "ctype": "int32_t", "kind": "field", "area": "Survival"},
+                {"class": "Player", "object": "Player.instance", "member": "set_God", "name": "God",
+                 "ctype": "bool", "kind": "setter", "area": "Survival"}]
+        answer = ["```json", '[{"row": 1, "value": 99.6, "when": "lower", "title": "Full health"},',
+                  ' {"row": 2, "value": "true", "title": "God mode"}, {"row": 7, "value": 1}]', "```",
+                  "Here: {\"row\": \"x\"}", "am pin game-plus Player.health --value 5 --as hp"]
+        found, skipped = autobuild.picks("game-plus", rows, answer)
+        self.assertEqual([k for k, _ in found], ["row", "row", "cmd"])
+        self.assertTrue(any("row 7" in s for s in skipped) and any("not a number" in s for s in skipped))
+        self.assertEqual(autobuild.value_for(rows[0], 99.6), "100")
+        self.assertEqual(autobuild.value_for(rows[1], "true"), "true")
+        self.assertIsNone(autobuild.value_for(rows[1], 5))
+        self.assertIsNone(autobuild.value_for(rows[0], "lots"))
+        self.assertEqual(autobuild.value_for(dict(rows[0], ctype="float"), 1.5), "1.5")
+        taken = {"fullHealth"}
+        argv, why = autobuild.pin_argv("game-plus", rows[0], found[0][1][1], taken)
+        self.assertIsNone(why)
+        self.assertEqual(argv[:8], ["pin", "game-plus", "Player.health", "--object", "Player.instance",
+                                    "--value", "100", "--when"])
+        self.assertEqual(argv[argv.index("--as") + 1], "fullHealth2")  # taken: numbered
+
+    def test_autobuild_pins_in_process_without_gen(self):
+        import autobuild
+        folder = dev.mod_dir("game-plus")
+        before = (folder / "tweaks.json").read_text(encoding="utf-8") if (folder / "tweaks.json").is_file() else None
+        try:
+            ok, text = autobuild.pin_here(["pin", "game-plus", "PurchaseState.Gems", "--object",
+                                           "PurchaseState.instance", "--value", "500", "--as", "gemsTest",
+                                           "--title", "Gems"])
+            self.assertTrue(ok, text)
+            data = json.loads((folder / "tweaks.json").read_text(encoding="utf-8"))
+            self.assertIn("gemsTest", [t["key"] for t in data["tweaks"]])
+            self.assertIs(autobuild.dev.cmd_gen, dev.cmd_gen)  # put back
+            ok, text = autobuild.pin_here(["pin", "game-plus", "PurchaseState.Nothing", "--value", "1"])
+            self.assertFalse(ok)
+            self.assertIn("no field", text)
+        finally:
+            if before is None:
+                (folder / "tweaks.json").unlink(missing_ok=True)
+            else:
+                (folder / "tweaks.json").write_text(before, encoding="utf-8")
+
+    def test_autobuild_topic_labels_do_not_exclude_supported_pins(self):
+        rows = [
+            {"class": cls, "member": "Value", "object": cls + ".instance", "area": area, "flag": flag}
+            for cls, area, flag in (
+                ("PurchaseState", "In-app purchases", "shop"),
+                ("StoreCurrency", "Progress", "shop"),
+                ("AdManager", "Other", "ads"),
+                ("AccountState", "Other", "account"),
+                ("MultiplayerState", "Other", "online"),
+                ("FistFightingController", "Combat", None),
+            )
+        ]
+        original = autobuild.dev.scan_rows
+        autobuild.dev.scan_rows = lambda _mod: ({}, rows + [dict(rows[0], has=True), dict(rows[0], inspect_only=True)])
+        try:
+            self.assertEqual(autobuild.candidates("game-plus"), rows)
+        finally:
+            autobuild.dev.scan_rows = original
+        original_text = autobuild.dev.dump_scan.as_text
+        autobuild.dev.dump_scan.as_text = lambda _rows, _limit: "candidate table"
+        try:
+            prompt = autobuild.prompt_for("game-plus", {"name": "Game", "target_bundle_id": "com.example.game"}, rows)
+            self.assertNotIn("Skip anything about", prompt)
+            self.assertIn("Topic labels", prompt)
+        finally:
+            autobuild.dev.dump_scan.as_text = original_text
+
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
@@ -103,6 +225,35 @@ public class OnlineState : MonoBehaviour // TypeDefIndex: 111
                 return r.status, json.loads(r.read())
         except urllib.error.HTTPError as e:
             return e.code, json.loads(e.read())
+
+    def test_custom_feature_evidence_is_versioned_and_reused_as_criteria(self):
+        old = dev.load_state("game-plus")
+        path = dev.patterns_path()
+        previous = path.read_bytes() if path.exists() else None
+        result = {"result": "works", "app_version": "1.0", "mod_version": "1.0.0", "date": "2026-10-22"}
+        feature = {"key": "customFeature", "title": "Custom feature", "verified": result}
+        try:
+            dev.save_state("game-plus", dict(old, verified_features=[feature]))
+            dev.write_json(path, {"version": 2, "patterns": {}, "members": {}, "workflows": [{"title": "Review persistence", "criteria": ["Validate storage and readback"]}]})
+            status, detail = self.get("/api/mods/game-plus")
+            self.assertEqual(status, 200)
+            self.assertEqual(detail["features"][0]["verification_state"], "works")
+            _, context = self.get("/api/mods/game-plus/context")
+            self.assertIn("Custom feature", context["works"])
+            self.assertEqual(context["learned_workflows"][0]["criteria"], ["Validate storage and readback"])
+            for changed in ({"app_version": "old"}, {"mod_version": "old"}):
+                feature["verified"] = dict(result, **changed)
+                dev.save_state("game-plus", dict(old, verified_features=[feature]))
+                _, detail = self.get("/api/mods/game-plus")
+                self.assertEqual(detail["features"][0]["verification_state"], "stale")
+                _, context = self.get("/api/mods/game-plus/context")
+                self.assertNotIn("Custom feature", context["works"])
+        finally:
+            dev.save_state("game-plus", old)
+            if previous is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.write_bytes(previous)
 
     def test_mods_and_detail(self):
         status, studio = self.get("/api/studio")
@@ -264,7 +415,8 @@ public class OnlineState : MonoBehaviour // TypeDefIndex: 111
 
         status, _data = self.post("/api/jobs", {"command": "rm", "mod": "game-plus"})
         self.assertEqual(status, 400)
-        # sign and install take a file: the mod name must not be put in front of it
+        # sign and install take a file: the mod name must not be put in front of it; sign gets it as --mod (its
+        # install mode and installed ID guard the install)
         status, job = self.post(
             "/api/jobs",
             {
@@ -274,7 +426,7 @@ public class OnlineState : MonoBehaviour // TypeDefIndex: 111
             },
         )
         self.assertEqual(status, 200, job)
-        self.assertEqual(job["args"], ["C:/no/such.ipa", "--install"])
+        self.assertEqual(job["args"], ["C:/no/such.ipa", "--install", "--mod", "game-plus"])
         self.post(f"/api/jobs/{job['id']}/stop", {})
         # Claude Code runs: read-only gets reading tools and read-only dev commands only
         old_exe = server.claude_exe

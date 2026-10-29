@@ -36,6 +36,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import webbrowser
@@ -55,7 +56,10 @@ import games
 import gen_tweaks
 import ipa_fetch
 import jobs_state
+import menu_image
 import scan_view
+import shots
+import store_view
 import workspace
 
 LOCK = threading.Lock()  # dev.py writes files and caches; one quick command at a time
@@ -115,13 +119,16 @@ def job_resources(command, argv):
         resources.append("device")
     if command in {"new", "fetch", "start"}:
         resources.append("intake")
+    if command == "store":
+        resources.append("store-publish")  # one publish worktree at a time
     if (
         argv
         and MOD_NAME.fullmatch(argv[0])
-        and command not in {"games", "fetch", "sign", "install"}
+        # log, test and push only read the mod (they hold the phone): Add, Pin and a build may run beside them
+        and command not in {"games", "fetch", "sign", "install", "log", "test", "push"}
     ):
         resources.append("mod:" + argv[0])
-    if command == "claude" and argv != ["(read only)"]:
+    if command in ("claude", "codex") and argv != ["(read only)"]:
         resources += ["device", "intake"] + [
             "mod:" + p.parent.name for p in (ROOT / "mods").glob("*/mod.json")
         ]
@@ -144,6 +151,7 @@ class Job:
         self.status = "queued"
         self.code = None
         self.started = time.time()
+        self.ended = None  # when it finished: the auto-build bar shows the run time
         self.proc = None
         self.cancelled = threading.Event()
         self.resources = job_resources(command, argv)
@@ -172,21 +180,25 @@ class Job:
             if (
                 self.argv
                 and "mod:" + self.argv[0] in self.resources
-                and self.command in {"build", "run", "dump", "update", "new"}
+                and self.command in {"build", "run", "dump", "update", "new", "aider", "gemini", "autobuild"}
             ):
                 folder = ROOT / "mods" / self.argv[0]
                 if folder.is_dir():
-                    workspace.snapshot_create(
-                        dev.am_root() / "studio",
-                        self.argv[0],
-                        folder,
-                        "before " + self.command,
-                    )
+                    try:
+                        workspace.snapshot_create(
+                            dev.am_root() / "studio",
+                            self.argv[0],
+                            folder,
+                            "before " + self.command,
+                        )
+                    except (OSError, ValueError) as error:  # a snapshot problem never stops the job
+                        self.lines.append(f"(no snapshot: {error})")
             self._execute()
         except Exception as error:  # noqa: BLE001 - report a worker failure and always release its resources
             self.lines.append(jobs_state.redact(f"Job failed: {error}"))
             self.status, self.code = "failed", -1
         finally:
+            self.ended = time.time()
             COORDINATOR.release(self.resources)
             self.persist()
 
@@ -204,6 +216,9 @@ class Job:
             + self.argv
         )
         env = dict(os.environ, PYTHONUTF8="1", PYTHONUNBUFFERED="1", AM_REPO=str(ROOT))
+        env.setdefault("COLUMNS", "4000")  # aider wraps its answer (and its am lines) at the terminal width
+        if not env.get("GEMINI_API_KEY") and gemini_key():  # saved after this server started
+            env["GEMINI_API_KEY"] = gemini_key()
         # a server started outside a login shell may lack uv and pymobiledevice3 on PATH
         local_bin = str(Path.home() / ".local" / "bin")
         if local_bin not in env.get("PATH", ""):
@@ -263,6 +278,8 @@ class Job:
             self.persist()
         if self.proc and self.proc.poll() is None:
             self.status = "stopping"
+            if sys.platform == "win32":  # the whole tree: auto-build runs several model processes at once
+                subprocess.run(["taskkill", "/T", "/F", "/PID", str(self.proc.pid)], capture_output=True, check=False)
             self.proc.kill()
 
     def view(self, since=0):
@@ -273,6 +290,7 @@ class Job:
             "status": self.status,
             "code": self.code,
             "started": self.started,
+            **({"ended": self.ended} if self.ended else {}),
             "interactive": self.interactive,
             "resources": self.resources,
             "lines": self.lines[since:],
@@ -362,9 +380,14 @@ def claude_exe():
     return found
 
 
-def claude_command(prompt, read_only):
+def claude_command(prompt, read_only, effort="", answer_only=False):
     """The claude -p command line for a builder prompt. Read-only: reading tools and the read-only dev.py
-    commands only, no edits. Otherwise: edits accepted, any dev.py command, no other shell commands."""
+    commands only, no edits. Otherwise: edits accepted, any dev.py command, no other shell commands.
+    answer_only (Auto-build): no tools at all, the prompt is the whole job."""
+    if answer_only:
+        return [claude_exe(), "-p", ANSWER_ONLY + prompt, "--output-format", "stream-json", "--verbose",
+                "--disallowedTools", "Bash", "Read", "Grep", "Glob", "Edit", "Write", "NotebookEdit", "WebFetch",
+                "WebSearch", "Task", *(["--effort", effort] if effort else [])]
     if read_only:
         allowed = ["Read", "Grep", "Glob"] + [
             f"Bash({DEV} {c}:*)" for c in READ_ONLY_DEV
@@ -402,6 +425,7 @@ def claude_command(prompt, read_only):
         "--allowedTools",
         *allowed,
         *mode,
+        *(["--effort", effort] if effort else []),
     ]
 
 
@@ -452,7 +476,273 @@ def claude_lines(raw):
     return []
 
 
-def start_claude(prompt, read_only):
+# Other models: aider with the model in ~/.aider.conf.yml (the free OpenRouter Nemotron, ~/AI-MODELS.md). No git,
+# no commits, no repo map, no shell commands. Read only: ask mode, only the prompt leaves this PC. Changing files:
+# it edits the selected mod's own files (tweaks.json, hooks.json, mod.json, Tweak.x), which are sent with the
+# prompt; a snapshot is taken first (Files tab restores it). The am commands it proposes become buttons in Jobs.
+ENGINES = ("claude", "claude-api", "aider", "codex", "gemini")
+# how hard the model thinks; "" keeps each engine's own default (Claude Code's, ~/.codex/config.toml's, the model's)
+EFFORTS = ("", "low", "medium", "high")
+# Gemini: aider with Google's free API tier, key GEMINI_API_KEY in the Windows user environment (gcloud key
+# accretion-local-gemini, project accreation). The free tier may use prompts to improve Google's products: game
+# scan rows only, no secrets. AM_GEMINI_MODEL picks another model. Checked 2026-10-22 on the free key:
+# 3.6-flash answers in ~2 s; 3.8-flash is free but was overloaded (503, one answer took 138 s); 4-argon is paid only.
+GEMINI_MODEL = os.environ.get("AM_GEMINI_MODEL", "gemini-3.6-flash")
+AIDER_FILES = ("tweaks.json", "hooks.json", "mod.json", "Tweak.x")
+AIDER_NOTE = (
+    "\n\nYou cannot run commands or read other files. Where the task needs an am command (am pin, am add, am gen, "
+    "am build, am new, am find...), write the exact command on its own line starting with `am ` and Studio shows "
+    "a button to run it."
+)
+AIDER_EDIT_NOTE = (
+    " You may edit the files you were given; keep tweaks.json valid JSON and run nothing yourself. After an edit "
+    "of tweaks.json, end with the line: am gen {mod}"
+)
+
+
+# Codex (GPT): OpenAI's CLI (npm @openai/codex), signed in with the owner's ChatGPT account like the Codex app.
+# codex exec runs headless in the repo like Claude Code: read only in its read-only sandbox; for a task that
+# changes files, full access (the owner's choice, 2026-10-22: the whole loop start to finish, signing and
+# installing on the phone included), so it can run any command on this PC with the network. Studio asks before
+# every such run. The prompt goes as one argument to node, not through codex.cmd (cmd.exe cuts at 8191 chars).
+ANSWER_ONLY = ("Answer from this prompt alone: run no commands, open no files, search nothing. Everything you "
+               "need is below; reply only in the format it asks for.\n\n")
+
+
+def codex_command(prompt, read_only, effort="", answer_only=False):
+    node = shutil.which("node")
+    script = Path(os.environ.get("APPDATA", "")) / "npm" / "node_modules" / "@openai" / "codex" / "bin" / "codex.js"
+    if node and script.is_file():
+        head = [node, str(script)]
+    elif shutil.which("codex"):
+        head = [shutil.which("codex")]
+    else:
+        raise dev.DevError("Codex CLI is not installed (npm install -g @openai/codex, then codex login)")
+    note = CLAUDE_NOTE + (" Read only: change no files." if read_only else
+                          " You have full access for the whole loop: edit the mod, am gen, then am run <mod> --bump "
+                          "(builds, signs, installs on the USB phone, opens the game and streams the log), and read "
+                          "the log's status lines to see which switches work. Stay in this repo and the mod workflow: "
+                          "no git push, no publishing, no deleting outside the mod, no other installs.")
+    mode = ["--sandbox", "read-only"] if read_only else ["--dangerously-bypass-approvals-and-sandbox"]
+    level = ["-c", f'model_reasoning_effort="{effort}"'] if effort else []
+    if answer_only:  # Auto-build: the table is the whole job; in the repo Codex read the handbook and answered nothing
+        return [*head, "exec", "--sandbox", "read-only", *level, "--skip-git-repo-check", "--ephemeral",
+                "-C", str(Path(tempfile.gettempdir())), ANSWER_ONLY + prompt]
+    return [*head, "exec", *mode, *level, "--skip-git-repo-check", "--ephemeral", "-C", str(ROOT),
+            note + "\n\n" + prompt]
+
+
+def aider_exe():
+    found = shutil.which("aider") or shutil.which(
+        "aider", path=str(Path.home() / ".local" / "bin")
+    )
+    if not found:
+        raise dev.DevError("aider is not installed or not on PATH (uv tool install aider-chat)")
+    return found
+
+
+def gemini_key():
+    """GEMINI_API_KEY from this process, else from the Windows user environment (saved after Studio started)."""
+    key = os.environ.get("GEMINI_API_KEY", "")
+    if not key and sys.platform == "win32":
+        import winreg
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as reg:
+                key = winreg.QueryValueEx(reg, "GEMINI_API_KEY")[0]
+        except OSError:
+            key = ""
+    return key
+
+
+# free-tier quotas are per model (about 20 requests a day each): Auto-build moves to the next one when one runs out
+GEMINI_FALLBACKS = ("gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.7-flash", "gemini-3.8-flash", "gemini-flash-latest")
+
+
+def claude_api_command(prompt, account="", effort=""):
+    """studio/claude_api.py: Claude through the Anthropic API with one of the saved accounts (the first when
+    none is named). Answers only, like aider in ask mode. The prompt goes in a one-off file (no length limit)."""
+    import claude_api
+
+    names = [a["name"] for a in claude_api.accounts()]
+    if not names:
+        raise dev.DevError("no Claude API account yet: python studio/claude_api.py add <name> (hidden key input)")
+    account = account or names[0]
+    if account not in names:
+        raise dev.DevError(f"no Claude API account {account!r}")
+    folder = dev.am_root() / "work" / "prompts"
+    folder.mkdir(parents=True, exist_ok=True)
+    fd, path = tempfile.mkstemp(suffix=".txt", dir=folder)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(prompt)
+    return [sys.executable, str(Path(__file__).with_name("claude_api.py")), "ask", "--account", account,
+            "--prompt-file", path, *(["--effort", effort] if effort else [])]
+
+
+def gemini_command(prompt, mod=None, effort="", model=None):
+    """aider with Gemini instead of the model in ~/.aider.conf.yml; the key goes through the environment."""
+    if not gemini_key():
+        raise dev.DevError("no GEMINI_API_KEY on this PC (a free key from aistudio.google.com, saved as a user "
+                           "environment variable)")
+    return aider_command(prompt, mod, effort, model="gemini/" + (model or GEMINI_MODEL))
+
+
+def aider_command(prompt, mod=None, effort="", model=None):
+    files = []
+    if mod:
+        folder = dev.mod_dir(mod)
+        for name in AIDER_FILES:
+            if (folder / name).is_file():
+                files += ["--file", str(folder / name)]
+    note = AIDER_NOTE + (AIDER_EDIT_NOTE.format(mod=mod) if mod else "")
+    return [
+        aider_exe(),
+        *(["--model", model] if model else []),
+        *(["--reasoning-effort", effort] if effort else []),
+        *(["--chat-mode", "ask"] if not mod else []),
+        *files,
+        "--message",
+        prompt + note,
+        "--no-suggest-shell-commands",
+        "--map-tokens",
+        "0",
+        "--no-git",
+        "--no-auto-commits",
+        "--yes-always",
+        "--no-pretty",
+        "--no-stream",
+        "--no-fancy-input",
+        "--no-check-update",
+        "--no-show-release-notes",
+        "--no-detect-urls",
+        "--no-analytics",
+    ]
+
+
+# aider cannot search the dump, so its first answer to a new feature is often only `am find` / `am fields`
+# lines. A follow-up runs those searches here (read only, from the cached dump) and asks aider again with the
+# results under its own prompt.
+SEARCH_LINE = re.compile(r"^am (find|fields) ([a-z0-9]+(?:-[a-z0-9]+)*)\s+(.+)$")
+SEARCH_ROWS = 40  # per search, so a broad regex cannot fill the prompt
+
+
+def run_searches(mod, lines, budget):
+    blocks, seen = [], set()
+    for line in lines:
+        cmd = line.strip().strip("`").lstrip("$> ").strip()
+        m = SEARCH_LINE.match(cmd)
+        if not m or m.group(2) != mod or cmd in seen:
+            continue
+        seen.add(cmd)
+        try:
+            words = shlex.split(m.group(3))
+            terms = [w for w in words if not w.startswith("--")]
+            if m.group(1) == "fields":
+                rows = [f"{o if isinstance(o, str) else hex(o)} {'static ' if s else ''}{t} {n}" for o, s, t, n in dev.fields_of(mod, terms[0])]
+            elif "--class" in words:
+                cls = words[words.index("--class") + 1]
+                rows = [f"{x.full_name}({', '.join(x.params)}) -> {x.return_type}"
+                        for x in dev.dump_methods(mod) if x.class_name == cls or x.full_name.rsplit(".", 1)[0] == cls]
+            elif "--fields" in words:
+                rx = re.compile(terms[0], re.IGNORECASE)
+                rows = [f"{c}.{n}  {'static ' if st else ''}{t}" for c, st, t, n in dev.field_rows(mod)
+                        if "<" not in c and rx.search(f"{c}.{n}")]
+            else:
+                rx = re.compile(terms[0], re.IGNORECASE)
+                rows = [f"{x.full_name}({', '.join(x.params)}) -> {x.return_type}"
+                        for x in dev.dump_methods(mod) if rx.search(x.full_name)]
+        except (re.error, IndexError, ValueError, OSError, dev.DevError) as error:
+            rows = [f"(this search failed: {error})"]
+        more = f"\n... {len(rows) - SEARCH_ROWS} more" if len(rows) > SEARCH_ROWS else ""
+        blocks.append(f"$ {cmd}\n" + ("\n".join(rows[:SEARCH_ROWS]) or "(nothing found)") + more)
+    text = "\n\n".join(blocks)
+    return text if len(text) <= budget else text[:budget] + "\n... (cut to fit the prompt)"
+
+
+def start_autobuild(mod, engine, limit, effort="", account=""):
+    """studio/autobuild.py as a job: the model picks switches from the scan, Studio adds them and builds."""
+    if engine not in ENGINES:
+        raise dev.DevError(f"unknown model engine {engine!r}")
+    if effort not in EFFORTS:
+        raise dev.DevError(f"unknown effort {effort!r}; use low, medium or high")
+    if not (MOD_NAME.fullmatch(mod or "") and dev.mod_dir(mod).is_dir()):
+        raise dev.DevError("pick a mod first")
+    with SESSION_LOCK:
+        if RESTARTING.is_set():
+            raise dev.DevError("Studio is restarting; reconnect before starting jobs")
+        job = Job("autobuild", [mod, engine], cmd=[sys.executable, str(HERE / "autobuild.py"), mod, "--engine", engine,
+                                                   *(["--account", account] if account and engine == "claude-api" else []),
+                                                   "--limit", str(max(0, int(limit))),  # 0: every usable switch
+                                                   *(["--effort", effort] if effort else [])])
+        JOBS[job.id] = job
+    job.persist()
+    threading.Thread(target=job.run, daemon=True).start()
+    return job
+
+
+def start_appstore_keep(app_id, bundle, version_id="", license_ok=False):
+    """scripts/appstore.py keep as a job: the whole App Store .ipa (newest or one version) kept where the Keep the
+    .ipa choice says. license_ok only after the owner said yes for this free game."""
+    if not re.fullmatch(r"\d{5,12}", str(app_id or "")) or (version_id and not re.fullmatch(r"\d{1,15}", version_id)):
+        raise dev.DevError("keep: the game's App Store id (and a version id from its list)")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.\-]{1,150}", bundle or ""):
+        raise dev.DevError("keep: the game's bundle id")
+    with SESSION_LOCK:
+        if RESTARTING.is_set():
+            raise dev.DevError("Studio is restarting; reconnect before starting jobs")
+        job = Job("appstore-keep", [bundle], cmd=[sys.executable, str(ROOT / "scripts" / "appstore.py"), "keep",
+                                                  str(app_id), bundle, *([version_id] if version_id else []),
+                                                  *(["--license"] if license_ok else [])])
+        JOBS[job.id] = job
+    job.persist()
+    threading.Thread(target=job.run, daemon=True).start()
+    return job
+
+
+def start_store_publish(mod, action, confirm):
+    """studio/store_publish.py as a job: publish this checkout's version of a mod to the store, or take it out."""
+    if action not in ("update", "remove"):
+        raise dev.DevError("unknown store action")
+    if not (MOD_NAME.fullmatch(mod or "") and dev.mod_dir(mod).is_dir()):
+        raise dev.DevError("pick a mod first")
+    if action == "remove" and confirm != mod:
+        raise dev.DevError(f"type {mod} to confirm")
+    with SESSION_LOCK:
+        if RESTARTING.is_set():
+            raise dev.DevError("Studio is restarting; reconnect before starting jobs")
+        job = Job("store", [mod, action], cmd=[sys.executable, str(HERE / "store_publish.py"), action, mod])
+        JOBS[job.id] = job
+    job.persist()
+    threading.Thread(target=job.run, daemon=True).start()
+    return job
+
+
+def start_followup(job, mod):
+    if getattr(job, "engine", None) not in ("aider", "gemini") or not getattr(job, "prompt", None):
+        raise dev.DevError("only an aider or Gemini job from this Studio session can be followed up")
+    if job.status in ("queued", "running", "stopping"):
+        raise dev.DevError("wait for it to finish first")
+    mod = job.mod or mod
+    if not (MOD_NAME.fullmatch(mod or "") and dev.mod_dir(mod).is_dir()):
+        raise dev.DevError("pick a mod first")
+    budget = 19000 - len(job.prompt) - 400
+    with LOCK:
+        results = run_searches(mod, job.lines, budget)
+    if not results:
+        raise dev.DevError(f"aider asked for no am find / am fields search on {mod}")
+    prompt = (job.prompt + "\n\nResults of the searches you asked for (run by Mod Studio on the game's dump):\n"
+              + results + "\n\nUse them now: make the change, or give the exact am pin / am add lines. Ask for "
+              "more searches only if these leave it open.")
+    return start_claude(prompt, job.read_only, job.engine, mod if not job.read_only else "", job.effort)
+
+
+def start_claude(prompt, read_only, engine="claude", mod="", effort="", account=""):
+    if engine not in ENGINES:
+        raise dev.DevError(f"unknown model engine {engine!r}; use one of: {', '.join(ENGINES)}")
+    if effort not in EFFORTS:
+        raise dev.DevError(f"unknown effort {effort!r}; use low, medium or high")
+    if engine in ("aider", "gemini") and not read_only and not (
+            MOD_NAME.fullmatch(mod or "") and dev.mod_dir(mod).is_dir()):
+        raise dev.DevError(f"pick a mod first: {engine} edits that mod's files")
     prompt = (prompt or "").strip()
     if len(prompt) < 10:
         raise dev.DevError("the prompt is empty")
@@ -461,12 +751,27 @@ def start_claude(prompt, read_only):
     with SESSION_LOCK:
         if RESTARTING.is_set():
             raise dev.DevError("Studio is restarting; reconnect before starting jobs")
-        job = Job(
-            "claude",
-            ["(read only)" if read_only else "(may change files)"],
-            cmd=claude_command(prompt, read_only),
-            parse=claude_lines,
-        )
+        if engine == "claude-api":  # answers only: suggested am commands become buttons, nothing is edited
+            job = Job("claude-api", ["(answer only)"], cmd=claude_api_command(prompt + AIDER_NOTE, account, effort))
+        elif engine == "codex":
+            job = Job("codex", ["(read only)" if read_only else "(may change files)"],
+                      cmd=codex_command(prompt, read_only, effort))
+        elif engine in ("aider", "gemini"):
+            command = gemini_command if engine == "gemini" else aider_command
+            if read_only:
+                job = Job(engine, ["(read only)"], cmd=command(prompt, None, effort))
+            else:
+                job = Job(engine, [mod, "(may change files)"], cmd=command(prompt, mod, effort))
+        else:
+            job = Job(
+                "claude",
+                ["(read only)" if read_only else "(may change files)"],
+                cmd=claude_command(prompt, read_only, effort),
+                parse=claude_lines,
+            )
+        # kept in memory only (never in the saved history) for an aider follow-up
+        job.prompt, job.engine, job.read_only, job.mod = prompt, engine, read_only, mod if not read_only else ""
+        job.effort = effort
         JOBS[job.id] = job
     job.persist()
     threading.Thread(target=job.run, daemon=True).start()
@@ -529,12 +834,23 @@ def capture(fn, *args):
     return code, out.getvalue()
 
 
+def mod_metas():
+    """Every mod's mod.json (unreadable ones left out)."""
+    out = []
+    for p in sorted((ROOT / "mods").glob("*/mod.json")):
+        try:
+            out.append(dev.read_json(p))
+        except (OSError, ValueError):
+            continue
+    return out
+
+
 def mod_summary(name):
     folder = ROOT / "mods" / name
     meta = dev.read_json(folder / "mod.json")
     state = dev.load_state(name)
     tweaks = (
-        dev.read_json(folder / "tweaks.json")
+        dev.mod_tweaks.load(folder)
         if (folder / "tweaks.json").is_file()
         else None
     )
@@ -547,6 +863,11 @@ def mod_summary(name):
         "target": meta["target_bundle_id"],
         "app_version": meta.get("tested_app_version", ""),
         "personal": bool(meta.get("personal")),
+        "branding": meta.get("branding", True) is not False,  # the menu's Accretion link, mark and wording
+        # how local builds install on the phone (dev state, never mod.json: store entries keep bundle_id)
+        "install_mode": dev.install_mode(name),
+        "install_bundle": dev.install_bundle(name, meta),
+        "installed_bundle": state.get("installed_bundle"),
         "has_tweaks": tweaks is not None,
         "tweaks": len(tweaks["tweaks"]) if tweaks else 0,
         "hooks": len(hooks),
@@ -555,7 +876,20 @@ def mod_summary(name):
         "dump": bool(dump_dir and (Path(dump_dir) / "out" / "dump.cs").is_file()),
         "last_dylib": state.get("last_dylib"),
         "last_ipa": state.get("last_ipa"),
+        "last_hooks": state.get("last_hooks", True),  # False: the last build was made with --no-hooks
+        "built": last_built(state),
     }
+
+
+def last_built(state):
+    """When the mod was last built: the newest of its last .ipa and .dylib that still exist (epoch seconds), or None."""
+    times = []
+    for key in ("last_ipa", "last_dylib"):
+        try:
+            times.append(Path(state[key]).stat().st_mtime)
+        except (KeyError, TypeError, OSError):
+            pass
+    return max(times) if times else None
 
 
 def mod_detail(name):
@@ -563,11 +897,20 @@ def mod_detail(name):
     meta = dev.read_json(folder / "mod.json")
     data = mod_summary(name)
     data["tweaks_json"] = (
-        dev.read_json(folder / "tweaks.json")
+        dev.mod_tweaks.load(folder)
         if (folder / "tweaks.json").is_file()
         else None
     )
     data["hooks_json"] = dev.load_hooks(folder)["hooks"]
+    data["features"] = []
+    for saved in dev.load_state(name).get("verified_features", []):
+        feature = dict(saved)
+        result = feature.get("verified") or {}
+        status = scan_view.verification_state(result, data["app_version"])
+        if status in {"works", "fails"} and result.get("mod_version") != data["version"]:
+            status = "stale"
+        feature["verification_state"] = status
+        data["features"].append(feature)
     for tweak in (data["tweaks_json"] or {}).get("tweaks", []):
         tweak["verification_state"] = scan_view.verification_state(
             tweak.get("verified"), data["app_version"]
@@ -587,17 +930,25 @@ LOG_ERROR = re.compile(
 
 
 LIVE_STATUS = re.compile(r"\[AccretionMods\] status (\w+) (ok|off|waiting: (.*))$")
+# the runtime's own report (runtime/AMIl2cpp.m): its hook summary once the Unity VM is found, or giving up
+RUNTIME_ATTACHED = re.compile(r"\bhooks: \d+ installed")
+RUNTIME_MISSING = re.compile(r"Unity runtime not found")
 
 
 def live_status(name):
     """Each switch's last state on the phone, from the menu's "status" log lines in Studio's log and run jobs
-    for this mod (oldest job first, so the newest line wins): {key: {"state", "reason"}}, and whether one runs."""
-    states, watching = {}, False
+    for this mod (oldest job first, so the newest line wins): {key: {"state", "reason"}}, whether one runs, and
+    whether the runtime attached to the game ("attached", "not found" or None, from its hooks / not-found line)."""
+    states, watching, runtime = {}, False, None
     for job in sorted(JOBS.values(), key=lambda j: j.started):
         if job.command not in ("log", "run") or job.argv[:1] != [name]:
             continue
         watching = watching or job.status == "running"
         for line in job.lines:
+            if RUNTIME_ATTACHED.search(line):
+                runtime = "attached"
+            elif RUNTIME_MISSING.search(line):
+                runtime = "not found"
             m = LIVE_STATUS.search(line.rstrip())
             if m:
                 state = "waiting" if m.group(2).startswith("waiting") else m.group(2)
@@ -605,7 +956,7 @@ def live_status(name):
                     "state": state,
                     "reason": (m.group(3) or "").strip(),
                 }
-    return {"switches": states, "watching": watching}
+    return {"switches": states, "watching": watching, "runtime": runtime}
 
 
 def mod_context(name):
@@ -641,6 +992,7 @@ def mod_context(name):
         "title": d["title"],
         "version": d["version"],
         "target": d["target"],
+        "branding": d["branding"],
         "app_version": d["app_version"] or "?",
         "personal": d["personal"],
         "dump": d["dump"],
@@ -649,7 +1001,7 @@ def mod_context(name):
         else f"not made yet (am dump {name})",
         "hooks": f"{d['hooks']} hooks, {d['hooks_jit']} need JIT",
         "switches": switches,
-        "works": ", ".join(works) or "none",
+        "works": ", ".join(works + [f["title"] for f in d["features"] if f["verification_state"] == "works"]) or "none",
         "fails": ", ".join(fails) or "none",
         "untested": ", ".join(untested) or "none",
         "log_errors": ("\n" + "\n".join("  " + e for e in errors))
@@ -658,6 +1010,8 @@ def mod_context(name):
         "log_seen": bool(seen_at),
         "newer_bases": d["newer_bases"],
         "last_ipa": d["last_ipa"],
+        "verified_features": d["features"],
+        "learned_workflows": dev.dev_learn.load(dev.patterns_path()).get("workflows", []),
     }
 
 
@@ -746,6 +1100,54 @@ def suggest(name, limit):
     }
 
 
+def store_apps():
+    """Our mods' store ids: the catalogue's and every local mod's bundle id."""
+    ids = []
+    for meta in (ROOT / "mods").glob("*/mod.json"):
+        try:
+            bundle = json.loads(meta.read_text(encoding="utf-8")).get("bundle_id")
+        except (OSError, ValueError):
+            continue
+        for value in (bundle, "io.github.accretionmods." + meta.parent.name):
+            if value and value not in ids:
+                ids.append(value)
+    return ids
+
+
+def store_get(rest):
+    """The AccretionWeb tab's reads: public, admin, endpoints, keys, runs, link, moderation."""
+    root = dev.am_root()
+    if rest == ["public"]:
+        return store_view.public(ROOT)
+    if rest == ["admin"]:
+        return store_view.admin_summary(root, store_apps())
+    if rest == ["endpoints"]:
+        return store_view.endpoints(root)
+    if rest == ["keys"]:
+        try:
+            sign = dev.plumesign()
+        except dev.DevError:
+            sign = None
+        return store_view.keys(root, ROOT, sign, lambda: fetch_client().account())
+    if rest == ["runs"]:
+        return store_view.runs()
+    if rest == ["shots"]:
+        try:
+            return {"shots": shots.listing(ROOT)}
+        except shots.ShotsError as e:
+            raise dev.DevError(str(e)) from e
+    if rest == ["moderation"]:
+        try:
+            return store_view.moderation(root)
+        except RuntimeError as e:
+            raise dev.DevError(str(e)) from e
+    if rest == ["link"]:
+        state = store_view.admin_state(root)
+        return {"status": "linked" if state.get("token") else ("waiting" if state.get("pending") else "none"),
+                "account": state.get("account"), "code": state.get("pending")}
+    raise dev.DevError("unknown store request")
+
+
 def fetch_client():
     return ipa_fetch.Client(dev.am_root())
 
@@ -777,6 +1179,8 @@ def quick(name, command, body):
             "when": "always",
             "threshold": None,
             "via": None,
+            "path": None,
+            "root_class": None,
             "cls": None,
             "multiply": False,
             "field": False,
@@ -822,9 +1226,12 @@ def quick(name, command, body):
     dev._dump_cache.clear() if command == "gen" else None
 
     def change():
-        workspace.snapshot_create(
-            dev.am_root() / "studio", name, dev.mod_dir(name), "before " + command
-        )
+        try:
+            workspace.snapshot_create(
+                dev.am_root() / "studio", name, dev.mod_dir(name), "before " + command
+            )
+        except (OSError, ValueError) as error:  # a snapshot problem never stops the change
+            print(f"(no snapshot: {error})")
         return fn(ns)
 
     cancelled = threading.Event()
@@ -854,12 +1261,12 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def send_file(self, path, ctype):
+    def send_file(self, path, ctype, cache="no-store"):
         data = path.read_bytes()
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", cache)
         self.end_headers()
         self.wfile.write(data)
 
@@ -917,6 +1324,34 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         q = {k: v[-1] for k, v in parse_qs(url.query).items()}
         parts = [p for p in url.path.split("/") if p]
+        if parts == ["api", "ai", "accounts"]:  # names and models only: keys stay in Credential Manager
+            import claude_api
+
+            return self.send_json({"accounts": [{"name": a["name"], "model": a.get("model", "")}
+                                                for a in claude_api.accounts()]})
+        if len(parts) == 4 and parts[:2] == ["api", "mods"] and parts[3] == "install-check":
+            # before Build and run in original-ID mode: is the original game (an app Studio did not install) there?
+            if not (MOD_NAME.fullmatch(parts[2]) and (ROOT / "mods" / parts[2] / "mod.json").is_file()):
+                return self.send_json({"error": "no such mod"}, HTTPStatus.NOT_FOUND)
+            mod, bundle = parts[2], dev.install_bundle(parts[2])
+            try:
+                apps = dev.phone_apps()
+            except dev.DevError as e:
+                return self.send_json({"mode": dev.install_mode(mod), "bundle": bundle, "phone": False, "error": str(e)})
+            return self.send_json({"mode": dev.install_mode(mod), "bundle": bundle, "phone": True,
+                                   "replaces_original": dev.install_mode(mod) == "original"
+                                   and dev.replacing_original(mod, bundle, apps)})
+        if len(parts) == 3 and parts[:2] == ["api", "icons"]:
+            # a game's App Store icon for the Mods list: looked up once for every mod's game, kept on disk
+            others = [m.get("target_bundle_id") for m in mod_metas()]
+            icon = games.icon_file(dev.am_root(), parts[2], others)
+            if not icon:
+                self.send_response(HTTPStatus.NOT_FOUND)
+                self.send_header("Content-Length", "0")
+                self.send_header("Cache-Control", "max-age=3600")
+                self.end_headers()
+                return None
+            return self.send_file(icon, "image/png" if icon.suffix == ".png" else "image/jpeg", "max-age=86400")
         if parts == ["api", "studio"]:
             current = workspace.source_revision(ROOT)
             return self.send_json(
@@ -932,6 +1367,12 @@ class Handler(BaseHTTPRequestHandler):
             )
         if not parts:
             return self.send_file(HERE / "index.html", "text/html; charset=utf-8")
+        if parts == ["menu-image"]:
+            return self.send_file(HERE / "menu_image.html", "text/html; charset=utf-8")
+        if parts == ["app.js"]:
+            return self.send_file(HERE / "app.js", "text/javascript; charset=utf-8")
+        if parts == ["app.css"]:
+            return self.send_file(HERE / "app.css", "text/css; charset=utf-8")
         if parts[0] != "api":
             return self.send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
         if parts[1:] == ["mods"]:
@@ -960,8 +1401,22 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(
                 dev.games_info(q.get("bundle", ""), q.get("region", "us"))
             )
+        if parts[1:2] == ["store"]:
+            return self.send_json(store_get(parts[2:]))
         if parts[1:] == ["fetch", "account"]:
             return self.send_json(fetch_client().account())
+        if parts[1:] == ["appstore", "account"]:
+            return self.send_json(dev.appstore.account())
+        # Keep the .ipa: the default choice, the kept copies, and where a game is sold (public lookup, no account)
+        if parts[1:] == ["appstore", "prefs"]:
+            return self.send_json({"keep": dev.appstore.keep_choice()})
+        if parts[1:] == ["appstore", "kept"]:
+            return self.send_json({"kept": dev.appstore.kept(), "folder": str(dev.appstore.kept_dir())})
+        if parts[1:] == ["appstore", "regions"]:
+            try:
+                return self.send_json(dev.appstore.regions(q.get("bundle", ""), q.get("refresh") == "1"))
+            except dev.appstore.AppStoreError as e:
+                raise dev.DevError(str(e)) from e
         if parts[1:] == ["fetch", "search"]:
             rows = fetch_client().search(
                 q.get("q", "").strip(),
@@ -989,6 +1444,8 @@ class Handler(BaseHTTPRequestHandler):
             with LOCK:
                 if not rest:
                     return self.send_json(mod_detail(name))
+                if rest == ["menu"]:
+                    return self.send_json(menu_image.read(ROOT / "mods" / name))
                 if rest == ["find"]:
                     return self.send_json(
                         find(
@@ -1100,12 +1557,83 @@ class Handler(BaseHTTPRequestHandler):
             self.local_only()
             return self.send_json(
                 start_claude(
-                    str(body.get("prompt", "")), bool(body.get("read_only", True))
+                    str(body.get("prompt", "")),
+                    bool(body.get("read_only", True)),
+                    str(body.get("engine", "claude")),
+                    str(body.get("mod", "")),
+                    str(body.get("effort", "")),
+                    str(body.get("account", "")),
                 ).view()
             )
         if parts == ["api", "console"]:
             self.local_only()
             return self.send_json(console(str(body.get("line", ""))).view())
+        if parts == ["api", "store", "publish"]:
+            self.local_only()
+            return self.send_json(start_store_publish(str(body.get("mod", "")), str(body.get("action", "")),
+                                                      str(body.get("confirm", ""))).view())
+        if parts == ["api", "store", "shots", "image"]:
+            # the Menu image page's PNG, as a link for the mod's post
+            self.local_only()
+            import base64
+            import tempfile
+            mod = self.mod_name(str(body.get("mod", "")))
+            data = base64.b64decode(str(body.get("png", "")), validate=True)
+            if not data.startswith(b"\x89PNG"):
+                raise dev.DevError("not a PNG")
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / f"{mod}-menu.png"
+                path.write_bytes(data)
+                try:
+                    shot = shots.upload_file(ROOT, path, str(body.get("ttl", "1y")), label=f"{mod} menu image")
+                except shots.ShotsError as e:
+                    raise dev.DevError(str(e)) from e
+            state = dev.load_state(mod)
+            state.setdefault("shots", []).insert(0, {"id": shot["id"], "url": shot["url"], "expires_at": shot["expires_at"],
+                                                    "taken": int(time.time())})
+            dev.save_state(mod, state)
+            return self.send_json(shot)
+        if len(parts) == 4 and parts[:3] == ["api", "store", "shots"] and parts[3] in ("phone", "renew", "delete"):
+            self.local_only()
+            try:
+                if parts[3] == "phone":
+                    return self.send_json(shots.phone_shot_for(ROOT, self.mod_name(str(body.get("mod", ""))),
+                                                               str(body.get("ttl", "1y")), dev.load_state, dev.save_state))
+                if parts[3] == "renew":
+                    return self.send_json(shots.renew(ROOT, str(body.get("id", "")), str(body.get("ttl", "1y"))))
+                result = shots.delete(ROOT, str(body.get("id", "")))
+                for meta in (ROOT / "mods").glob("*/mod.json"):  # out of any mod's post links too
+                    state = dev.load_state(meta.parent.name)
+                    if any(s.get("id") == body.get("id") for s in state.get("shots", [])):
+                        state["shots"] = [s for s in state["shots"] if s.get("id") != body.get("id")]
+                        dev.save_state(meta.parent.name, state)
+                return self.send_json(result)
+            except shots.ShotsError as e:
+                raise dev.DevError(str(e)) from e
+        if parts == ["api", "store", "act"]:
+            self.local_only()
+            try:
+                return self.send_json(store_view.act(dev.am_root(), body))
+            except RuntimeError as e:
+                raise dev.DevError(str(e)) from e
+        if len(parts) == 4 and parts[:3] == ["api", "store", "link"] and parts[3] in ("start", "poll", "unlink"):
+            self.local_only()
+            act = {"start": store_view.link_start, "poll": store_view.link_poll, "unlink": store_view.unlink}[parts[3]]
+            try:
+                return self.send_json(act(dev.am_root()))
+            except RuntimeError as e:
+                raise dev.DevError(str(e)) from e
+        if len(parts) == 4 and parts[:2] == ["api", "mods"] and parts[3] == "autobuild":
+            self.local_only()
+            return self.send_json(start_autobuild(self.mod_name(parts[2]), str(body.get("engine", "claude")),
+                                                  int(body.get("limit", 10)), str(body.get("effort", "")),
+                                                  str(body.get("account", ""))).view())
+        if len(parts) == 4 and parts[:2] == ["api", "jobs"] and parts[3] == "followup":
+            self.local_only()
+            job = JOBS.get(parts[2])
+            if not job:
+                return self.send_json({"error": "no such job"}, HTTPStatus.NOT_FOUND)
+            return self.send_json(start_followup(job, str(body.get("mod", ""))).view())
         if len(parts) == 4 and parts[:2] == ["api", "jobs"] and parts[3] == "input":
             self.local_only()
             job = JOBS.get(parts[2])
@@ -1114,29 +1642,98 @@ class Handler(BaseHTTPRequestHandler):
             job.send(str(body.get("text", "")))
             return self.send_json(job.view(len(job.lines)))
         if parts == ["api", "jobs"]:
+            self.local_only()  # builds, signs and installs run on this PC: this PC's Studio page only
             command = body.get("command", "")
             argv = []
             # sign and install take a file, not a mod; new makes the mod; fetch takes an app
             if command not in ("new", "sign", "install", "fetch", "start", "report"):
                 argv.append(self.mod_name(str(body.get("mod", ""))))
             argv += [str(a) for a in body.get("args", [])]
+            if command == "sign" and body.get("mod") and "--mod" not in argv:  # its install mode and installed ID
+                argv += ["--mod", self.mod_name(str(body["mod"]))]
             job = start_job(command, argv)
             return self.send_json(job.view())
         if parts == ["api", "fetch", "login"]:
+            self.local_only()
             user = fetch_client().login(
                 str(body.get("email", "")), str(body.get("password", ""))
             )
             return self.send_json({"user": user})
         if parts == ["api", "fetch", "logout"]:
+            self.local_only()
             fetch_client().logout()
             return self.send_json({"ok": True})
+        # App Store sign-in for the AppStore tab's engine check: the password and code go to Apple, never saved
+        if parts == ["api", "appstore", "login"]:
+            self.local_only()
+            try:
+                return self.send_json(dev.appstore.login(str(body.get("email", "")), str(body.get("password", "")),
+                                                         str(body.get("code", "")).strip()))
+            except dev.appstore.AppStoreError as e:
+                raise dev.DevError(str(e)) from e
+        if parts == ["api", "appstore", "logout"]:
+            self.local_only()
+            dev.appstore.logout()
+            return self.send_json({"ok": True})
+        if parts[:2] == ["api", "appstore"] and parts[2:] in (["prefs"], ["versions"], ["version"], ["keep"], ["forget"]):
+            self.local_only()
+            what = parts[2]
+            try:
+                if what == "prefs":
+                    return self.send_json({"keep": dev.appstore.set_keep_choice(str(body.get("keep", "")))})
+                if what == "versions":
+                    return self.send_json(dev.appstore.versions(str(body.get("id", ""))))
+                if what == "version":
+                    return self.send_json(dev.appstore.version_info(str(body.get("id", "")), str(body.get("version_id", ""))))
+                if what == "forget":
+                    return self.send_json(dev.appstore.forget(str(body.get("file", ""))))
+                job = start_appstore_keep(str(body.get("id", "")), str(body.get("bundle", "")),
+                                          str(body.get("version_id", "") or ""), body.get("license") is True)
+                return self.send_json(job.view(0))
+            except dev.appstore.NeedsLicense:
+                return self.send_json({"needs_license": True})
+            except dev.appstore.AppStoreError as e:
+                raise dev.DevError(str(e)) from e
+        if parts == ["api", "games", "engine"]:  # license: true only after the owner said yes for this game
+            self.local_only()
+            return self.send_json(dev.games_engine(str(body.get("id", "")), str(body.get("bundle", "")),
+                                                   body.get("license") is True))
         if len(parts) == 4 and parts[:2] == ["api", "jobs"] and parts[3] == "stop":
+            self.local_only()
             job = JOBS.get(parts[2])
             if not job:
                 return self.send_json({"error": "no such job"}, HTTPStatus.NOT_FOUND)
             job.stop()
             return self.send_json(job.view(len(job.lines)))
+        if len(parts) == 4 and parts[:2] == ["api", "mods"] and parts[3] == "branding":
+            # mod.json "branding": the menu's getaccretion.app link, mark by the title and "Made by Accretion." in this
+            # mod's next build (scripts/build.sh), and with them the Accretion account (Log in, Cloud saves)
+            self.local_only()
+            if not (MOD_NAME.fullmatch(parts[2]) and (ROOT / "mods" / parts[2] / "mod.json").is_file()):
+                return self.send_json({"error": "no such mod"}, HTTPStatus.NOT_FOUND)
+            path = ROOT / "mods" / parts[2] / "mod.json"
+            meta = dev.read_json(path)
+            if body.get("on") is True:
+                meta.pop("branding", None)  # the default: shown
+            elif body.get("on") is False:
+                meta["branding"] = False
+            else:
+                return self.send_json({"error": "on: true or false"}, HTTPStatus.BAD_REQUEST)
+            dev.write_json(path, meta)
+            return self.send_json({"branding": body["on"]})
+        if len(parts) == 4 and parts[:2] == ["api", "mods"] and parts[3] == "install-mode":
+            # original (the game's own ID) or separate (mod.json's bundle_id beside the original), for local builds
+            self.local_only()
+            if not (MOD_NAME.fullmatch(parts[2]) and (ROOT / "mods" / parts[2] / "mod.json").is_file()):
+                return self.send_json({"error": "no such mod"}, HTTPStatus.NOT_FOUND)
+            if body.get("mode") not in dev.INSTALL_MODES:
+                return self.send_json({"error": "mode: original or separate"}, HTTPStatus.BAD_REQUEST)
+            state = dev.load_state(parts[2])
+            state["install_mode"] = body["mode"]
+            dev.save_state(parts[2], state)
+            return self.send_json({"install_mode": body["mode"], "install_bundle": dev.install_bundle(parts[2])})
         if len(parts) == 4 and parts[:2] == ["api", "mods"] and parts[3] in QUICK:
+            self.local_only()
             name = self.mod_name(parts[2])
             result = quick(name, parts[3], body)
             result["mod"] = mod_detail(name)

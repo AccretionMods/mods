@@ -14,7 +14,7 @@ def source_revision(root):
     root = Path(root)
     digest = hashlib.sha256()
     for folder, patterns in (
-        ("studio", ("*.py", "*.html", "prompts.json")),
+        ("studio", ("*.py", "*.html", "*.js", "*.css", "prompts.json")),
         ("scripts", ("*.py",)),
     ):
         paths = {p for pattern in patterns for p in (root / folder).glob(pattern)}
@@ -187,21 +187,50 @@ def _snapshot_summary(data):
 def snapshot_create(
     state_root: Path, mod_name: str, mod_folder: Path, label="manual"
 ) -> dict:
-    identifier = uuid.uuid4().hex
-    path = _snapshot_path(state_root, mod_name, identifier)
     if not isinstance(label, str) or len(label) > 200:
         raise ValueError("Snapshot label must be text of at most 200 characters")
+    files = _source_state(mod_folder)
+    # the same files as the newest snapshot: nothing new to keep (repeated builds would push real history out)
+    latest = _latest_snapshot(state_root, mod_name)
+    if latest is not None and latest.get("files") == files:
+        return _snapshot_summary(latest)
+    identifier = uuid.uuid4().hex
+    path = _snapshot_path(state_root, mod_name, identifier)
     data = {
         "version": 1,
         "id": identifier,
         "mod": mod_name,
         "label": label,
         "created_at": datetime.now(UTC).isoformat(),
-        "files": _source_state(mod_folder),
+        "files": files,
     }
     # Recovery snapshots may contain temporarily invalid edited configs; restoration validates them.
     atomic_json(path, data)
+    snapshot_prune(state_root, mod_name)
     return _snapshot_summary(data)
+
+
+def _latest_snapshot(state_root, mod_name):
+    """The newest snapshot of a mod as stored, or None (no folder yet, or it can't be read)."""
+    folder = _snapshot_dir(state_root, mod_name)
+    paths = sorted(folder.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True) if folder.is_dir() else []
+    for path in paths[:1]:
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+    return None
+
+
+SNAPSHOT_KEEP = 30  # per mod: a few days of Add, Pin and builds (each can be a megabyte)
+
+
+def snapshot_prune(state_root, mod_name, keep=SNAPSHOT_KEEP):
+    """Only the newest `keep` snapshots of a mod stay (by file time; a restore's recovery snapshot is new)."""
+    folder = _snapshot_dir(state_root, mod_name)
+    paths = sorted(folder.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for old in paths[keep:]:
+        old.unlink(missing_ok=True)
 
 
 def snapshot_list(state_root, mod_name) -> list:
