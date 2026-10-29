@@ -31,6 +31,44 @@ def _main_binary(z, app):
     return info, f"{app}/{info.get('CFBundleExecutable', '')}"
 
 
+def _strings_value(data, key):
+    """key's value in an InfoPlist.strings file (binary/XML plist, or the "key" = "value"; text form)."""
+    import plistlib
+
+    try:
+        return plistlib.loads(data).get(key)
+    except Exception:  # noqa: BLE001 - not a plist: the text form below
+        pass
+    enc = "utf-16" if data[:2] in (b"\xff\xfe", b"\xfe\xff") else "utf-8"
+    m = re.search(r'"?%s"?\s*=\s*"((?:[^"\\]|\\.)*)"\s*;' % re.escape(key), data.decode(enc, "ignore"))
+    return m.group(1) if m else None
+
+
+def app_name(z, app, info):
+    """The app's name as an English iPhone shows it: en.lproj's display name when the app has one (a game made
+    in Japan can have ミラハイ as its base name and "Mirrors High" in English), else the Info.plist name."""
+    for lang in ("en", "Base", "en_US", "en-US", "English"):
+        try:
+            data = z.read(f"{app}/{lang}.lproj/InfoPlist.strings")
+        except KeyError:
+            continue
+        for key in ("CFBundleDisplayName", "CFBundleName"):
+            name = _strings_value(data, key)
+            if name and name.strip():
+                return name.strip()
+    return info.get("CFBundleDisplayName") or info.get("CFBundleName")
+
+
+def slug(name, bundle=None):
+    """A mod folder's first part from an app name (lowercase letters, digits, dashes); a name with no Latin
+    letters falls back to the bundle ID's last part, then "game"."""
+    for text in (name, (bundle or "").rsplit(".", 1)[-1]):
+        s = re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")
+        if s:
+            return s
+    return "game"
+
+
 def _encrypted(binary):
     for cmd, size in ((0x21, 20), (0x2C, 24)):
         for m in re.finditer(re.escape(struct.pack("<II", cmd, size)), binary):
@@ -68,9 +106,10 @@ def inspect_ipa(path):
             if found:
                 markers[kind] = found
         size = sum(i.file_size for i in z.infolist())
+        name = app_name(z, app, info)
     return {
         "bundle": info.get("CFBundleIdentifier"),
-        "name": info.get("CFBundleDisplayName") or info.get("CFBundleName"),
+        "name": name,
         "version": info.get("CFBundleShortVersionString"),
         "decrypted": decrypted,
         "engine": engine,
