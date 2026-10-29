@@ -25,7 +25,7 @@ def macho(cryptid):
     return struct.pack("<IiiIIIII", 0xFEEDFACF, 0x0100000C, 0, 2, 1, len(cmd), 0, 0) + cmd
 
 
-def ipa(path, unity=True, cryptid=0, metadata=b"", bundle="com.example.game"):
+def ipa(path, unity=True, cryptid=0, metadata=b"", bundle="com.example.game", exports=True):
     with zipfile.ZipFile(path, "w") as z:
         app = "Payload/Game.app"
         z.writestr(f"{app}/Info.plist", plistlib.dumps({"CFBundleIdentifier": bundle, "CFBundleExecutable": "Game",
@@ -33,6 +33,8 @@ def ipa(path, unity=True, cryptid=0, metadata=b"", bundle="com.example.game"):
         z.writestr(f"{app}/Game", macho(cryptid))
         if unity:
             z.writestr(f"{app}/Frameworks/UnityFramework.framework/Info.plist", b"x")
+            z.writestr(f"{app}/Frameworks/UnityFramework.framework/UnityFramework",
+                       macho(0) + (b"_il2cpp_domain_get\0_il2cpp_init\0" if exports else b"_sub_1234\0"))
             z.writestr(f"{app}/Data/Managed/Metadata/global-metadata.dat",
                        struct.pack("<Ii", 0xFAB11BAF, 39) + metadata)
     return path
@@ -62,6 +64,11 @@ class Report(unittest.TestCase):
         self.assertEqual(moddability.verdict(f)[0], "good")
         f = moddability.inspect_ipa(ipa(self.dir / "n.ipa", unity=False))
         self.assertEqual((f["engine"], moddability.verdict(f)[0]), ("native or another engine", "not supported"))
+        f = moddability.inspect_ipa(ipa(self.dir / "s.ipa", exports=False))  # BLEACH Mirrors High 1.0.1
+        level, lines = moddability.verdict(f)
+        self.assertEqual((f["il2cpp_exports"], level), (False, "not supported"))
+        self.assertIn("Unity runtime not found", lines[0])
+        self.assertTrue(moddability.inspect_ipa(ipa(self.dir / "x.ipa"))["il2cpp_exports"])
         f = moddability.inspect_ipa(ipa(self.dir / "e.ipa", cryptid=1))
         level, lines = moddability.verdict(f)
         self.assertEqual(level, "not supported")
