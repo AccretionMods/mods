@@ -67,6 +67,35 @@ class Report(unittest.TestCase):
         self.assertEqual(level, "not supported")
         self.assertIn("encrypted", lines[0])
 
+    def test_name_is_the_english_one_and_slugs_are_never_empty(self):
+        game = ipa(self.dir / "jp.ipa", bundle="jp.co.example.BNEI0455")
+        with zipfile.ZipFile(game, "a") as z:  # base name Japanese, English in en.lproj (text form, UTF-16)
+            info = {"CFBundleIdentifier": "jp.co.example.BNEI0455", "CFBundleExecutable": "Game",
+                    "CFBundleDisplayName": "ミラハイ"}
+            z.writestr("Payload/Game.app/Info.plist", plistlib.dumps(info))
+            z.writestr("Payload/Game.app/en.lproj/InfoPlist.strings",
+                       '/* name */\n"CFBundleDisplayName" = "Mirrors High";\n'.encode("utf-16"))
+        f = moddability.inspect_ipa(game)
+        self.assertEqual((f["name"], moddability.slug(f["name"], f["bundle"])), ("Mirrors High", "mirrors-high"))
+        self.assertEqual(moddability.slug("ミラハイ", "jp.co.example.BNEI0455"), "bnei0455")
+        self.assertEqual(moddability.slug("ミラハイ"), "game")
+        row = next(r for r in self._local_ipas(game) if r["path"] == str(game))
+        self.assertEqual((row["name"], row["slug"]), ("Mirrors High", "mirrors-high"))
+
+    def _local_ipas(self, game):
+        old = os.environ.get("AM_ROOT")
+        (self.dir / "am" / "intake").mkdir(parents=True, exist_ok=True)
+        os.environ["AM_ROOT"] = str(self.dir / "am")
+        try:
+            moved = self.dir / "am" / "intake" / game.name
+            game.replace(moved)
+            return [dict(r, path=str(game)) if r["path"] == str(moved) else r for r in dev.local_ipas()]
+        finally:
+            if old is None:
+                os.environ.pop("AM_ROOT", None)
+            else:
+                os.environ["AM_ROOT"] = old
+
     def test_dev_report_and_start(self):
         root = self.dir / "am"
         repo = self.dir / "repo"

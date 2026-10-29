@@ -1631,9 +1631,9 @@ const App = {
     const opts = [["", "choose a decrypted .ipa from intake/ or Downloads…"], ...ipas.map(i => [i.path, `${i.name} ${i.version} · ${i.bundle} · ${this.mb(i.size)}${i.fetched ? " · decrypt site" : ""}`])];
     this.dialog("New personal mod", [
       { type: "note", text: "Makes mods/<name>/ from a decrypted .ipa of the game, then dumps it. Nothing is uploaded. No copy yet? Close this and use Get .ipa." },
-      { name: "name", label: "Folder name", help: "lowercase letters, digits, dashes", value: base ? (base.name || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") + "-plus" : "", placeholder: "my-game-plus", mono: true },
+      { name: "name", label: "Folder name", help: "lowercase letters, digits, dashes", value: base ? this.modSlug(base) + "-plus" : "", placeholder: "my-game-plus", mono: true },
       { name: "title", label: "Menu title", value: base ? (base.name || "") + "+" : "", placeholder: "My Game+" },
-      { name: "pick", label: "Base .ipa", type: "select", options: opts, value: base ? base.path : "", onchange: i => { if (i.pick.value) { const row = ipas.find(x => x.path === i.pick.value); i.path.value = i.pick.value; if (!i.title.value) i.title.value = row.name + "+"; if (!i.name.value) i.name.value = row.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") + "-plus"; } } },
+      { name: "pick", label: "Base .ipa", type: "select", options: opts, value: base ? base.path : "", onchange: i => { if (i.pick.value) { const row = ipas.find(x => x.path === i.pick.value); i.path.value = i.pick.value; if (!i.title.value) i.title.value = row.name + "+"; if (!i.name.value) i.name.value = this.modSlug(row) + "-plus"; } } },
       { name: "path", label: "or a path", value: base ? base.path : "", mono: true },
     ], async v => {
       if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(v.name)) { this.toast("name: lowercase letters, digits and dashes", "bad"); return false; }
@@ -1641,6 +1641,11 @@ const App = {
       await this.job("new", [v.name, v.path, "--title", v.title || v.name]);
       return true;
     }, "Create and dump");
+  },
+
+  // a base .ipa's folder-name start: the server's slug (English name, else the bundle ID's last part)
+  modSlug(row) {
+    return row.slug || (row.name || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || (row.bundle || "").split(".").pop().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "game";
   },
 
   // ---------------------------------------------------------------- get .ipa (decrypt site)

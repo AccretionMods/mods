@@ -1299,8 +1299,9 @@ def cmd_new(args):
     ipa = Path(args.ipa)
     if not ipa.is_file():
         raise DevError(f"no file at {ipa}")
-    info, _ = ipa_info(ipa)
-    app = info.get("CFBundleDisplayName") or info.get("CFBundleName") or "App"
+    info, prefix = ipa_info(ipa)
+    with zipfile.ZipFile(ipa) as z:
+        app = moddability.app_name(z, prefix, info) or "App"
     target = info["CFBundleIdentifier"]
     version = info.get("CFBundleShortVersionString") or "1.0"
     title = args.title or f"{app}+"
@@ -2393,14 +2394,17 @@ def local_ipas():
             continue
         for ipa in sorted(folder.glob("*.ipa")):
             try:
-                info, _ = ipa_info(ipa)
+                info, prefix = ipa_info(ipa)
+                with zipfile.ZipFile(ipa) as z:
+                    name = moddability.app_name(z, prefix, info)
             except Exception:  # noqa: BLE001 - a broken file in Downloads is skipped
                 continue
             rows.append(
                 {
                     "path": str(ipa),
                     "bundle": info.get("CFBundleIdentifier"),
-                    "name": info.get("CFBundleDisplayName") or info.get("CFBundleName"),
+                    "name": name,
+                    "slug": moddability.slug(name, info.get("CFBundleIdentifier")),
                     "version": info.get("CFBundleShortVersionString"),
                     "size": ipa.stat().st_size,
                     "fetched": ipa.with_name(ipa.name + ".source.json").is_file(),
@@ -2661,8 +2665,7 @@ def cmd_start(args):
     print(moddability.report_text(facts))
     if level == "not supported":
         raise DevError("stopped: this game can't be modded with our tools (see the verdict)")
-    slug = re.sub(r"[^a-z0-9]+", "-", (facts["name"] or facts["bundle"]).lower()).strip("-") or "game"
-    name = args.name or f"{slug}-plus"
+    name = args.name or f"{moddability.slug(facts['name'], facts['bundle'])}-plus"
     existing = [m["name"] for m in mods_by_target().get(facts["bundle"], [])]
     if existing and not args.name:
         raise DevError(f"{facts['bundle']} already has mods/{existing[0]}: open it, or pass --name for another one")
