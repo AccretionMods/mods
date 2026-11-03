@@ -326,6 +326,13 @@ class RecoveredJob:
         raise dev.DevError("This job is already archived")
 
 
+def job_last_line(job):
+    """A job that ended without success: its last non-empty output line (why it failed); else ""."""
+    if job.status in ("done", "queued", "running", "stopping"):
+        return ""
+    return next((line.strip() for line in reversed(job.lines) if line.strip()), "")
+
+
 def start_job(command, argv, interactive=False):
     if command not in JOB_COMMANDS and not (
         interactive and command in console_commands()
@@ -1428,8 +1435,9 @@ class Handler(BaseHTTPRequestHandler):
             if len(parts) == 2:
                 return self.send_json(
                     {
+                        # no output in the list; a job that failed brings its last line, so the page says why
                         "jobs": [
-                            j.view(len(j.lines))
+                            dict(j.view(len(j.lines)), last=job_last_line(j))
                             for j in sorted(JOBS.values(), key=lambda j: j.started)
                         ]
                     }

@@ -3,12 +3,18 @@ Read first when resuming. Project row in `~/PROJECTS.md`. The handbook rules (`.
 this lives in the AccretionMods/mods repo, so nothing personal, no secrets, neutral commits, PRs with auto-merge.
 
 ## What it is
-Workspace layout (2026-10-26): stage nav on the left (Make / Ship / Tools, same tab buttons), the Mods
-list in a drawer opened from the header's mod button, a status strip on every tab (dump, last build, runtime on the
-phone, switches confirmed), "Build and run on the phone" in the header, an "On the phone" panel (live switch states,
-Watch / Push / Screenshot) and the jobs list as a bottom dock (3 newest as chips, open state in `studio.jobs.open`).
-`/api/mods/<mod>/live` gained `runtime` ("attached" / "not found" / null). Checked in the browser at 1440 px (dark,
-light), 800 px and 375 px. Design canvas with the next steps (guided phone test, one-switch editor): handbook HANDOFF.
+Workspace layout (2026-11-03, owner's choices): the Mods list on the left; tabs on top in two groups, "This mod"
+(Switches, Find, Suggest, Scan, Build & phone, Files) and "Studio" (AppStore, AccretionWeb, Console), in normal case;
+on the mod's tabs its name, branding switch and Install as sit above the status cards (dump, last build, runtime on the
+phone, switches confirmed); Studio's tabs show neither. The header holds only Studio-wide actions plus "Build and run
+on the phone", which also stays in the Switches tab's "Try it on the phone" box; Build & phone has the single steps
+(sign + install, read the log for N s). An "On the phone" panel (live switch states, Watch / Push / Screenshot) and the
+jobs list as a bottom dock (newest chips, one on a phone; open state in `studio.jobs.open`; the page leaves room for it
+through CSS `--dock-h`). Job rows: Stop only while running, start time and duration, a failed job's last line (the jobs
+list sends it as `last`). Remove is under each switch's ⋯ menu. Tab help is one line with More. (The 2026-10-26 stage
+nav was replaced by top tabs the same day, `cb217ee`.) Checked in the browser at 1440 px (dark, light) and 375 px.
+`/api/mods/<mod>/live` has `runtime` ("attached" / "not found" / null). Design canvas with the next steps (guided phone
+test, one-switch editor): handbook HANDOFF.
 Auto-build includes all topics in its candidate selection, model prompt and confirmation dialog.
 Existing targets and inspect-only entries remain excluded; automatic additions still require a valid no-JIT pin.
 Custom always-on features can be recorded in local `AM_ROOT/dev/<mod>.json` under `verified_features`.

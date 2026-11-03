@@ -53,7 +53,8 @@ class PageContract(unittest.TestCase):
 
     def test_every_flag_the_page_writes_exists_in_dev_py(self):
         known = set().union(*dev_commands().values())
-        for flag in set(re.findall(r'"(--[a-z][a-z-]*)"', APP)):
+        # a CSS custom property set from the script ("--dock-h") is not a flag
+        for flag in set(re.findall(r'(?<!setProperty\()"(--[a-z][a-z-]*)"', APP)):
             self.assertIn(flag, known, f"app.js writes {flag}, which no dev.py command takes")
 
     @unittest.skipUnless(shutil.which("node"), "node isn't installed")

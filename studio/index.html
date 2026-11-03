@@ -12,7 +12,7 @@
 <div class="light a"></div><div class="light b"></div>
 <header>
   <div class="brand"><span class="live"></span><b>ACCRETION</b>/ mod studio</div>
-  <div class="sel" id="sel">no mod selected</div>
+  <span class="grow"></span>
   <button id="runPhone" class="primary" title="build the .ipa, sign it, install it, open the game and read its log" disabled>Build and run on the phone</button>
   <button id="getBtn">Get .ipa</button>
   <button id="newBtn">New mod</button>
@@ -28,17 +28,26 @@
   </aside>
   <main class="card">
     <div class="tabs" id="tabs">
-      <button data-tab="switches" class="active">Switches<span class="n" id="navCount"></span></button>
-      <button data-tab="find">Find</button>
-      <button data-tab="suggest">Suggest</button>
-      <button data-tab="scan">Scan</button>
-      <button data-tab="phone">Build &amp; Phone</button>
-      <button data-tab="files">Files</button>
-      <button data-tab="games">AppStore</button>
-      <button data-tab="store">AccretionWeb</button>
-      <button data-tab="console">Console</button>
+      <div class="tabgrp" role="group" aria-label="This mod">
+        <span class="tabgrp-l">This mod</span>
+        <button data-tab="switches" class="active">Switches<span class="n" id="navCount"></span></button>
+        <button data-tab="find">Find</button>
+        <button data-tab="suggest">Suggest</button>
+        <button data-tab="scan">Scan</button>
+        <button data-tab="phone">Build &amp; phone</button>
+        <button data-tab="files">Files</button>
+      </div>
+      <div class="tabgrp" role="group" aria-label="Studio">
+        <span class="tabgrp-l">Studio</span>
+        <button data-tab="games">AppStore</button>
+        <button data-tab="store">AccretionWeb</button>
+        <button data-tab="console">Console</button>
+      </div>
     </div>
-    <div class="status hidden" id="statusStrip" aria-label="This mod's state"></div>
+    <div id="modHead">
+      <div class="modhead" id="sel">No mod selected</div>
+      <div class="status hidden" id="statusStrip" aria-label="This mod's state"></div>
+    </div>
     <section id="tab-switches"></section>
     <section id="tab-find" class="hidden"></section>
     <section id="tab-suggest" class="hidden"></section>
