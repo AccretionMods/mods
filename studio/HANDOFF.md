@@ -85,11 +85,13 @@ chose a local web app in this repo over a desktop app, a Claude panel or an iOS 
   `.git/info/exclude`.
 - The page is `studio/index.html` + `app.js` + `app.css`; `tests/test_studio_page.py` holds `app.js` to the job
   commands and flags the server and `dev.py` have, and CI runs `node --check studio/app.js`.
-- Splitting `dev.py`: signing, installing and the phone are in `scripts/dev_signing.py`. Pattern for the next
-  piece: the module calls its own functions directly, reaches dev.py's basics (`mod_dir`, `load_state`, `am_root`,
-  `WINDOWS`...) as `dev.<name>` when a function runs, and does `import dev` on its last line; dev.py re-exports its
-  names; tests patch its functions on the new module. Next candidates: log/push/test (~215 lines), post/share/report
-  (~200), dump/scan/find (~390, most test patches).
+- Splitting `dev.py`: signing, installing and the phone are in `scripts/dev_signing.py`; the live phone loop
+  (push, snap, snap-diff, log, test) in `scripts/dev_live.py`. Pattern for the next piece: the module calls its own
+  functions directly, reaches dev.py's basics (`mod_dir`, `load_state`, `am_root`, `WINDOWS`...) as `dev.<name>`
+  and another split-out module's as `dev_signing.<name>` when a function runs, and does `import dev` on its last
+  line; dev.py re-exports its names; tests patch its functions on the new module. Run as a script, dev.py registers
+  itself as `dev` first, so the modules' errors reach main() (`tests/test_dev_cli.py` ScriptErrors). Next
+  candidates: post/share/report (~200 lines), dump/scan/find (~390, most test patches).
 - One task, one branch: off `codex/studio-feature-scope` until PR #83 merges, then off `main`. The detection
   layer's older local copy (design docs, probe app) is on the local-only branch `detection-layer`; the push guard
   refuses it (`git config --get-all pushguard.localOnly`).
