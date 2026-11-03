@@ -286,5 +286,20 @@ class NoHooks(unittest.TestCase):
         self.assertLess(source.index("#define AM_NO_HOOKS 0"), source.index('__has_include("AMDetectionProfile.gen.h")'))
 
 
+class ScriptErrors(unittest.TestCase):
+    """Run as a script, an error raised in a split-out module (dev_signing, dev_live) is one dev.py: line, not a
+    traceback: their `import dev` gets the running script, not a second copy with its own DevError."""
+
+    def test_split_out_commands_report_errors_as_one_line(self):
+        import subprocess
+        script = Path(__file__).resolve().parents[1] / "scripts" / "dev.py"
+        for command in ("install-mode", "push", "log"):
+            with self.subTest(command=command):
+                r = subprocess.run([sys.executable, str(script), command, "no-such-mod-xyz"],
+                                   stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60)
+                self.assertEqual(r.returncode, 1)
+                self.assertEqual(r.stderr.strip(), "dev.py: no mods/no-such-mod-xyz/mod.json")
+
+
 if __name__ == "__main__":
     unittest.main()
