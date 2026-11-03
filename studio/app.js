@@ -23,6 +23,17 @@ const App = {
     setTimeout(() => t.remove(), kind === "bad" ? 9000 : 4500);
   },
   byId(id) { return document.getElementById(id); },
+  // a tab's help: one plain line, the details one click away
+  hint(short, more) {
+    return this.el("div", { class: "hint" }, short, more ? this.el("details", { class: "hintmore" }, this.el("summary", { text: "More" }), this.el("p", { text: more })) : null);
+  },
+  // "running…" with the seconds counting, for a request that takes a while (Suggest, Scan)
+  waiting(text) {
+    const p = this.el("p", { class: "hint waiting" }, this.el("span", { class: "spin", "aria-hidden": "true" }), this.el("span", { text }));
+    const t0 = Date.now(), tick = this.el("span", { class: "muted" }); p.append(tick);
+    const timer = setInterval(() => { if (!p.isConnected) return clearInterval(timer); const s = Math.round((Date.now() - t0) / 1000); if (s >= 2) tick.textContent = ` ${s} s`; }, 1000);
+    return p;
+  },
   hex(n) { return "0x" + Number(n).toString(16).toUpperCase(); },
   mb(n) { return (n / 1e6).toFixed(1) + " MB"; },
 
@@ -95,7 +106,8 @@ const App = {
       }
       const badges = [
         m.personal ? this.el("span", { class: "badge", text: "personal" }) : null,
-        this.el("span", { class: "badge accent", text: `${m.hooks} hooks${m.hooks_jit ? ", " + m.hooks_jit + " JIT" : ""}` }),
+        // a hooks count only when there are any: most mods are pins only, and a highlighted "0" drew the eye
+        m.hooks ? this.el("span", { class: "badge accent", text: `${m.hooks} hooks${m.hooks_jit ? ", " + m.hooks_jit + " JIT" : ""}` }) : null,
         m.has_tweaks ? this.el("span", { class: "badge", text: m.tweaks + " switches" }) : this.el("span", { class: "badge warn", text: "hand-written" }),
         this.el("span", { class: "badge " + (m.dump ? "good" : "bad"), text: m.dump ? "dump" : "no dump" }),
       ];
@@ -104,7 +116,8 @@ const App = {
         // the game's App Store icon, cached by Studio (/api/icons: one lookup for every mod, kept on disk a month)
         this.el("div", { class: "head" },
           this.el("img", { class: "icon", src: `/api/icons/${encodeURIComponent(m.target)}`, alt: "", loading: "lazy", decoding: "async",
-                           onerror: ev => { ev.target.style.visibility = "hidden"; } }),
+                           // no icon: the game's initials in the same tile instead of an empty square
+                           onerror: ev => { ev.target.replaceWith(this.el("span", { class: "icon initials", "aria-hidden": "true", text: (m.title || m.name).replace(/[^\p{L}\p{N} ]/gu, "").split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join("").toUpperCase() || "?" })); } }),
           this.el("div", {},
             this.el("div", { class: "t", text: `${m.title} ${m.version}` }),
             compact ? null : this.el("div", { class: "s", text: `${m.target} ${m.app_version}` }),
@@ -135,8 +148,12 @@ const App = {
         this.toast(branding.checked ? "Next build: Accretion's link, mark and wording are back in the menu" : "Next build: no Accretion link, mark, wording, Log in or Cloud saves in the menu: only the switches and Display", "ok");
       } catch (e) { branding.checked = !branding.checked; this.toast(e.message, "bad"); }
     });
-    this.byId("sel").replaceChildren(this.el("b", { text: `${d.title} ${d.version}` }), ` · ${d.target} ${d.app_version}`,
-      this.el("label", { class: "muted small", style: "margin:0 0 0 12px;display:inline-flex;gap:6px;align-items:center", title: "The mod menu's \"More at getaccretion.app ›\" link, the Accretion mark by the title and \"Made by Accretion.\" Off: this mod's next build has none of them and no Accretion account either: no Log in, no Cloud saves (mod.json branding: false). The switches and Display stay." }, branding, "Accretion branding in the menu"));
+    // the mod's name and its own settings above its tabs; the header keeps only Studio-wide actions
+    const settings = this.el("div", { class: "row modset" },
+      this.el("label", { class: "inline", title: "The mod menu's \"More at getaccretion.app ›\" link, the Accretion mark by the title and \"Made by Accretion.\" Off: this mod's next build has none of them and no Accretion account either: no Log in, no Cloud saves (mod.json branding: false). The switches and Display stay." }, branding, "Accretion branding in the menu"));
+    this.byId("sel").replaceChildren(
+      this.el("div", { class: "modtitle" }, this.el("b", { text: `${d.title} ${d.version}` }), this.el("span", { class: "mono muted small", text: `${d.target} ${d.app_version}` })),
+      settings);
     // how this mod installs on the phone: the game's own ID (recommended) or a separate copy beside it. Local
     // builds only (dev state): store entries and releases keep mod.json's bundle_id
     const mode = this.el("select", { title: `Install ID for local builds: ${d.install_bundle}`, "aria-label": "Install as" },
@@ -151,7 +168,7 @@ const App = {
                                                  : `Next build installs as a separate copy (${r.install_bundle}) beside the original`, "ok");
       } catch (e) { mode.value = this.detail.install_mode; this.toast(e.message, "bad"); }
     });
-    this.byId("sel").append(this.el("label", { class: "muted small", style: "margin:0 0 0 12px;display:inline-flex;gap:6px;align-items:center" }, "Install as", mode));
+    settings.append(this.el("label", { class: "inline" }, "Install as", mode));
     this.byId("runPhone").disabled = false;
     const tweaks = (d.tweaks_json || {}).tweaks || [];
     this.byId("navCount").textContent = tweaks.length ? String(tweaks.length) : "";
@@ -224,14 +241,17 @@ const App = {
       const st = det.querySelector("[id^=jobst-]"), status = st ? st.textContent : "";
       const dot = ["queued", "running", "stopping"].includes(status) ? "run" : status === "done" ? "ok" : "bad";
       const name = det.querySelector("summary .mono");
-      return this.el("button", { class: "jchip", type: "button", title: status, onclick: () => { this.openJobs(true); det.open = true; det.scrollIntoView({ block: "nearest" }); } },
+      return this.el("button", { class: "jchip", type: "button", title: status + (det.dataset.why ? ": " + det.dataset.why : ""), onclick: () => { this.openJobs(true); det.open = true; det.scrollIntoView({ block: "nearest" }); } },
         this.el("span", { class: "jdot " + dot }), (name ? name.textContent : "job").slice(0, 48));
     }));
   },
+  studioTabs: ["games", "store", "console"],
   setTab(tab) {
     this.tab = tab;
     document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
     for (const s of ["switches", "find", "suggest", "scan", "phone", "files", "games", "store", "console"]) this.byId("tab-" + s).classList.toggle("hidden", s !== tab);
+    // the mod's name, settings and status cards belong to its own tabs, not to Studio-wide ones
+    this.byId("modHead").classList.toggle("hidden", this.studioTabs.includes(tab));
     this.render();
   },
   render() {
@@ -347,7 +367,11 @@ const App = {
           localStorage.setItem("studio.q." + this.mod, pattern); this.byId("tab-find").dataset.mod = "";
           this.findRows=[]; this.fieldHits=null; this.findFields=null; this.setTab("find");
         }}, "Review no-JIT alternatives") : null,
-        this.el("button", { class: "small ghost danger", onclick: () => { if (confirm(`Remove "${t.title}" and the hooks only it uses?`)) this.quick("remove", { what: t.key }); } }, "Remove")));
+        this.el("span", { class: "grow" }),
+        // Remove sits under the row's menu, away from Works / Fails
+        this.el("details", { class: "more rowmenu" }, this.el("summary", { "aria-label": `More for ${t.title}`, text: "⋯" }),
+          this.el("div", { class: "menu" },
+            this.el("button", { class: "danger", onclick: ev => { ev.target.closest("details").open = false; if (confirm(`Remove "${t.title}" and the hooks only it uses?`)) this.quick("remove", { what: t.key }); } }, "Remove this switch")))));
   },
   async quick(command, body) {
     try {
@@ -487,7 +511,7 @@ const App = {
     if (!this.detail.dump) { box.append(this.needDump()); return; }
     const q = this.el("input", { class: "grow mono", placeholder: "regex on Class.method, e.g. Damage|Health", value: localStorage.getItem("studio.q." + this.mod) || "" });
     const cls = this.el("input", { class: "mono", placeholder: "class (every method, or its fields)", style: "width:230px" });
-    const limit = this.el("input", { type: "number", value: "60", style: "width:80px", title: "limit" });
+    const limit = this.el("input", { type: "number", value: "60", min: "1", style: "width:72px", "aria-label": "How many results to show" });
     const search = async (mode) => {
       try {
         localStorage.setItem("studio.q." + this.mod, q.value);
@@ -500,10 +524,11 @@ const App = {
     };
     q.addEventListener("keydown", ev => { if (ev.key === "Enter") search("q"); });
     cls.addEventListener("keydown", ev => { if (ev.key === "Enter") search("class"); });
-    box.append(this.el("div", { class: "row" }, q, this.el("button", { class: "primary", onclick: () => search("q") }, "Search methods"), limit),
+    box.append(this.el("div", { class: "row" }, q, this.el("button", { class: "primary", onclick: () => search("q") }, "Search methods"), this.el("label", { class: "inline" }, "show", limit)),
       this.el("div", { class: "row", style: "margin-top:8px" }, cls, this.el("button", { onclick: () => search("class") }, "Methods of class"), this.el("button", { onclick: () => search("fields") }, "Fields of class"),
         this.el("button", { title: "the search above, on field names of every class: which class holds a value (Currency, HealthPoints…)", onclick: () => search("fieldsearch") }, "Search all fields")),
-      this.el("p", { class: "hint", text: "Hook… registers a hook (catches calls only with JIT unless the method is virtual or a Unity callback). Pin… writes a field or calls a set_ method on the live objects every half second: works on any phone." }),
+      this.hint("Pin… works on any phone; Hook… needs JIT for most methods.",
+        "Hook… registers a hook: it catches calls only with JIT, unless the method is virtual or a Unity callback. Pin… writes a field or calls a set_ method on the live objects every half second, so it works on any phone."),
       this.el("div", { id: "findOut" }));
     if (q.value) search("q");
   },
@@ -554,7 +579,7 @@ const App = {
   async renderSuggest() {
     const box = this.byId("tab-suggest"); box.replaceChildren();
     if (!this.detail.dump) { box.append(this.needDump()); return; }
-    box.append(this.el("p", { class: "hint", text: "Loading…" }));
+    box.append(this.waiting("Matching this game's methods against what earlier mods learned…"));
     try {
       const r = await this.api(`/api/mods/${this.mod}/suggest?limit=40`);
       box.replaceChildren(this.el("p", { class: "hint", text: `${r.learned} learned patterns from earlier mods (every hook you add and every phone result feeds them). Methods of this game that match, best first:` }));
@@ -585,7 +610,7 @@ const App = {
       const bump = this.el("input", { type: "checkbox", id: "bump" });
       const hooks = this.el("input", { type: "checkbox", id: "hooks" }); hooks.checked = true;
       const launch = this.el("input", { type: "checkbox", id: "launch" }); launch.checked = true;
-      const secs = this.el("input", { type: "number", value: "75", style: "width:80px", id: "secs" });
+      const secs = this.el("input", { type: "number", value: "60", min: "5", style: "width:72px", id: "secs", "aria-label": "Seconds to read the log" });
       const extra = () => [...(bump.checked ? ["--bump"] : []), ...(hooks.checked ? [] : ["--no-hooks"])];
       const btn = (text, cmd, args, cls) => this.el("button", { class: cls || "", onclick: () => this.job(cmd, typeof args === "function" ? args() : args) }, text);
       box.append(
@@ -594,11 +619,13 @@ const App = {
             this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center", title: "unchecked: hook nothing in the game (no method hooks, no sideload compatibility); the menu and pins still work" }, hooks, "with hooks")),
           this.el("p", { class: "hint", id: "buildInfo" })),
         this.el("div", { class: "sec" }, this.el("h3", { text: "Phone (USB)" }), this.el("div", { class: "row" },
-          btn("Sign + install last .ipa", "sign", () => [d.last_ipa, "--install"], "primary"),
-          btn("Run: build, sign, install, open, log", "run", () => [...extra(), "--seconds", String(Number(secs.value) || 75)], "primary"),
-          btn("Log", "log", () => ["--seconds", String(Number(secs.value) || 60), ...(launch.checked ? ["--launch"] : [])]),
-          this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center" }, launch, "open the app first"), this.el("span", { class: "muted small", text: "seconds" }), secs),
-          this.el("p", { class: "hint", text: "Signs with your certificate (zsign in WSL), keeping the game's own app ID, so logins tied to it keep working; push, Sign in with Apple and JIT hooks don't work this way. For JIT, sign with the Apple ID: am sign <ipa> --install --apple-id (its first sign-in asks for a 2FA code in the answer box under the job)." })),
+          // the whole loop is "Build and run on the phone" (header, Switches tab); here are its steps one by one
+          btn("Sign + install last .ipa", "sign", () => [d.last_ipa, "--install"]),
+          btn("Read the log", "log", () => ["--seconds", String(Number(secs.value) || 60), ...(launch.checked ? ["--launch"] : [])]),
+          this.el("label", { class: "inline" }, "for", secs, "s"),
+          this.el("label", { class: "inline" }, launch, "open the game first")),
+          this.hint("Signs with your certificate, keeping the game's own app ID so its logins keep working.",
+            "Signing is zsign in WSL. Push, Sign in with Apple and JIT hooks don't work this way. For JIT, sign with the Apple ID from the Console: sign <ipa> --install --apple-id (its first sign-in asks for a 2FA code in the answer box under the job).")),
         this.el("div", { class: "sec", id: "updateSec" }));
     }
     this.byId("buildInfo").textContent = (d.last_dylib ? "Last dylib: " + d.last_dylib : "No build yet") + (d.last_ipa ? "   ·   Last ipa: " + d.last_ipa : "");
@@ -623,7 +650,10 @@ const App = {
     let det = this.byId("job-" + j.id);
     if (!det) {
       det = this.el("details", { class: "job", id: "job-" + j.id, open: "" },
-        this.el("summary", {}, this.el("span", { class: "mono", text: `${j.command} ${j.args.join(" ")}` }), " ", this.el("span", { class: "badge", id: "jobst-" + j.id, text: j.status }), " ", this.el("button", { class: "small", onclick: ev => { ev.preventDefault(); this.api(`/api/jobs/${j.id}/stop`, {}).catch(() => {}); } }, "Stop")),
+        this.el("summary", {}, this.el("span", { class: "mono", text: `${j.command} ${j.args.join(" ")}` }), " ", this.el("span", { class: "badge", id: "jobst-" + j.id, text: j.status }),
+          this.el("span", { class: "muted small", id: "jobtime-" + j.id }),
+          this.el("button", { class: "small", id: "jobstop-" + j.id, onclick: ev => { ev.preventDefault(); this.api(`/api/jobs/${j.id}/stop`, {}).catch(() => {}); } }, "Stop")),
+        this.el("div", { class: "jobwhy hidden", id: "jobwhy-" + j.id }),
         this.el("div", { class: "console", id: "jobout-" + j.id }),
         j.interactive ? this.el("form", { class: "answer", id: "jobans-" + j.id, onsubmit: ev => {
           ev.preventDefault(); const i = ev.target.querySelector("input"); const text = i.value; i.value = "";
@@ -635,6 +665,19 @@ const App = {
     const st = this.byId("jobst-" + j.id); st.textContent = j.status; st.className = "badge " + (j.status === "done" ? "good" : ["queued", "running"].includes(j.status) ? "accent" : "bad");
     const out = this.byId("jobout-" + j.id);
     if (j.lines && j.lines.length) { out.textContent += (out.textContent ? "\n" : "") + j.lines.join("\n"); out.scrollTop = out.scrollHeight; }
+    // Stop only while it runs; when it ran and for how long; a failed job's last line, readable without opening it
+    const running = ["queued", "running", "stopping"].includes(j.status);
+    this.byId("jobstop-" + j.id).classList.toggle("hidden", !running);
+    if (j.started) {
+      const secs = Math.max(0, Math.round((j.ended || j.finished || Date.now() / 1000) - j.started));
+      const when = new Date(j.started * 1000), today = when.toDateString() === new Date().toDateString();
+      const at = when.toLocaleString([], { ...(today ? {} : { month: "short", day: "numeric" }), hour: "2-digit", minute: "2-digit" });
+      this.byId("jobtime-" + j.id).textContent = `${at} · ${secs >= 60 ? Math.floor(secs / 60) + " min " : ""}${secs % 60} s`;
+    }
+    const why = this.byId("jobwhy-" + j.id), failed = !running && j.status !== "done";
+    const last = failed ? (out.textContent.split("\n").map(l => l.trim()).filter(Boolean).pop() || j.last || "") : "";
+    why.textContent = last || ""; why.classList.toggle("hidden", !last);
+    det.dataset.why = last || "";
     this.drawJobChips();
     if (j.command === "autobuild") this.autobuildProgress(j, det, out.textContent);
     if (j.command === "store") this.stepProgress(j, det, out.textContent);
@@ -794,7 +837,7 @@ const App = {
     const load = async (reset = true) => {
       const ticket = ++request;
       if (reset !== false) { offset = 0; loadedCount = 0; table.replaceChildren(); }
-      note.textContent = "Scanning the dump…";
+      note.replaceChildren(this.waiting(offset ? "Loading the next 300…" : "Scanning the dump for fields and setters a pin can reach…"));
       more.hidden = true;
       try {
         const r = await this.api(`/api/mods/${this.mod}/scan?limit=300&offset=${offset}&area=${encodeURIComponent(area.value)}&find=${encodeURIComponent(find.value.trim())}&mode=${mode.value}&verified=${verified.value}&hide_has=${hideHas.checked ? 1 : 0}${flagged.checked ? "&flagged=1" : ""}`);
@@ -852,7 +895,8 @@ const App = {
     [area, mode, verified, flagged, hideHas].forEach(i => i.addEventListener("change", load));
     find.addEventListener("keydown", ev => { if (ev.key === "Enter") load(); });
     box.append(
-      this.el("p", { class: "hint", text: "Game fields and setters that a no-JIT pin can reach are scored by name. In-app purchases also includes mutable numeric/boolean fields and concrete hookable Store/IAP methods. Generated helpers, type-only rows, delegate caches and metadata are hidden. Topic labels are informational; names do not prove behaviour. Same list in a console: am scan <mod>." }),
+      this.hint("Fields and setters a pin can reach without JIT, ranked by name. A name is a guess until it's tried on the phone.",
+        "In-app purchases also lists changeable number and true/false fields and Store/IAP methods that can be hooked. Generated helpers, type-only rows, delegate caches and metadata are hidden. Topic labels are only labels. The same list from the Console: scan <mod>."),
       this.el("div", { class: "row", style: "margin-bottom:8px" }, area, mode, verified, find,
         this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center" }, hideHas, "hide what the mod has"),
         this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center" }, flagged, "only topic-labelled"),
@@ -912,7 +956,8 @@ const App = {
     let commands = [];
     try { commands = (await this.api("/api/console/commands")).commands; } catch (e) { commands = []; }
     box.append(
-      this.el("p", { class: "hint", text: "Runs any scripts/dev.py command (the same as am <command> in PowerShell), with this mod filled in by the buttons. Regexes are passed as typed: quote them when they have spaces or |. ↑/↓ walk the history. Questions a command asks (pick's number, the Apple ID 2FA code) are answered in the box under its job. Only this PC can use the console." }),
+      this.hint("Any am command, run on this PC. The buttons below fill in this mod; ↑/↓ walk the history.",
+        "The same as am <command> in PowerShell (scripts/dev.py). Regexes are passed as typed: quote them when they have spaces or |. Questions a command asks (pick's number, the Apple ID 2FA code) are answered in the box under its job. Only this PC can use the console."),
       this.el("div", { class: "cmdline" }, line, this.el("button", { class: "primary", onclick: () => run() }, "Run")),
       this.el("div", { style: "margin-top:14px" },
         group("Dump and search the game", [
@@ -1377,7 +1422,8 @@ const App = {
         this.el("label", { style: "margin:0;display:inline-flex;gap:6px;align-items:center", title: "Games our switches can run on (Unity IL2CPP), from an engine check or one of our mods; online ones too, for offline play only" }, compat, "moddable only"),
         this.el("button", { class: "small", onclick: load }, "Refresh")),
       this.el("div", { class: "row", style: "margin-bottom:6px" }, account, checkAll, keepPick, keptBtn),
-      this.el("p", { class: "hint", text: "From the App Store's public charts and search. Type in the box to filter this list; press Enter to search the whole App Store (a name or a bundle ID). \"Like the games we mod\" ranks games by the themes and genres they share with our mods' games; Like this on a card does the same for one game. Get .ipa looks the game up on the decrypt site; New mod starts a mod from a decrypted copy. Same lists from a console: am games (see am games --help)." }),
+      this.hint("Type to filter this list; Enter searches the whole App Store by name or bundle ID.",
+        "From the App Store's public charts and search. \"Like the games we mod\" ranks games by the themes and genres they share with our mods' games; Like this on a card does the same for one game. Get .ipa looks the game up on the decrypt site; New mod starts a mod from a decrypted copy. The same lists from the Console: games (help games lists the options)."),
       note, grid);
     load();
   },
@@ -1727,6 +1773,10 @@ const App = {
   },
 
   init() {
+    // a More / ⋯ menu closes when a click lands outside it, so only one is ever open
+    document.addEventListener("click", ev => document.querySelectorAll("details.more[open]").forEach(d => { if (!d.contains(ev.target)) d.open = false; }));
+    // the jobs dock takes its room at the bottom of the page instead of covering it (CSS --dock-h)
+    if (window.ResizeObserver) new ResizeObserver(([e]) => document.documentElement.style.setProperty("--dock-h", Math.round(e.target.getBoundingClientRect().height) + "px")).observe(this.byId("jobsPanel"));
     this.api("/api/jobs").then(data=>{
       for (const job of data.jobs) {
         this.showJob(job);

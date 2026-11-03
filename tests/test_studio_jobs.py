@@ -192,5 +192,19 @@ class Resources(unittest.TestCase):
         self.assertEqual(server.job_resources("run", ["sample-mod"]), ["device", "mod:sample-mod"])
 
 
+class LastLine(unittest.TestCase):
+    """The jobs list carries a failed job's last output line, so the page says why without loading the output."""
+
+    def test_only_a_job_that_ended_badly_has_one(self):
+        import server
+        from types import SimpleNamespace as Job
+        lines = ["==> building", "error: no .ipa from the build", "", "  "]
+        self.assertEqual(server.job_last_line(Job(status="failed", lines=lines)), "error: no .ipa from the build")
+        self.assertEqual(server.job_last_line(Job(status="stopped", lines=lines)), "error: no .ipa from the build")
+        for status in ("done", "running", "queued", "stopping"):
+            self.assertEqual(server.job_last_line(Job(status=status, lines=lines)), "")
+        self.assertEqual(server.job_last_line(Job(status="failed", lines=[])), "")
+
+
 if __name__ == "__main__":
     unittest.main()
