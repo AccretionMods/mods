@@ -10,7 +10,8 @@
 #import <unistd.h>
 
 #include "am_il2cpp.h"
-#include "AMDetectBypass.c"  // hide substrate images / jailbreak files from the game's own scanners
+// runtime/AMDetectBypass.c is experimental: its chained-fixup import walk still crashes in strcmp on
+// some builds, so it is not compiled into the mods. Re-enable this include only after validating it.
 
 // am_hooks_data.c, written by scripts/embed_hooks.py from the mod's hooks.json
 extern const AMHookSpec am_hook_specs[];
