@@ -170,6 +170,22 @@ def hooks_problems(path):
             problems.append(f'{where} needs namespace (use "" for the global namespace)')
         if "args" in h and (not isinstance(h["args"], int) or h["args"] < 0):
             problems.append(f"{where}: args must be a count")
+    pins = data.get("pins", [])
+    if not isinstance(pins, list):
+        problems.append('hooks.json "pins" must be a list')
+    else:
+        for i, p in enumerate(pins):
+            where = f"hooks.json pin {i}"
+            if not isinstance(p, dict):
+                problems.append(f"{where} must be an object")
+                continue
+            for key in ("class", "method", "field"):
+                if not isinstance(p.get(key), str) or not p[key]:
+                    problems.append(f"{where} needs {key}")
+            if p.get("type") not in ("int", "float", "bool", "int64"):
+                problems.append(f"{where} needs type int, float, bool or int64")
+            if "value" not in p:
+                problems.append(f"{where} needs value")
     return problems
 
 

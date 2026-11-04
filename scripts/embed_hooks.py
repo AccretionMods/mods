@@ -104,10 +104,34 @@ def main(argv=None):
         if not (registration and dump and binary):
             sys.exit('hooks.json "table" needs registration_rva, dump and binary (or --registration/--dump/--binary)')
         names = [f"{h.get('class', '')}.{h.get('method', '')}" for h in data["hooks"]]
-        result = table_hooks.generate(dump, binary, int(str(registration), 0), names, module)
+        pins = data.get("pins") or []
+        pin_names = [f"{p.get('class', '')}.{p.get('method', '')}" for p in pins]
+        result = table_hooks.generate(dump, binary, int(str(registration), 0), names + pin_names, module)
+        if pins:
+            fields = table_hooks.parse_fields(Path(dump).read_text(errors="ignore"))
+            by_full = {f.full_name: f for f in fields}
+            by_short = {f"{f.klass}.{f.name}": f for f in fields}
+            resolved = []
+            for i, pin in enumerate(pins):
+                key = f"{pin.get('class', '')}.{pin.get('field', '')}"
+                field = by_full.get(key) or by_short.get(key)
+                if field is None:
+                    sys.exit(f"pin {i}: field {key} is not in {dump}")
+                resolved.append({
+                    "name": pin_names[i],
+                    "module": result["hooks"][len(names) + i]["module"],
+                    "index": result["hooks"][len(names) + i]["index"],
+                    "offset": field.offset,
+                    "type": pin.get("type") or "",
+                    "value": pin.get("value"),
+                })
+            header_text = table_hooks.header_with_pins(
+                {"registration_rva": result["registration_rva"], "hooks": result["hooks"][:len(names)]}, resolved)
+        else:
+            header_text = table_hooks.header(result)
         header_path = Path(dest).with_name("TableHooks.gen.h")
-        header_path.write_text(table_hooks.header(result), encoding="utf-8", newline="\n")
-        print(f"{len(result['hooks'])} table hooks -> {header_path}", file=sys.stderr)
+        header_path.write_text(header_text, encoding="utf-8", newline="\n")
+        print(f"{len(result['hooks'])} table hooks ({len(pins)} pins) -> {header_path}", file=sys.stderr)
         generated = True
     with open(dest, "w", encoding="utf-8", newline="\n") as f:
         f.write(render(data, generated))

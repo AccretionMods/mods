@@ -226,6 +226,7 @@ void AMIl2cppStartTable(AMTableHookSpec *specs, size_t count, uint64_t registrat
     atexit(logExit);
     size_t matched = 0;
     for (size_t i = 0; i < count; i++) {
+        if (specs[i].replacement) continue;  // a generated pin already carries its replacement
         for (size_t j = 0; j < replacement_count; j++) {
             if (specs[i].name && strcmp(specs[i].name, replacements[j].name) == 0) {
                 specs[i].replacement = replacements[j].replacement;

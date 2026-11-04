@@ -1,5 +1,5 @@
 from scripts.embed_hooks import render
-from scripts.table_hooks import header, parse_dump, parse_fields
+from scripts.table_hooks import header, header_with_pins, parse_dump, parse_fields
 
 DUMP = """
 // Namespace: Game
@@ -67,3 +67,13 @@ def test_embed_hooks_table_symbols():
     without_table = render(data, False)
     assert "am_hook_table_specs = 0" in without_table
     assert "am_hook_table_count = 0" in without_table
+
+
+def test_header_with_pins():
+    result = {"registration_rva": 0x5593A48,
+              "hooks": [{"name": "Game.Foo.Update", "module": 7, "index": 529}]}
+    pins = [{"name": "Game.Foo.Update", "module": 7, "index": 534, "offset": 0x18, "type": "int", "value": 100}]
+    text = header_with_pins(result, pins)
+    assert "AM_TABLE_HOOK_COUNT 2" in text
+    assert "*(int32_t *)((char *)self + 24) = 100;" in text
+    assert "(void *)rep_pin0, (void **)&orig_pin0" in text
