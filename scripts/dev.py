@@ -1273,7 +1273,7 @@ TWEAK_NAME = {tweak}
 
 # menu/ and runtime/ (with hooks.json as runtime/am_hooks_data.c) are copied in, and AMTweaks.gen.m is
 # generated from tweaks.json, by scripts/build.sh. No %hook and no Substrate: hooks go through the runtime.
-{tweak}_FILES = Tweak.x AMTweaks.gen.m menu/AMMenu.m runtime/SideloadCompat.m runtime/am_il2cpp.c runtime/AMIl2cpp.m runtime/AMMachSymbols.c runtime/AMIl2cppData.m runtime/am_hooks_data.c
+{tweak}_FILES = Tweak.x AMTweaks.gen.m menu/AMMenu.m runtime/SideloadCompat.m runtime/am_il2cpp.c runtime/AMIl2cpp.m runtime/AMMachSymbols.c runtime/AMIl2cppData.m runtime/AMTableHook.c runtime/am_hooks_data.c
 {tweak}_CFLAGS = -fobjc-arc
 {tweak}_FRAMEWORKS = UIKit Security
 {tweak}_LOGOS_DEFAULT_GENERATOR = internal
