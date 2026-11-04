@@ -40,6 +40,19 @@ _CLASS_RE = re.compile(r"^\s*(?:public|internal|private|protected)?\s*(?:sealed\
 _NAMESPACE_RE = re.compile(r"^\s*//\s*Namespace:\s*(\S*)")
 _RVA_RE = re.compile(r"//\s*RVA:\s*0x([0-9A-Fa-f]+)")
 _METHOD_RE = re.compile(r"(\w+)\s*\(")
+_FIELD_RE = re.compile(r"^\s*(?:public|private|protected|internal)\s+[^;]*?\b(\w+)\s*;\s*//\s*0x([0-9A-Fa-f]+)")
+
+
+@dataclass
+class Field:
+    namespace: str
+    klass: str
+    name: str
+    offset: int
+
+    @property
+    def full_name(self) -> str:
+        return f"{self.namespace}.{self.klass}.{self.name}" if self.namespace else f"{self.klass}.{self.name}"
 
 
 def parse_dump(text: str) -> list[Method]:
@@ -69,6 +82,26 @@ def parse_dump(text: str) -> list[Method]:
                     methods.append(Method(namespace, klass, name.group(1), pending))
                 pending = None
     return methods
+
+
+def parse_fields(text: str) -> list[Field]:
+    """Every instance field whose offset dump.cs records (Il2CppDumper DumpFieldOffset: `public int x; // 0x18`)."""
+    fields: list[Field] = []
+    namespace = ""
+    klass = ""
+    for line in text.splitlines():
+        m = _NAMESPACE_RE.match(line)
+        if m:
+            namespace = m.group(1)
+            continue
+        m = _CLASS_RE.match(line)
+        if m:
+            klass = m.group(1)
+            continue
+        m = _FIELD_RE.match(line)
+        if m and klass:
+            fields.append(Field(namespace, klass, m.group(1), int(m.group(2), 16)))
+    return fields
 
 
 @dataclass
@@ -175,12 +208,29 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--registration", required=True, type=lambda s: int(s, 0),
                    help="Il2CppCodeRegistration RVA (Il2CppDumper prints it)")
     p.add_argument("--hook", action="append", default=[], help="Class.Method to resolve (repeatable)")
+    p.add_argument("--field", action="append", default=[], help="Class.Field to read its dump offset (repeatable)")
     p.add_argument("--module", help="restrict to one assembly name, e.g. Assembly-CSharp.dll")
     p.add_argument("--output", help="write the C header here")
     p.add_argument("--json", action="store_true", help="print JSON instead of C")
     args = p.parse_args(argv)
-    if not args.hook:
-        p.error("at least one --hook is required")
+    if not args.hook and not args.field:
+        p.error("at least one --hook or --field is required")
+    if args.field and not args.hook:
+        fields = parse_fields(Path(args.dump).read_text(errors="ignore"))
+        by_full = {f.full_name: f for f in fields}
+        by_short = {f"{f.klass}.{f.name}": f for f in fields}
+        out = []
+        for name in args.field:
+            field = by_full.get(name) or by_short.get(name)
+            if field is None:
+                raise SystemExit(f"field not found in dump: {name}")
+            out.append({"name": name, "offset": field.offset})
+        text = json.dumps(out, indent=2)
+        if args.output:
+            Path(args.output).write_text(text)
+        else:
+            sys.stdout.write(text)
+        return 0
     result = generate(args.dump, args.binary, args.registration, args.hook, args.module)
     text = json.dumps(result, indent=2) if args.json else header(result)
     if args.output:

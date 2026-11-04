@@ -1,5 +1,5 @@
 from scripts.embed_hooks import render
-from scripts.table_hooks import header, parse_dump
+from scripts.table_hooks import header, parse_dump, parse_fields
 
 DUMP = """
 // Namespace: Game
@@ -17,6 +17,24 @@ public class Bar // TypeDefIndex: 2
     public void Awake() { }
 }
 """
+
+
+FIELDS = """
+// Namespace: Game
+public class Foo // TypeDefIndex: 1
+{
+    public int health; // 0x18
+    private float speed; // 0x1C
+}
+"""
+
+
+def test_parse_fields():
+    fields = parse_fields(FIELDS)
+    found = {(f.full_name, f.offset) for f in fields}
+    assert ("Game.Foo.health", 0x18) in found
+    assert ("Game.Foo.speed", 0x1C) in found
+    assert len(fields) == 2
 
 
 def test_parse_dump_methods():
