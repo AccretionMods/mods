@@ -135,6 +135,22 @@ static void am_quago_image(const struct mach_header *header, intptr_t slide) {
 
 __attribute__((constructor)) static void am_quago_init(void) {
     am_quago_log("quago: install");
+    int count = objc_getClassList(NULL, 0);
+    int quago = 0;
+    if (count > 0) {
+        Class *classes = (__unsafe_unretained Class *)malloc(sizeof(Class) * (size_t)count);
+        if (classes) {
+            count = objc_getClassList(classes, count);
+            for (int i = 0; i < count; i++) {
+                const char *name = class_getName(classes[i]);
+                if (name && strstr(name, "Quago")) quago++;
+            }
+            free((void *)classes);
+        }
+    }
+    char line[64];
+    snprintf(line, sizeof line, "quago: classes=%d", quago);
+    am_quago_log(line);
     _dyld_register_func_for_add_image(am_quago_image);
     am_quago_patch();
 }

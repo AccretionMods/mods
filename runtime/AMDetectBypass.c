@@ -86,14 +86,54 @@ static FILE *am_rep_fopen(const char *path, const char *mode) {
     return am_orig_fopen(path, mode);
 }
 
+static bool am_slot_readable(const void *slot) {
+    vm_address_t address = (vm_address_t)slot;
+    vm_address_t region = address & ~((vm_address_t)vm_page_size - 1);
+    vm_size_t region_size = 0;
+    vm_region_basic_info_data_64_t info;
+    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+    mach_port_t object = MACH_PORT_NULL;
+    kern_return_t kr = vm_region_64(mach_task_self(), &region, &region_size, VM_REGION_BASIC_INFO_64,
+                                    (vm_region_info_t)&info, &count, &object);
+    if (object != MACH_PORT_NULL) mach_port_deallocate(mach_task_self(), object);
+    if (kr != KERN_SUCCESS) return false;
+    return address >= region && address + sizeof(void *) <= region + region_size && (info.protection & VM_PROT_READ);
+}
+
+static bool am_range_readable(const void *start, size_t size) {
+    if (!start || size == 0) return false;
+    const char *cursor = (const char *)start;
+    const char *end = cursor + size;
+    while (cursor < end) {
+        if (!am_slot_readable(cursor)) return false;
+        cursor += vm_page_size;
+    }
+    return true;
+}
+
 static bool am_write_slot(void *slot, void *value) {
-    vm_address_t page = (vm_address_t)slot & ~(vm_page_size - 1);
-    if (vm_protect(mach_task_self(), page, vm_page_size, false, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY) !=
-            KERN_SUCCESS &&
-        vm_protect(mach_task_self(), page, vm_page_size, false, VM_PROT_READ | VM_PROT_WRITE) != KERN_SUCCESS)
+    if (!slot || !value) return false;
+    if (!am_slot_readable(slot)) {
+        am_log("bypass: write refused (unmapped slot)");
         return false;
-    *(void **)slot = value;
-    return *(void **)slot == value;
+    }
+    vm_address_t address = (vm_address_t)slot;
+    vm_address_t page = address & ~((vm_address_t)vm_page_size - 1);
+    kern_return_t kr = vm_protect(mach_task_self(), page, vm_page_size, false,
+                                  VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
+    if (kr != KERN_SUCCESS)
+        kr = vm_protect(mach_task_self(), page, vm_page_size, false, VM_PROT_READ | VM_PROT_WRITE);
+    if (kr != KERN_SUCCESS) {
+        am_log("bypass: write refused (protect)");
+        return false;
+    }
+    uintptr_t raw = (uintptr_t)value;
+    kr = vm_write(mach_task_self(), address, (vm_offset_t)&raw, (mach_msg_type_number_t)sizeof raw);
+    if (kr != KERN_SUCCESS) {
+        am_log("bypass: write refused (vm_write)");
+        return false;
+    }
+    return true;
 }
 
 static bool am_rebind_symbol(const char *name, void **slot) {
@@ -195,6 +235,7 @@ static void am_rebind_chained(const unsigned char *payload, uint32_t payload_siz
             unsigned char *slot = (unsigned char *)segment_base + (size_t)page * segment->page_size + start;
             for (int guard = 0; guard < 100000; guard++) {
                 if ((uintptr_t)slot < segment_base || (uintptr_t)slot + 8 > segment_end) break;
+                if (!am_slot_readable(slot)) break;
                 uint64_t value = *(const uint64_t *)slot;
                 uint32_t next = (value >> 51) & 0xFFF;
                 if ((value >> 63) & 1) {
@@ -225,6 +266,11 @@ static void am_rebind_classic(const struct mach_header_64 *header, intptr_t slid
     if (symtab->symoff < linkedit->fileoff || symtab->stroff < linkedit->fileoff ||
         dysymtab->indirectsymoff < linkedit->fileoff)
         return;
+    if (symtab->symoff - linkedit->fileoff + (uint64_t)symtab->nsyms * sizeof(struct nlist_64) > linkedit->filesize ||
+        symtab->stroff - linkedit->fileoff + symtab->strsize > linkedit->filesize ||
+        dysymtab->indirectsymoff - linkedit->fileoff + (uint64_t)dysymtab->nindirectsyms * sizeof(uint32_t) >
+            linkedit->filesize)
+        return;
     uintptr_t image = (uintptr_t)header + (uintptr_t)slide;
     uintptr_t link = image + linkedit->vmaddr;
     const struct nlist_64 *symbols = (const void *)(link + (symtab->symoff - linkedit->fileoff));
@@ -235,6 +281,7 @@ static void am_rebind_classic(const struct mach_header_64 *header, intptr_t slid
         const struct section_64 *section = sections[s];
         if (section->reserved1 >= dysymtab->nindirectsyms || section->size == 0) continue;
         void **slots = (void **)(image + section->addr);
+        if (!am_range_readable(slots, section->size)) continue;
         size_t count = section->size / sizeof(void *);
         size_t available = dysymtab->nindirectsyms - section->reserved1;
         if (count > available) count = available;
