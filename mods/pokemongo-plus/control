@@ -1,0 +1,9 @@
+Package: io.github.accretionmods.pokemongo-plus
+Name: Pokémon GO+
+Version: 1.0.0
+Architecture: iphoneos-arm
+Description: Pokémon GO with an Accretion mod menu (personal build).
+Maintainer: Accretion
+Author: Accretion
+Section: Tweaks
+Depends: mobilesubstrate

@@ -1,0 +1,26 @@
+{
+  "title": "Pokémon GO+",
+  "tweaks": [
+    {
+      "key": "keepAwake",
+      "title": "Keep screen awake",
+      "kind": "switch",
+      "hooks": []
+    },
+    {
+      "key": "abstractMapPlaceIsActive",
+      "title": "Map places active",
+      "kind": "switch",
+      "hooks": [],
+      "pins": [
+        {
+          "object": "holo-game:Niantic.Holoholo.Map.AbstractMapPlace[]",
+          "when": "always",
+          "setter": "set_IsActive",
+          "ctype": "bool",
+          "value": true
+        }
+      ]
+    }
+  ]
+}

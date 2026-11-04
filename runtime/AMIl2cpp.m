@@ -10,9 +10,7 @@
 #import <unistd.h>
 
 #include "am_il2cpp.h"
-// runtime/AMDetectBypass.c is hardened (bounded chained binds, validated names/slots, bypass: logs) but
-// not yet exercised on a device: every test build either had the probe rejected by AMFI, the dylib not
-// load, or the launch watchdog fire. Keep it out of mods until a bait run logs "visible=0".
+#include "AMDetectBypass.c"  // rebinder device test: bounded chained binds, logs bypass: ...
 
 // am_hooks_data.c, written by scripts/embed_hooks.py from the mod's hooks.json
 extern const AMHookSpec am_hook_specs[];

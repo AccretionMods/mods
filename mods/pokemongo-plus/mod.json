@@ -1,0 +1,22 @@
+{
+  "name": "Pokémon GO+",
+  "version": "1.0.0",
+  "kind": "tweak",
+  "personal": true,
+  "category": "games",
+  "subtitle": "Pokémon GO with an Accretion mod menu (personal build).",
+  "description": "Pokémon GO with the Accretion mod menu built in (personal build, never published).\n\nMod menu (tap the floating button):\n• Keep screen awake",
+  "target_bundle_id": "com.nianticlabs.pokemongo",
+  "bundle_id": "io.github.accretionmods.pokemongoplus",
+  "display_name": "Pokémon GO+",
+  "tested_app_version": "0.435.1",
+  "min_os": "15.0",
+  "remove_extensions": "encrypted",
+  "icon_url": "https://getaccretion.github.io/assets/icon.png",
+  "screenshots": [],
+  "base": {
+    "private": true,
+    "open_source": false,
+    "sha256": "3fd41a4eefce75a59aba2218e73545e40013a45704b3abae77b8a9f59340976a"
+  }
+}

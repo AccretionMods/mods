@@ -182,6 +182,11 @@ static void am_rebind_chained(const unsigned char *payload, uint32_t payload_siz
         if (segment->pointer_format != 2 && segment->pointer_format != 6) continue;  // PTR_64 / PTR_64_OFFSET
         if (segment->page_size != 4096 && segment->page_size != 16384) continue;
         if ((size_t)segment->size < sizeof *segment + (size_t)segment->page_count * 2) continue;
+        // Import chains live in writable data; never touch a chain in __TEXT (writing there faults).
+        const char *segname = segments[s]->segname;
+        if (strcmp(segname, "__DATA") != 0 && strcmp(segname, "__DATA_CONST") != 0 &&
+            strcmp(segname, "__DATA_DIRTY") != 0)
+            continue;
         uintptr_t segment_base = image + segments[s]->vmaddr;
         uintptr_t segment_end = segment_base + segments[s]->vmsize;
         for (uint16_t page = 0; page < segment->page_count; page++) {
