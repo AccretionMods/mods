@@ -16,7 +16,17 @@ cp -R "$root/menu" "$dir/menu"
 rm -rf "$dir/runtime"
 if [ -f "$dir/hooks.json" ]; then
     cp -R "$root/runtime" "$dir/runtime"
-    python3 "$root/scripts/embed_hooks.py" "$dir/hooks.json" "$dir/runtime/am_hooks_data.c" >&2
+    # A "table" mod gets its dump and the registration the dumper found (dev.py passes AM_DUMP_DIR).
+    table_args=()
+    if python3 -c 'import json,sys; sys.exit(0 if "table" in json.load(open(sys.argv[1])) else 1)' "$dir/hooks.json"; then
+        if [ -n "${AM_DUMP_DIR:-}" ]; then
+            table_args=(--dump "$AM_DUMP_DIR/out/dump.cs" --binary "$AM_DUMP_DIR/UnityFramework")
+            if [ -f "$AM_DUMP_DIR/il2cpp.json" ]; then
+                table_args+=(--registration "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["registration_rva"])' "$AM_DUMP_DIR/il2cpp.json")")
+            fi
+        fi
+    fi
+    python3 "$root/scripts/embed_hooks.py" "$dir/hooks.json" "$dir/runtime/am_hooks_data.c" ${table_args[@]+"${table_args[@]}"} >&2
 fi
 if [ -f "$dir/detection.json" ] && [ ! -f "$dir/hooks.json" ]; then
     cp -R "$root/runtime" "$dir/runtime"

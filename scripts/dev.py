@@ -325,9 +325,14 @@ def run_dumper(folder, binary, metadata, out):
             f"no Il2CppDumper in {folder} (scripts/install_il2cppdumper.sh), or no dotnet on PATH; dump from Windows"
         )
     print("==> " + " ".join(cmd))
-    r = subprocess.run(cmd, env=env, stdin=subprocess.DEVNULL, check=False)
+    r = subprocess.run(cmd, env=env, stdin=subprocess.DEVNULL, check=False, capture_output=True, text=True)
+    if r.stdout:
+        print(r.stdout, end="")
+    if r.stderr:
+        print(r.stderr, end="", file=sys.stderr)
     if r.returncode != 0:
         raise DevError(f"Il2CppDumper failed ({r.returncode})")
+    return r.stdout + r.stderr
 
 
 def index_old_dumps():
@@ -396,9 +401,13 @@ def dump_build(ipa, force=False, structs=False, fallback_dir=None):
     folder, label = dumper_for(mv)
     print(f"==> Metadata v{mv}: {label}" + ("" if structs else " (lean: no il2cpp.h / script.json; --structs writes them)"))
     out.mkdir(exist_ok=True)
-    run_dumper(folder if structs else dump_cache.lean_dumper(folder), binary, metadata, out)
+    dumper_out = run_dumper(folder if structs else dump_cache.lean_dumper(folder), binary, metadata, out)
     if not (out / "dump.cs").is_file():
         raise DevError("the dumper wrote no dump.cs")
+    m = re.search(r"CodeRegistration\s*:\s*(0x[0-9a-fA-F]+)", dumper_out or "")
+    if m:
+        # a table build (hooks.json "table") needs it: runtime/AMTableHook.c reads the codeGenModules there
+        (work / "il2cpp.json").write_text(json.dumps({"registration_rva": m.group(1)}), encoding="utf-8")
     if key:
         dump_cache.register(am_root(), key, work, bundle, version, label, structs)
     size = (out / "dump.cs").stat().st_size
@@ -1479,8 +1488,11 @@ def cmd_build(args):
     # --no-hooks: nothing in the game is hooked (scripts/build.sh AM_HOOKS=off); the menu and pins stay
     no_hooks = getattr(args, "no_hooks", False)
     hooks_env = "AM_HOOKS=off " if no_hooks else ""
+    state = load_state(args.mod)
+    dump_dir = state.get("dump_dir")
+    dump_env = f'AM_DUMP_DIR="{wsl_path(dump_dir)}" ' if dump_dir else ""
     print(f"==> Building {args.mod} {meta['version']} in WSL (Theos){' without hooks' if no_hooks else ''}")
-    code, out = run_in_wsl(f'cd "{repo}" && {hooks_env}scripts/build.sh {args.mod}')
+    code, out = run_in_wsl(f'cd "{repo}" && {hooks_env}{dump_env}scripts/build.sh {args.mod}')
     if code != 0:
         raise DevError("build failed (Theos output above)")
     dylib_wsl = out.strip().splitlines()[-1]
