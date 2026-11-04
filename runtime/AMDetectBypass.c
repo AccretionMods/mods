@@ -82,7 +82,10 @@ static FILE *am_rep_fopen(const char *path, const char *mode) {
 // each named symbol. Safe on chained-fixup images because dyld has already resolved the slots.
 static bool am_write_slot(void *slot, void *value) {
     vm_address_t page = (vm_address_t)slot & ~(vm_page_size - 1);
-    vm_protect(mach_task_self(), page, vm_page_size, false, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
+    if (vm_protect(mach_task_self(), page, vm_page_size, false, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY) !=
+            KERN_SUCCESS &&
+        vm_protect(mach_task_self(), page, vm_page_size, false, VM_PROT_READ | VM_PROT_WRITE) != KERN_SUCCESS)
+        return false;
     *(void **)slot = value;
     return *(void **)slot == value;
 }
@@ -94,6 +97,7 @@ static void am_rebind_image(const struct mach_header_64 *header, intptr_t slide)
     const struct segment_command_64 *linkedit = NULL;
     const struct section_64 *sections[64];
     size_t section_count = 0;
+    bool chained = false;
     const unsigned char *base = (const unsigned char *)header;
     uintptr_t image = (uintptr_t)header + (uintptr_t)slide;
     size_t at = sizeof(struct mach_header_64);
@@ -103,6 +107,7 @@ static void am_rebind_image(const struct mach_header_64 *header, intptr_t slide)
         if (command->cmdsize < 8 || at + command->cmdsize > end) break;
         if (command->cmd == LC_SYMTAB) symtab = (const void *)command;
         else if (command->cmd == LC_DYSYMTAB) dysymtab = (const void *)command;
+        else if (command->cmd == 0x80000034u) chained = true;  // LC_DYLD_CHAINED_FIXUPS: no classic indirect table
         else if (command->cmd == LC_SEGMENT_64) {
             const struct segment_command_64 *segment = (const void *)command;
             if (strcmp(segment->segname, "__LINKEDIT") == 0) linkedit = segment;
@@ -116,18 +121,29 @@ static void am_rebind_image(const struct mach_header_64 *header, intptr_t slide)
         at += command->cmdsize;
     }
     if (!symtab || !dysymtab || !linkedit || !section_count) return;
+    if (chained || dysymtab->nindirectsyms == 0 || symtab->nsyms == 0 || symtab->strsize == 0) return;
+    if (symtab->symoff < linkedit->fileoff || symtab->stroff < linkedit->fileoff ||
+        dysymtab->indirectsymoff < linkedit->fileoff)
+        return;
     uintptr_t link = image + linkedit->vmaddr;
     const struct nlist_64 *symbols = (const void *)(link + (symtab->symoff - linkedit->fileoff));
     const char *strings = (const char *)(link + (symtab->stroff - linkedit->fileoff));
     const uint32_t *indirect = (const uint32_t *)(link + (dysymtab->indirectsymoff - linkedit->fileoff));
     for (size_t s = 0; s < section_count; s++) {
         const struct section_64 *section = sections[s];
+        if (section->reserved1 >= dysymtab->nindirectsyms) continue;
         void **slots = (void **)(image + section->addr);
         size_t count = section->size / sizeof(void *);
+        size_t available = dysymtab->nindirectsyms - section->reserved1;
+        if (count > available) count = available;
         for (size_t i = 0; i < count; i++) {
             uint32_t symbol_index = indirect[section->reserved1 + i];
-            if (symbol_index == INDIRECT_SYMBOL_LOCAL || symbol_index == INDIRECT_SYMBOL_ABS) continue;
-            const char *name = strings + symbols[symbol_index].n_un.n_strx;
+            if (symbol_index == INDIRECT_SYMBOL_LOCAL || symbol_index == INDIRECT_SYMBOL_ABS ||
+                symbol_index >= symtab->nsyms)
+                continue;
+            uint32_t strx = symbols[symbol_index].n_un.n_strx;
+            if (strx >= symtab->strsize) continue;
+            const char *name = strings + strx;
             if (name[0] == '_') name++;
             if (strcmp(name, "dyld_get_image_name") == 0) am_write_slot(&slots[i], (void *)am_rep_image_name);
             else if (strcmp(name, "dlopen") == 0) am_write_slot(&slots[i], (void *)am_rep_dlopen);
