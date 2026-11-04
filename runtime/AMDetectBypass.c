@@ -313,10 +313,16 @@ static void am_image_added(const struct mach_header *header, intptr_t slide) {
     if (!name || strncmp(name, "/System/", 8) == 0 || strncmp(name, "/usr/lib/", 9) == 0) return;
     Dl_info self;
     if (dladdr((void *)am_rebind_image, &self) && self.dli_fbase == header) return;  // never rewrite our own imports
+    char line[256];
+    snprintf(line, sizeof line, "bypass: image %s", name);
+    am_log(line);
     am_rebind_image((const struct mach_header_64 *)header, slide);
 }
 
 __attribute__((constructor)) static void am_detect_bypass_install(void) {
+    char line[64];
+    snprintf(line, sizeof line, "bypass: install images=%u", (unsigned)_dyld_image_count());
+    am_log(line);
     am_orig_image_name = dlsym(RTLD_DEFAULT, "_dyld_get_image_name");
     am_orig_dlopen = dlsym(RTLD_DEFAULT, "dlopen");
     am_orig_dlsym = dlsym(RTLD_DEFAULT, "dlsym");
