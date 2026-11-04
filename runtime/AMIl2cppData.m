@@ -2,7 +2,7 @@
 
 #import "AMIl2cppData.h"
 #import "AMIl2cpp.h"
-#import <dlfcn.h>
+#include "am_il2cpp.h"  // am_il2cpp_lookup
 #import <os/log.h>
 #import <string.h>
 

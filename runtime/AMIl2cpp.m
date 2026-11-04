@@ -78,6 +78,8 @@ static const struct mach_header_64 *il2cppImage(void) {
             return unity;
         }
     }
+    // dyld lists the main executable first (index 0), before any dylib it loaded; we are a dylib
+    // inside that executable, so the count is never 0 here.
     return count ? (const struct mach_header_64 *)_dyld_get_image_header(0) : NULL;
 }
 

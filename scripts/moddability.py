@@ -90,8 +90,8 @@ def _il2cpp_symbols(z, names, libs):
         try:
             _cpu, body = il2cpp_symbols.choose_slice(z.read(lib))
             status = il2cpp_symbols.classify(il2cpp_symbols.parse_thin(body), "il2cpp_domain_get")
-        except (il2cpp_symbols.MachOError, struct.error):
-            continue
+        except (il2cpp_symbols.MachOError, struct.error, zipfile.BadZipFile, OSError):
+            continue  # not a readable Mach-O (or a damaged member): the other binary may still answer
         if status == "export":
             return status
         if status == "symtab":
