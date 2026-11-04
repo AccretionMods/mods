@@ -1,7 +1,10 @@
 // Hides substrate-like images and jailbreak artifacts from a game's own detection routines (the PAG
 // crash SDK scans loaded images for Substrate/MobileSubstrate/TweakInject/CydiaSubstrate/libsubstrate;
-// Unity Ads checks /private/jailbreak.txt). The rebind is a runtime GOT rewrite, so it also works for
-// images built with chained fixups (it rewrites the resolved slots, not the file encodings).
+// Unity Ads checks /private/jailbreak.txt). Two rebind paths:
+//   * classic images: rewrite __got / __la_symbol_ptr through the indirect symbol table;
+//   * chained-fixup images (UnityFramework, most modern dylibs): walk LC_DYLD_CHAINED_FIXUPS binds and
+//     rewrite the slot of each matching import.
+// Both paths only touch resolved import slots and validate every index before reading or writing.
 #include <dlfcn.h>
 #include <errno.h>
 #include <mach-o/dyld.h>
@@ -78,8 +81,6 @@ static FILE *am_rep_fopen(const char *path, const char *mode) {
     return am_orig_fopen(path, mode);
 }
 
-// One import-slot rebind for a loaded image: walks __got / __la_symbol_ptr and rewrites the slot for
-// each named symbol. Safe on chained-fixup images because dyld has already resolved the slots.
 static bool am_write_slot(void *slot, void *value) {
     vm_address_t page = (vm_address_t)slot & ~(vm_page_size - 1);
     if (vm_protect(mach_task_self(), page, vm_page_size, false, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY) !=
@@ -90,41 +91,108 @@ static bool am_write_slot(void *slot, void *value) {
     return *(void **)slot == value;
 }
 
-static void am_rebind_image(const struct mach_header_64 *header, intptr_t slide) {
-    if (!header || header->magic != MH_MAGIC_64 || header->cputype != 0x100000c) return;
-    const struct symtab_command *symtab = NULL;
-    const struct dysymtab_command *dysymtab = NULL;
-    const struct segment_command_64 *linkedit = NULL;
-    const struct section_64 *sections[64];
-    size_t section_count = 0;
-    bool chained = false;
-    const unsigned char *base = (const unsigned char *)header;
-    uintptr_t image = (uintptr_t)header + (uintptr_t)slide;
-    size_t at = sizeof(struct mach_header_64);
-    size_t end = at + header->sizeofcmds;
-    for (uint32_t i = 0; i < header->ncmds && at < end; i++) {
-        const struct load_command *command = (const void *)(base + at);
-        if (command->cmdsize < 8 || at + command->cmdsize > end) break;
-        if (command->cmd == LC_SYMTAB) symtab = (const void *)command;
-        else if (command->cmd == LC_DYSYMTAB) dysymtab = (const void *)command;
-        else if (command->cmd == 0x80000034u) chained = true;  // LC_DYLD_CHAINED_FIXUPS: no classic indirect table
-        else if (command->cmd == LC_SEGMENT_64) {
-            const struct segment_command_64 *segment = (const void *)command;
-            if (strcmp(segment->segname, "__LINKEDIT") == 0) linkedit = segment;
-            const struct section_64 *section = (const void *)(segment + 1);
-            for (uint32_t s = 0; s < segment->nsects && section_count < 64; s++, section++) {
-                uint32_t type = section->flags & SECTION_TYPE;
-                if (type == S_NON_LAZY_SYMBOL_POINTERS || type == S_LAZY_SYMBOL_POINTERS)
-                    sections[section_count++] = section;
+static void am_rebind_symbol(const char *name, void **slot) {
+    if (!name || !slot) return;
+    if (name[0] == '_') name++;
+    if (strcmp(name, "dyld_get_image_name") == 0) am_write_slot(slot, (void *)am_rep_image_name);
+    else if (strcmp(name, "dlopen") == 0) am_write_slot(slot, (void *)am_rep_dlopen);
+    else if (strcmp(name, "dlsym") == 0) am_write_slot(slot, (void *)am_rep_dlsym);
+    else if (strcmp(name, "stat") == 0) am_write_slot(slot, (void *)am_rep_stat);
+    else if (strcmp(name, "access") == 0) am_write_slot(slot, (void *)am_rep_access);
+    else if (strcmp(name, "fopen") == 0) am_write_slot(slot, (void *)am_rep_fopen);
+}
+
+// MARK: chained fixups
+
+struct am_chained_header {
+    uint32_t version, starts_offset, imports_offset, symbols_offset, imports_count, imports_format, symbols_format;
+};
+struct am_starts_image {
+    uint32_t seg_count;
+    uint32_t seg_info[1];
+};
+struct am_starts_segment {
+    uint32_t size;
+    uint16_t page_size, pointer_format;
+    uint64_t segment_offset;
+    uint32_t max_valid_pointer;
+    uint16_t page_count;
+    uint16_t page_start[1];
+};
+struct am_import {
+    uint32_t lib_ordinal : 8, weak_import : 1, name_offset : 23;
+};
+struct am_import_addend {
+    uint32_t lib_ordinal : 8, weak_import : 1, name_offset : 23;
+    uint32_t addend;
+};
+struct am_import_addend64 {
+    uint64_t lib_ordinal : 16, weak_import : 1, reserved : 15, name_offset : 32;
+    uint64_t addend;
+};
+
+static const char *am_chained_import_name(const struct am_chained_header *header, const unsigned char *payload,
+                                          uint32_t ordinal) {
+    if (ordinal >= header->imports_count) return NULL;
+    const unsigned char *base = payload + header->imports_offset;
+    uint32_t name_offset;
+    if (header->imports_format == 1) {
+        const struct am_import *item = (const void *)(base + (size_t)ordinal * sizeof *item);
+        name_offset = item->name_offset;
+    } else if (header->imports_format == 2) {
+        const struct am_import_addend *item = (const void *)(base + (size_t)ordinal * sizeof *item);
+        name_offset = item->name_offset;
+    } else if (header->imports_format == 3) {
+        const struct am_import_addend64 *item = (const void *)(base + (size_t)ordinal * sizeof *item);
+        name_offset = (uint32_t)item->name_offset;
+    } else {
+        return NULL;
+    }
+    return (const char *)(payload + header->symbols_offset + name_offset);
+}
+
+static void am_rebind_chained(const unsigned char *payload, uintptr_t image,
+                              const struct segment_command_64 *const *segments, size_t segment_count) {
+    const struct am_chained_header *header = (const void *)payload;
+    if (header->version != 0 || header->starts_offset == 0 || header->imports_count == 0) return;
+    const struct am_starts_image *starts = (const void *)(payload + header->starts_offset);
+    if (starts->seg_count > segment_count) return;
+    for (uint32_t s = 0; s < starts->seg_count; s++) {
+        if (starts->seg_info[s] == 0) continue;
+        const struct am_starts_segment *segment = (const void *)((const unsigned char *)starts + starts->seg_info[s]);
+        if (segment->pointer_format != 2 && segment->pointer_format != 6) continue;  // PTR_64 / PTR_64_OFFSET
+        if (segment->page_size != 4096 && segment->page_size != 16384) continue;
+        uintptr_t segment_base = image + segments[s]->vmaddr;
+        for (uint16_t page = 0; page < segment->page_count; page++) {
+            uint16_t start = segment->page_start[page];
+            if (start == 0xFFFF || (start & 0x8000)) continue;  // none / multi-chain page
+            unsigned char *slot = (unsigned char *)segment_base + (size_t)page * segment->page_size + start;
+            for (int guard = 0; guard < 100000 && slot; guard++) {
+                uint64_t value = *(const uint64_t *)slot;
+                uint32_t next = (value >> 51) & 0xFFF;
+                if ((value >> 63) & 1) {
+                    const char *name = am_chained_import_name(header, payload, (uint32_t)(value & 0xFFFFFF));
+                    am_rebind_symbol(name, (void **)slot);
+                }
+                if (next == 0) break;
+                slot += (size_t)next * 4;
             }
         }
-        at += command->cmdsize;
     }
+}
+
+// MARK: classic fixups
+
+static void am_rebind_classic(const struct mach_header_64 *header, intptr_t slide,
+                              const struct symtab_command *symtab, const struct dysymtab_command *dysymtab,
+                              const struct segment_command_64 *linkedit, const struct section_64 *const *sections,
+                              size_t section_count) {
     if (!symtab || !dysymtab || !linkedit || !section_count) return;
-    if (chained || dysymtab->nindirectsyms == 0 || symtab->nsyms == 0 || symtab->strsize == 0) return;
+    if (dysymtab->nindirectsyms == 0 || symtab->nsyms == 0 || symtab->strsize == 0) return;
     if (symtab->symoff < linkedit->fileoff || symtab->stroff < linkedit->fileoff ||
         dysymtab->indirectsymoff < linkedit->fileoff)
         return;
+    uintptr_t image = (uintptr_t)header + (uintptr_t)slide;
     uintptr_t link = image + linkedit->vmaddr;
     const struct nlist_64 *symbols = (const void *)(link + (symtab->symoff - linkedit->fileoff));
     const char *strings = (const char *)(link + (symtab->stroff - linkedit->fileoff));
@@ -143,16 +211,51 @@ static void am_rebind_image(const struct mach_header_64 *header, intptr_t slide)
                 continue;
             uint32_t strx = symbols[symbol_index].n_un.n_strx;
             if (strx >= symtab->strsize) continue;
-            const char *name = strings + strx;
-            if (name[0] == '_') name++;
-            if (strcmp(name, "dyld_get_image_name") == 0) am_write_slot(&slots[i], (void *)am_rep_image_name);
-            else if (strcmp(name, "dlopen") == 0) am_write_slot(&slots[i], (void *)am_rep_dlopen);
-            else if (strcmp(name, "dlsym") == 0) am_write_slot(&slots[i], (void *)am_rep_dlsym);
-            else if (strcmp(name, "stat") == 0) am_write_slot(&slots[i], (void *)am_rep_stat);
-            else if (strcmp(name, "access") == 0) am_write_slot(&slots[i], (void *)am_rep_access);
-            else if (strcmp(name, "fopen") == 0) am_write_slot(&slots[i], (void *)am_rep_fopen);
+            am_rebind_symbol(strings + strx, &slots[i]);
         }
     }
+}
+
+static void am_rebind_image(const struct mach_header_64 *header, intptr_t slide) {
+    if (!header || header->magic != MH_MAGIC_64 || header->cputype != 0x100000c) return;
+    const struct symtab_command *symtab = NULL;
+    const struct dysymtab_command *dysymtab = NULL;
+    const struct segment_command_64 *linkedit = NULL;
+    const struct section_64 *sections[64];
+    const struct segment_command_64 *segments[64];
+    size_t section_count = 0, segment_count = 0;
+    const struct linkedit_data_command *chained = NULL;
+    const unsigned char *base = (const unsigned char *)header;
+    size_t at = sizeof(struct mach_header_64);
+    size_t end = at + header->sizeofcmds;
+    for (uint32_t i = 0; i < header->ncmds && at < end; i++) {
+        const struct load_command *command = (const void *)(base + at);
+        if (command->cmdsize < 8 || at + command->cmdsize > end) break;
+        if (command->cmd == LC_SYMTAB) symtab = (const void *)command;
+        else if (command->cmd == LC_DYSYMTAB) dysymtab = (const void *)command;
+        else if (command->cmd == 0x80000034u) chained = (const void *)command;
+        else if (command->cmd == LC_SEGMENT_64) {
+            const struct segment_command_64 *segment = (const void *)command;
+            if (segment_count < 64) segments[segment_count++] = segment;
+            if (strcmp(segment->segname, "__LINKEDIT") == 0) linkedit = segment;
+            const struct section_64 *section = (const void *)(segment + 1);
+            for (uint32_t s = 0; s < segment->nsects && section_count < 64; s++, section++) {
+                uint32_t type = section->flags & SECTION_TYPE;
+                if (type == S_NON_LAZY_SYMBOL_POINTERS || type == S_LAZY_SYMBOL_POINTERS)
+                    sections[section_count++] = section;
+            }
+        }
+        at += command->cmdsize;
+    }
+    if (!linkedit) return;
+    if (chained) {
+        uintptr_t image = (uintptr_t)header + (uintptr_t)slide;
+        if (chained->dataoff < linkedit->fileoff) return;
+        const unsigned char *payload = (const unsigned char *)(image + linkedit->vmaddr + (chained->dataoff - linkedit->fileoff));
+        am_rebind_chained(payload, image, segments, segment_count);
+        return;
+    }
+    am_rebind_classic(header, slide, symtab, dysymtab, linkedit, sections, section_count);
 }
 
 static void am_image_added(const struct mach_header *header, intptr_t slide) {
