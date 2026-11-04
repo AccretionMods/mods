@@ -210,3 +210,25 @@ void AMIl2cppStart(void) {
     atexit(logExit);
     dispatch_async(dispatch_get_main_queue(), ^{ attempt(120); });
 }
+
+void AMIl2cppStartTable(AMTableHookSpec *specs, size_t count, uint64_t registrationRva) {
+    if (started) return;
+    started = YES;
+    atexit(logExit);
+    size_t matched = 0;
+    for (size_t i = 0; i < count; i++) {
+        for (size_t j = 0; j < replacement_count; j++) {
+            if (specs[i].name && strcmp(specs[i].name, replacements[j].name) == 0) {
+                specs[i].replacement = replacements[j].replacement;
+                specs[i].original = replacements[j].original;
+                matched++;
+                break;
+            }
+        }
+    }
+    char line[160];
+    snprintf(line, sizeof line, "table hooks: %zu specs, %zu with a replacement", count, matched);
+    logLine(line);
+    // AMTableHookInstall defers to the dyld image callback, before IL2CPP initialises its MethodInfos.
+    AMTableHookInstall(specs, count, registrationRva);
+}
