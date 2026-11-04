@@ -120,6 +120,16 @@ Pitfalls learned the hard way:
 
 ## 5. Detection rebinder (`runtime/AMDetectBypass.c`)
 
+> **Update (method change):** `AMDetectBypass.c` now installs via **dyld interposing**
+> (`__DATA,__interpose`) instead of the hand-rolled classic/chained fixup walk. dyld rebinds
+> `stat`/`access`/`fopen`/`dlopen`/`_dyld_get_image_name` across every image (chained-fixup images
+> included) and does the binding itself, so the manual `vm_write` into fixup chains — the source of the
+> Into the Dead 2 and Survivor crashes — is gone. `dlsym` is deliberately **not** interposed, so the
+> originals resolve through the real `dlsym` and the replacements call them through a pointer without
+> recursing. The old walk (`am_rebind_chained`/`am_rebind_classic`/`am_write_slot`, §5 below) was removed;
+> the recommendation 1 "classic-only safe mode" is superseded. Marker on launch: `bypass: interpose
+> active images=N`. Still device-unverified: run the bait and confirm `visible=0` with no crash.
+
 Purpose: hide substrate-like images and jailbreak artifacts from a game's own checks (PAG crash SDK
 scans loaded images for Substrate/MobileSubstrate/TweakInject/CydiaSubstrate/libsubstrate; Unity Ads
 checks `/private/jailbreak.txt`).
