@@ -86,9 +86,30 @@ chose a local web app in this repo over a desktop app, a Claude panel or an iOS 
   version reported 0/42 because Darwin names carry a leading underscore). `am report` shows `il2cpp API:
   exported / symbol table only / not found`; symbol-table-only is "good" with a note, not found is "not supported".
   Shared Mach-O fixtures: `tests/macho_fixtures.py`.
-- Not verified: the weak import under the device build (the "Mods: runtime probe" workflow compiles it on a PR)
-  and any phone run of a symbol-table-only game. No such game is on this PC; BLEACH Mirrors High strips the names
-  from both tables, so it stays unsupported.
+- Verified on a phone (2026-11-04): the weak import loads and `API found` with the export trie stripped (the
+  symbol-table-only binary is The Wanderer 10.1 with its `il2cpp_*` export-trie edge renamed, `LC_SYMTAB`
+  untouched; see the next section). BLEACH Mirrors High and Pokémon TCG Pocket strip both tables and stay
+  unsupported.
+
+## Runtime: JIT code hooks fault on iOS 27; pointer hooks are the default (2026-11-04)
+- Device test (Apple-ID signed The Wanderer 10.1, symbol-table-only build, StikDebug JIT): no JIT → pointer hooks,
+  `ExperienceLevel.Update` counts (1,854+). JIT → `JIT is on: code hooks`; all four probe hooks install through
+  `MSHookFunction`, then the app dies on the first hooked call: `EXC_BAD_ACCESS KERN_PROTECTION_FAILURE`,
+  `ESR 0x8200000f`, PC in a 16 KB `mapped file ... rw-/rw-` page beside UnityFramework (`r-x/rwx` text before it).
+  The patched code page's maximum protection never regained execute.
+- Root cause is ElleKit 1.2's page protection, not signing: every `mach_vm_protect` there passes
+  `set_maximum=0` (`ellekitc.c` `EKHookMemoryRaw_impl`, `Orig.swift`, `Batch.swift`, `SVC.swift`, `Libhooker.swift`,
+  `Execute.swift`), so the COW page made to patch code keeps max `rw-`; the restore to `r-x` fails and the next
+  call faults. `EKJITLessHook` (hardware breakpoints) is skipped on arm64 because its original stub needs a
+  `pacibsp` prologue. Patching the restore call in the prebuilt dylib to `set_maximum=1` did not change the page
+  (the trampoline path is separate): a real fix needs ElleKit rebuilt with `set_maximum` at every site, or a
+  different hooking library.
+- Runtime: pointer hooks are the default even with JIT; `AMIl2cppSetCodeHooks(YES)` opts in. The probe calls it,
+  hooks two game `Update`s, logs counts every 5 s and logs `hook %p via EKJITLessHook|MSHookFunction`. Crash
+  reports: `/TheWanderer-2026-11-04-001806.ips` and `/TheWanderer-2026-11-04-002211.ips`. Code hooks stay
+  unusable on iOS 27, so `needs_jit` switches cannot work there.
+- Not verified: a certificate-signed JIT build (the Signulous profile has no `get-task-allow`, so no debugger);
+  the Apple-ID copy was used.
 
 ## Working on Studio: run, test, change safely (2026-10-28)
 - Run: `uv run --no-project --python 3.12 studio/server.py` (port 8765; `.claude/launch.json` "mod-studio"). After a
