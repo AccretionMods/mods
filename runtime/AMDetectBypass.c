@@ -11,10 +11,15 @@
 #include <mach-o/loader.h>
 #include <mach-o/nlist.h>
 #include <mach/mach.h>
+#include <os/log.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
+
+static void am_log(const char *message) {
+    os_log(OS_LOG_DEFAULT, "[AccretionMods] %{public}s", message);
+}
 
 static const char *(*am_orig_image_name)(uint32_t);
 static void *(*am_orig_dlopen)(const char *, int);
@@ -91,15 +96,16 @@ static bool am_write_slot(void *slot, void *value) {
     return *(void **)slot == value;
 }
 
-static void am_rebind_symbol(const char *name, void **slot) {
-    if (!name || !slot) return;
+static bool am_rebind_symbol(const char *name, void **slot) {
+    if (!name || !slot) return false;
     if (name[0] == '_') name++;
-    if (strcmp(name, "dyld_get_image_name") == 0) am_write_slot(slot, (void *)am_rep_image_name);
-    else if (strcmp(name, "dlopen") == 0) am_write_slot(slot, (void *)am_rep_dlopen);
-    else if (strcmp(name, "dlsym") == 0) am_write_slot(slot, (void *)am_rep_dlsym);
-    else if (strcmp(name, "stat") == 0) am_write_slot(slot, (void *)am_rep_stat);
-    else if (strcmp(name, "access") == 0) am_write_slot(slot, (void *)am_rep_access);
-    else if (strcmp(name, "fopen") == 0) am_write_slot(slot, (void *)am_rep_fopen);
+    if (strcmp(name, "dyld_get_image_name") == 0) return am_write_slot(slot, (void *)am_rep_image_name);
+    if (strcmp(name, "dlopen") == 0) return am_write_slot(slot, (void *)am_rep_dlopen);
+    if (strcmp(name, "dlsym") == 0) return am_write_slot(slot, (void *)am_rep_dlsym);
+    if (strcmp(name, "stat") == 0) return am_write_slot(slot, (void *)am_rep_stat);
+    if (strcmp(name, "access") == 0) return am_write_slot(slot, (void *)am_rep_access);
+    if (strcmp(name, "fopen") == 0) return am_write_slot(slot, (void *)am_rep_fopen);
+    return false;
 }
 
 // MARK: chained fixups
@@ -132,52 +138,74 @@ struct am_import_addend64 {
 };
 
 static const char *am_chained_import_name(const struct am_chained_header *header, const unsigned char *payload,
-                                          uint32_t ordinal) {
+                                          uint32_t payload_size, uint32_t ordinal) {
     if (ordinal >= header->imports_count) return NULL;
-    const unsigned char *base = payload + header->imports_offset;
+    if (header->imports_offset >= payload_size || header->symbols_offset >= payload_size) return NULL;
+    size_t item_size = 0;
+    if (header->imports_format == 1) item_size = sizeof(struct am_import);
+    else if (header->imports_format == 2) item_size = sizeof(struct am_import_addend);
+    else if (header->imports_format == 3) item_size = sizeof(struct am_import_addend64);
+    if (!item_size) return NULL;
+    size_t item_offset = (size_t)header->imports_offset + (size_t)ordinal * item_size;
+    if (item_offset + item_size > payload_size) return NULL;
+    const unsigned char *item = payload + item_offset;
     uint32_t name_offset;
-    if (header->imports_format == 1) {
-        const struct am_import *item = (const void *)(base + (size_t)ordinal * sizeof *item);
-        name_offset = item->name_offset;
-    } else if (header->imports_format == 2) {
-        const struct am_import_addend *item = (const void *)(base + (size_t)ordinal * sizeof *item);
-        name_offset = item->name_offset;
-    } else if (header->imports_format == 3) {
-        const struct am_import_addend64 *item = (const void *)(base + (size_t)ordinal * sizeof *item);
-        name_offset = (uint32_t)item->name_offset;
-    } else {
-        return NULL;
-    }
-    return (const char *)(payload + header->symbols_offset + name_offset);
+    if (header->imports_format == 1) name_offset = ((const struct am_import *)item)->name_offset;
+    else if (header->imports_format == 2) name_offset = ((const struct am_import_addend *)item)->name_offset;
+    else name_offset = (uint32_t)((const struct am_import_addend64 *)item)->name_offset;
+    size_t name_start = (size_t)header->symbols_offset + name_offset;
+    if (name_start >= payload_size) return NULL;
+    const char *name = (const char *)(payload + name_start);
+    size_t limit = payload_size - name_start;
+    if (limit > 256) limit = 256;
+    if (strnlen(name, limit) == limit) return NULL;  // no NUL inside the payload: refuse to read past it
+    return name;
 }
 
-static void am_rebind_chained(const unsigned char *payload, uintptr_t image,
+static void am_rebind_chained(const unsigned char *payload, uint32_t payload_size, uintptr_t image,
                               const struct segment_command_64 *const *segments, size_t segment_count) {
+    if (payload_size < sizeof(struct am_chained_header)) return;
     const struct am_chained_header *header = (const void *)payload;
     if (header->version != 0 || header->starts_offset == 0 || header->imports_count == 0) return;
+    if ((size_t)header->starts_offset + sizeof(struct am_starts_image) > payload_size) return;
     const struct am_starts_image *starts = (const void *)(payload + header->starts_offset);
     if (starts->seg_count > segment_count) return;
+    if ((size_t)header->starts_offset + 4 + (size_t)starts->seg_count * 4 > payload_size) return;
+    int binds = 0, writes = 0;
     for (uint32_t s = 0; s < starts->seg_count; s++) {
-        if (starts->seg_info[s] == 0) continue;
-        const struct am_starts_segment *segment = (const void *)((const unsigned char *)starts + starts->seg_info[s]);
+        uint32_t info_offset = starts->seg_info[s];
+        if (info_offset < 4) continue;
+        size_t info_at = (size_t)header->starts_offset + info_offset;
+        if (info_at + sizeof(struct am_starts_segment) > payload_size) continue;
+        const struct am_starts_segment *segment = (const void *)(payload + info_at);
+        if (segment->size < sizeof *segment || info_at + segment->size > payload_size) continue;
         if (segment->pointer_format != 2 && segment->pointer_format != 6) continue;  // PTR_64 / PTR_64_OFFSET
         if (segment->page_size != 4096 && segment->page_size != 16384) continue;
+        if ((size_t)segment->size < sizeof *segment + (size_t)segment->page_count * 2) continue;
         uintptr_t segment_base = image + segments[s]->vmaddr;
+        uintptr_t segment_end = segment_base + segments[s]->vmsize;
         for (uint16_t page = 0; page < segment->page_count; page++) {
             uint16_t start = segment->page_start[page];
             if (start == 0xFFFF || (start & 0x8000)) continue;  // none / multi-chain page
             unsigned char *slot = (unsigned char *)segment_base + (size_t)page * segment->page_size + start;
-            for (int guard = 0; guard < 100000 && slot; guard++) {
+            for (int guard = 0; guard < 100000; guard++) {
+                if ((uintptr_t)slot < segment_base || (uintptr_t)slot + 8 > segment_end) break;
                 uint64_t value = *(const uint64_t *)slot;
                 uint32_t next = (value >> 51) & 0xFFF;
                 if ((value >> 63) & 1) {
-                    const char *name = am_chained_import_name(header, payload, (uint32_t)(value & 0xFFFFFF));
-                    am_rebind_symbol(name, (void **)slot);
+                    binds++;
+                    const char *name = am_chained_import_name(header, payload, payload_size, (uint32_t)(value & 0xFFFFFF));
+                    if (name && am_rebind_symbol(name, (void **)slot)) writes++;
                 }
                 if (next == 0) break;
                 slot += (size_t)next * 4;
             }
         }
+    }
+    if (binds) {
+        char line[96];
+        snprintf(line, sizeof line, "bypass: chained binds=%d rewrites=%d", binds, writes);
+        am_log(line);
     }
 }
 
@@ -197,9 +225,10 @@ static void am_rebind_classic(const struct mach_header_64 *header, intptr_t slid
     const struct nlist_64 *symbols = (const void *)(link + (symtab->symoff - linkedit->fileoff));
     const char *strings = (const char *)(link + (symtab->stroff - linkedit->fileoff));
     const uint32_t *indirect = (const uint32_t *)(link + (dysymtab->indirectsymoff - linkedit->fileoff));
+    int writes = 0;
     for (size_t s = 0; s < section_count; s++) {
         const struct section_64 *section = sections[s];
-        if (section->reserved1 >= dysymtab->nindirectsyms) continue;
+        if (section->reserved1 >= dysymtab->nindirectsyms || section->size == 0) continue;
         void **slots = (void **)(image + section->addr);
         size_t count = section->size / sizeof(void *);
         size_t available = dysymtab->nindirectsyms - section->reserved1;
@@ -211,8 +240,17 @@ static void am_rebind_classic(const struct mach_header_64 *header, intptr_t slid
                 continue;
             uint32_t strx = symbols[symbol_index].n_un.n_strx;
             if (strx >= symtab->strsize) continue;
-            am_rebind_symbol(strings + strx, &slots[i]);
+            const char *name = strings + strx;
+            size_t limit = symtab->strsize - strx;
+            if (limit > 256) limit = 256;
+            if (strnlen(name, limit) == limit) continue;
+            if (am_rebind_symbol(name, &slots[i])) writes++;
         }
+    }
+    if (writes) {
+        char line[96];
+        snprintf(line, sizeof line, "bypass: classic rewrites=%d", writes);
+        am_log(line);
     }
 }
 
@@ -250,9 +288,13 @@ static void am_rebind_image(const struct mach_header_64 *header, intptr_t slide)
     if (!linkedit) return;
     if (chained) {
         uintptr_t image = (uintptr_t)header + (uintptr_t)slide;
-        if (chained->dataoff < linkedit->fileoff) return;
+        if (chained->dataoff < linkedit->fileoff || chained->datasize == 0 ||
+            chained->dataoff - linkedit->fileoff > linkedit->filesize ||
+            chained->datasize > linkedit->filesize - (chained->dataoff - linkedit->fileoff))
+            return;
         const unsigned char *payload = (const unsigned char *)(image + linkedit->vmaddr + (chained->dataoff - linkedit->fileoff));
-        am_rebind_chained(payload, image, segments, segment_count);
+        am_log("bypass: chained image");
+        am_rebind_chained(payload, (uint32_t)chained->datasize, image, segments, segment_count);
         return;
     }
     am_rebind_classic(header, slide, symtab, dysymtab, linkedit, sections, section_count);
