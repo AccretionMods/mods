@@ -78,6 +78,21 @@ static bool fake_hook(void *target, void *replacement, void **original) {
 }
 static void log_line(const char *m) { printf("%s\n", m); }
 
+// The fallback path: dlsym finds nothing on a host without IL2CPP, so only the resolver
+// can satisfy am_il2cpp_api_load.
+static void *fake_resolve(void *context, const char *name) {
+    (void)context;
+    if (strcmp(name, "il2cpp_domain_get") == 0) return (void *)domain_get;
+    if (strcmp(name, "il2cpp_domain_get_assemblies") == 0) return (void *)domain_get_assemblies;
+    if (strcmp(name, "il2cpp_assembly_get_image") == 0) return (void *)assembly_get_image;
+    if (strcmp(name, "il2cpp_image_get_name") == 0) return (void *)image_get_name;
+    if (strcmp(name, "il2cpp_class_from_name") == 0) return (void *)class_from_name;
+    if (strcmp(name, "il2cpp_class_get_method_from_name") == 0) return (void *)class_get_method_from_name;
+    if (strcmp(name, "il2cpp_get_corlib") == 0) return (void *)get_corlib;
+    if (strcmp(name, "il2cpp_class_get_nested_types") == 0) return (void *)class_get_nested_types;
+    return NULL;
+}
+
 static void rep_a(void) {}
 static void rep_b(void) {}
 static void rep_c(void) {}
@@ -85,6 +100,21 @@ static void rep_d(void) {}
 static void *orig_a, *orig_b, *orig_c, *orig_d;
 
 int main(int argc, char **argv) {
+    if (argc > 1 && strcmp(argv[1], "resolver") == 0) {
+        AMIl2cppApi a = {0};
+        am_il2cpp_set_symbol_resolver(fake_resolve, NULL);
+        bool ok = am_il2cpp_api_load(&a);
+        printf("resolver_loaded=%d domain=%d corlib=%d optional=%d\n", ok,
+               a.domain_get == domain_get, a.get_corlib == get_corlib,
+               a.class_get_nested_types == class_get_nested_types);
+        return 0;
+    }
+    if (argc > 1 && strcmp(argv[1], "no-resolver") == 0) {
+        AMIl2cppApi a = {0};
+        am_il2cpp_set_symbol_resolver(NULL, NULL);
+        printf("no_resolver=%d\n", am_il2cpp_api_load(&a));
+        return 0;
+    }
     bool pointer = argc > 1 && strcmp(argv[1], "pointer") == 0;
     initialized = !(argc > 1 && strcmp(argv[1], "uninitialized") == 0);
     AMIl2cppApi api = {domain_get, domain_get_assemblies, assembly_get_image, image_get_name,

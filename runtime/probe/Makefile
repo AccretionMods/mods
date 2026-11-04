@@ -7,7 +7,7 @@ include $(THEOS)/makefiles/common.mk
 LIBRARY_NAME = AMIl2cppProbe
 
 # runtime/ files are copied in by scripts/build_probe.sh before each build.
-AMIl2cppProbe_FILES = Probe.m runtime/am_il2cpp.c runtime/AMIl2cpp.m runtime/am_hooks_data.c
+AMIl2cppProbe_FILES = Probe.m runtime/am_il2cpp.c runtime/AMIl2cpp.m runtime/AMMachSymbols.c runtime/am_hooks_data.c
 AMIl2cppProbe_CFLAGS = -fobjc-arc
 AMIl2cppProbe_FRAMEWORKS = UIKit
 AMIl2cppProbe_INSTALL_PATH = /Library/MobileSubstrate/DynamicLibraries

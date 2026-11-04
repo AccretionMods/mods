@@ -144,6 +144,17 @@ class Runtime(unittest.TestCase):
         self.assertIn("ready=0", out)
         self.assertNotIn("before il2cpp_init", out)
 
+    def test_api_load_falls_back_to_resolver(self):
+        out = subprocess.run([self.exe, "resolver"], check=True, capture_output=True, text=True).stdout
+        self.assertIn("resolver_loaded=1", out)
+        self.assertIn("domain=1", out)
+        self.assertIn("corlib=1", out)
+        self.assertIn("optional=1", out)
+
+    def test_api_load_without_resolver_fails(self):
+        out = subprocess.run([self.exe, "no-resolver"], check=True, capture_output=True, text=True).stdout
+        self.assertIn("no_resolver=0", out)
+
     def test_found_methods_are_hooked(self):
         self.assertIn("hooked Game.Player.TakeDamage (code)", self.out)
         self.assertIn("hooked Game.Player.GetSpeed (code)", self.out)

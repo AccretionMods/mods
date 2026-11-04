@@ -63,6 +63,12 @@ typedef void (*AMLogFn)(const char *message);
 // Installs a code hook on a function; returns false on failure (MSHookFunction in the tweak).
 typedef bool (*AMHookFn)(void *target, void *replacement, void **original);
 
+// Optional: resolves a symbol dlsym does not export (a stripped build's symbol table, for
+// example). Set before am_il2cpp_api_load; a NULL result from it is a miss like dlsym's, so
+// the required set still decides whether the API counts as loaded.
+typedef void *(*AMSymbolResolver)(void *context, const char *name);
+void am_il2cpp_set_symbol_resolver(AMSymbolResolver resolve, void *context);
+
 typedef struct {
     int hooked;
     int missing;         // method not found in the game

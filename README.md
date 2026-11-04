@@ -196,7 +196,7 @@ classes as leads. CI validates every `hooks.json` with `scripts/validate_mods.py
 ```
 
 and list the runtime in the mod's Makefile:
-`<Tweak>_FILES = Tweak.x menu/AMMenu.m runtime/am_il2cpp.c runtime/AMIl2cpp.m runtime/am_hooks_data.c`.
+`<Tweak>_FILES = Tweak.x menu/AMMenu.m runtime/am_il2cpp.c runtime/AMIl2cpp.m runtime/AMMachSymbols.c runtime/am_hooks_data.c`.
 
 The runtime waits for Unity to start and finds each method through the game's own `il2cpp_*` exports (class
 by namespace and name, method by name and argument count). A method that is gone in this version, or has

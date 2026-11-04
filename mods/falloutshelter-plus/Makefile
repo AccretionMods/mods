@@ -9,7 +9,7 @@ TWEAK_NAME = FalloutShelterPlus
 # runtime/SideloadCompat.m: keychain group, iCloud, Game Center and age-range answers for re-signed copies
 # (shared canonical copy, copied in with runtime/ by scripts/build.sh).
 # No %hook and no Substrate: hooks go through the runtime, which looks Substrate up only with JIT on.
-FalloutShelterPlus_FILES = Tweak.x AMTweaks.gen.m runtime/AMIl2cppData.m menu/AMMenu.m runtime/SideloadCompat.m runtime/am_il2cpp.c runtime/AMIl2cpp.m runtime/am_hooks_data.c
+FalloutShelterPlus_FILES = Tweak.x AMTweaks.gen.m runtime/AMIl2cppData.m menu/AMMenu.m runtime/SideloadCompat.m runtime/am_il2cpp.c runtime/AMIl2cpp.m runtime/AMMachSymbols.c runtime/am_hooks_data.c
 FalloutShelterPlus_CFLAGS = -fobjc-arc
 FalloutShelterPlus_FRAMEWORKS = UIKit Security
 FalloutShelterPlus_LOGOS_DEFAULT_GENERATOR = internal

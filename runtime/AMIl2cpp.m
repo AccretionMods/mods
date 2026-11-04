@@ -3,7 +3,10 @@
 #import <dlfcn.h>
 #import <execinfo.h>
 #import <mach/mach.h>
+#import <mach-o/dyld.h>
+#import <mach-o/loader.h>
 #import <os/log.h>
+#import <string.h>
 #import <unistd.h>
 
 #include "am_il2cpp.h"
@@ -59,6 +62,33 @@ static bool readMemory(const void *address, void *out, size_t size) {
     return kr == KERN_SUCCESS && got == size;
 }
 
+// The Unity framework image, found once. A build that hides its il2cpp_* exports still
+// names them in LC_SYMTAB, which AMMachSymbols reads (no dlsym handle needed).
+static const struct mach_header_64 *unityImage(void) {
+    static const struct mach_header_64 *found;
+    static bool scanned;
+    if (scanned) return found;
+    scanned = true;
+    for (uint32_t i = 0; i < _dyld_image_count(); i++) {
+        const char *name = _dyld_get_image_name(i);
+        if (name && strstr(name, "UnityFramework")) {
+            found = (const struct mach_header_64 *)_dyld_get_image_header(i);
+            break;
+        }
+    }
+    return found;
+}
+
+// Weak: a mod that does not compile runtime/AMMachSymbols.c keeps the dlsym-only path.
+extern void *ammach_lookup_symbol(const void *header, size_t header_bytes, const char *name)
+    __attribute__((weak_import));
+
+static void *machoSymbol(void *context, const char *name) {
+    const struct mach_header_64 *image = context;
+    if (!image || !ammach_lookup_symbol) return NULL;
+    return ammach_lookup_symbol(image, sizeof *image + image->sizeofcmds, name);
+}
+
 void AMIl2cppRegister(const char *name, void *replacement, void **original) {
     if (replacement_count >= sizeof replacements / sizeof replacements[0]) {
         logLine("too many replacements registered; extra ones ignored");
@@ -96,6 +126,8 @@ static void logExit(void) {
 
 static void attempt(int triesLeft) {
     AMIl2cppApi api;
+    const struct mach_header_64 *image = unityImage();
+    if (image) am_il2cpp_set_symbol_resolver(machoSymbol, (void *)image);
     bool loaded = am_il2cpp_api_load(&api);
     if (triesLeft % 20 == 0) {
         char line[128];
