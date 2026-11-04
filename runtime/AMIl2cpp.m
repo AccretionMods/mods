@@ -15,6 +15,10 @@
 extern const AMHookSpec am_hook_specs[];
 extern const size_t am_hook_spec_count;
 extern void am_hook_specs_reveal(void);  // the names are encoded in the .dylib (runtime/am_hide.h)
+// Set by am_hooks_data.c when hooks.json has a "table" section: a game without il2cpp_* exports.
+extern AMTableHookSpec *am_hook_table_specs;
+extern const size_t am_hook_table_count;
+extern const uint64_t am_hook_table_registration;
 
 static AMHookReplacement replacements[64];
 static size_t replacement_count = 0;
@@ -206,6 +210,11 @@ void AMIl2cppSetReportHandler(void (^handler)(NSString *report)) {
 
 void AMIl2cppStart(void) {
     if (started) return;
+    if (am_hook_table_count > 0) {
+        // hooks.json "table": the names resolved by scripts/table_hooks.py, patched before IL2CPP starts
+        AMIl2cppStartTable(am_hook_table_specs, am_hook_table_count, am_hook_table_registration);
+        return;
+    }
     started = YES;
     atexit(logExit);
     dispatch_async(dispatch_get_main_queue(), ^{ attempt(120); });

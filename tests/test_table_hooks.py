@@ -1,3 +1,4 @@
+from scripts.embed_hooks import render
 from scripts.table_hooks import header, parse_dump
 
 DUMP = """
@@ -37,3 +38,14 @@ def test_header_contains_table_entries():
     assert "AM_TABLE_HOOK_COUNT 2" in text
     assert '{ "Game.Foo.Update", 7, 529, 0, 0 }' in text
     assert '{ "Game.Foo.Start", 7, 534, 0, 0 }' in text
+
+
+def test_embed_hooks_table_symbols():
+    data = {"engine": "unity-il2cpp", "hooks": [
+        {"assembly": "Assembly-CSharp", "namespace": "", "class": "GroundEffectPlayer", "method": "Start"}]}
+    with_table = render(data, True)
+    assert "am_hook_table_specs = AMTableHooks" in with_table
+    assert "am_hook_table_count = AM_TABLE_HOOK_COUNT" in with_table
+    without_table = render(data, False)
+    assert "am_hook_table_specs = 0" in without_table
+    assert "am_hook_table_count = 0" in without_table
