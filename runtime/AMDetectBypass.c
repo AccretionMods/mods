@@ -98,7 +98,7 @@ static bool am_write_slot(void *slot, void *value) {
 
 static bool am_rebind_symbol(const char *name, void **slot) {
     if (!name || !slot) return false;
-    if (name[0] == '_') name++;
+    while (name[0] == '_') name++;
     if (strcmp(name, "dyld_get_image_name") == 0) return am_write_slot(slot, (void *)am_rep_image_name);
     if (strcmp(name, "dlopen") == 0) return am_write_slot(slot, (void *)am_rep_dlopen);
     if (strcmp(name, "dlsym") == 0) return am_write_slot(slot, (void *)am_rep_dlsym);
