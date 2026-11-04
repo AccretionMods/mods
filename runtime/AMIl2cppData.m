@@ -53,8 +53,9 @@ static void logOnce(NSString *what) {
 
 // Looked up once per use site: dlsym(RTLD_DEFAULT) searches every loaded image, and AMIl2cppField runs per object
 // on every tick (uncached, 4 pins over the vault's objectives froze Fallout Shelter 0.34 s twice a second).
-// A miss is not kept, so a lookup before the game's library is ready is tried again.
-#define IL2CPP(name) ({ static void *found_; if (!found_) found_ = dlsym(RTLD_DEFAULT, "il2cpp_" #name); \
+// A miss is not kept, so a lookup before the game's library is ready is tried again. am_il2cpp_lookup is
+// dlsym plus the symbol-table fallback (runtime/AMMachSymbols.c), the same ladder the hooks use.
+#define IL2CPP(name) ({ static void *found_; if (!found_) found_ = am_il2cpp_lookup("il2cpp_" #name); \
     (__typeof__(name##_t) *)found_; })
 typedef void *domain_get_t(void);
 typedef void *domain_assembly_open_t(void *domain, const char *name);

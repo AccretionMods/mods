@@ -34,7 +34,9 @@ void *ammach_lookup_symbol(const void *header, size_t header_bytes, const char *
         if (cmd->cmdsize < sizeof *cmd || at + cmd->cmdsize > end) return NULL;
         if (cmd->cmd == AM_MACH_LC_SEGMENT_64 && cmd->cmdsize >= sizeof(AMMachSegment64)) {
             const AMMachSegment64 *seg = (const void *)cmd;
-            if (!header_segment && seg->fileoff == 0) header_segment = seg;
+            // The segment that holds the header: file offset 0 with bytes behind it
+            // (__PAGEZERO has offset 0 too but no file bytes and vmaddr 0).
+            if (!header_segment && seg->fileoff == 0 && seg->filesize) header_segment = seg;
             if (named(seg, "__LINKEDIT")) linkedit = seg;
         } else if (cmd->cmd == AM_MACH_LC_SYMTAB && cmd->cmdsize >= sizeof(AMMachSymtab)) {
             symtab = (const void *)cmd;
@@ -49,8 +51,8 @@ void *ammach_lookup_symbol(const void *header, size_t header_bytes, const char *
     if (syms + (uint64_t)symtab->nsyms * sizeof(AMMachNlist64) > linkedit->filesize) return NULL;
     if (strs + symtab->strsize > linkedit->filesize) return NULL;
 
-    // A __TEXT segment with fileoff 0 holds the header; its vmaddr is the base the
-    // other segments and the symbol values are relative to (0 for a dylib/framework).
+    // The header's segment vmaddr is the base the other segments and the symbol values
+    // are relative to (0 for a dylib/framework, 0x100000000 for an executable).
     uint64_t base_vmaddr = header_segment ? header_segment->vmaddr : 0;
     if (linkedit->vmaddr < base_vmaddr) return NULL;
     const uint8_t *link = base + (linkedit->vmaddr - base_vmaddr);

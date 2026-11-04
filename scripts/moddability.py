@@ -11,6 +11,8 @@ import re
 import struct
 import zipfile
 
+import inspect_il2cpp_symbols as il2cpp_symbols
+
 # what each marker in a framework name or the metadata strings means
 MARKERS = {
     "multiplayer": [b"Photon", b"PhotonNetwork", b"Mirror.NetworkBehaviour", b"Unity.Netcode", b"Nakama",
@@ -77,9 +79,29 @@ def _encrypted(binary):
     return False
 
 
+def _il2cpp_symbols(z, names, libs):
+    """How the runtime reaches il2cpp_domain_get in the game: "export" (dlsym finds it), "symtab" (only
+    the symbol table names it: the runtime's fallback reads that), or "missing" (stripped from both).
+    The best answer over UnityFramework and the app binary (older Unity links IL2CPP into the app)."""
+    best = "missing"
+    for lib in libs:
+        if lib not in names:
+            continue
+        try:
+            _cpu, body = il2cpp_symbols.choose_slice(z.read(lib))
+            status = il2cpp_symbols.classify(il2cpp_symbols.parse_thin(body), "il2cpp_domain_get")
+        except (il2cpp_symbols.MachOError, struct.error):
+            continue
+        if status == "export":
+            return status
+        if status == "symtab":
+            best = status
+    return best
+
+
 def inspect_ipa(path):
     """Facts from the .ipa: {"bundle", "name", "version", "decrypted", "engine", "metadata_version",
-    "il2cpp_exports" (None when not Unity IL2CPP), "markers", "size"}."""
+    "il2cpp_symbols" ("export" / "symtab" / "missing"; None when not Unity IL2CPP), "markers", "size"}."""
     with zipfile.ZipFile(path) as z:
         names = z.namelist()
         apps = sorted({n.split("/")[1] for n in names if n.startswith("Payload/") and n.count("/") >= 2 and n.split("/")[1].endswith(".app")})
@@ -108,10 +130,9 @@ def inspect_ipa(path):
                 markers[kind] = found
         size = sum(i.file_size for i in z.infolist())
         name = app_name(z, app, info)
-        exports = None  # the runtime finds Unity through IL2CPP's exported API (dlsym il2cpp_domain_get...)
+        symbols = None  # the runtime finds Unity through IL2CPP's API (il2cpp_domain_get...): exported or in the symbol table
         if unity and il2cpp:
-            libs = [f"{app}/Frameworks/UnityFramework.framework/UnityFramework", main]
-            exports = any(b"il2cpp_domain_get\0" in z.read(lib) for lib in libs if lib in names)
+            symbols = _il2cpp_symbols(z, names, [f"{app}/Frameworks/UnityFramework.framework/UnityFramework", main])
     return {
         "bundle": info.get("CFBundleIdentifier"),
         "name": name,
@@ -119,7 +140,7 @@ def inspect_ipa(path):
         "decrypted": decrypted,
         "engine": engine,
         "metadata_version": meta_version,
-        "il2cpp_exports": exports,
+        "il2cpp_symbols": symbols,
         "markers": markers,
         "size": size,
     }
@@ -132,11 +153,15 @@ def verdict(facts, scan=None):
         return "not supported", ["The main binary is still FairPlay-encrypted: get a decrypted copy (am fetch)."]
     if facts["engine"] != "Unity IL2CPP":
         return "not supported", [f"Engine: {facts['engine']}. Our dump, scan, pins and hooks need Unity IL2CPP."]
-    if facts.get("il2cpp_exports") is False:
-        return "not supported", ["UnityFramework has no il2cpp_* exports (the game strips or renames them): the "
-                                 "dump still works, but on the phone the runtime can't find Unity, so no switch "
-                                 "or hook runs (\"Unity runtime not found\")."]
+    if facts.get("il2cpp_symbols") == "missing":
+        return "not supported", ["UnityFramework names no il2cpp_* function in its export trie or symbol table "
+                                 "(the game strips or renames them): the dump still works, but on the phone the "
+                                 "runtime can't find Unity, so no switch or hook runs (\"Unity runtime not found\")."]
     level = "good"
+    if facts.get("il2cpp_symbols") == "symtab":
+        lines.append("il2cpp_* names are only in the symbol table, not exported: the runtime reads them from "
+                     "there, so the mod's Makefile must list runtime/AMMachSymbols.c (dev.py new does). Check on "
+                     "the phone: the log should say \"API found\". scripts/inspect_il2cpp_symbols.py lists each name.")
     m = facts["markers"]
     if "multiplayer" in m:
         lines.append(f"Multiplayer code ({', '.join(m['multiplayer'])}): informational marker; "
@@ -167,6 +192,9 @@ def report_text(facts, scan=None):
         f"  engine: {facts['engine']}" + (f", metadata v{facts['metadata_version']}" if facts["metadata_version"] else ""),
         f"  decrypted: {'yes' if facts['decrypted'] else 'no' if facts['decrypted'] is False else 'unknown'}",
     ]
+    if facts.get("il2cpp_symbols"):
+        head.append("  il2cpp API: " + {"export": "exported", "symtab": "symbol table only",
+                                        "missing": "not found"}[facts["il2cpp_symbols"]])
     for kind, found in facts["markers"].items():
         head.append(f"  {kind}: {', '.join(found)}")
     return "\n".join(head + [f"verdict: {level.upper()}"] + [f"  - {l}" for l in lines])

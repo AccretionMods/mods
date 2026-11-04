@@ -104,9 +104,10 @@ int main(int argc, char **argv) {
         AMIl2cppApi a = {0};
         am_il2cpp_set_symbol_resolver(fake_resolve, NULL);
         bool ok = am_il2cpp_api_load(&a);
-        printf("resolver_loaded=%d domain=%d corlib=%d optional=%d\n", ok,
+        printf("resolver_loaded=%d domain=%d corlib=%d optional=%d lookup=%d\n", ok,
                a.domain_get == domain_get, a.get_corlib == get_corlib,
-               a.class_get_nested_types == class_get_nested_types);
+               a.class_get_nested_types == class_get_nested_types,
+               am_il2cpp_lookup("il2cpp_get_corlib") == (void *)get_corlib);  // the data layer's path
         return 0;
     }
     if (argc > 1 && strcmp(argv[1], "no-resolver") == 0) {

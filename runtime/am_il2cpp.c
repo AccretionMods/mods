@@ -14,14 +14,14 @@ void am_il2cpp_set_symbol_resolver(AMSymbolResolver resolve, void *context) {
     g_resolver_context = context;
 }
 
-static void *lookup(const char *symbol) {
+void *am_il2cpp_lookup(const char *symbol) {
     void *found = dlsym(RTLD_DEFAULT, symbol);
     if (!found && g_resolver) found = g_resolver(g_resolver_context, symbol);
     return found;
 }
 
 #define LOAD(field, symbol) \
-    do { api->field = lookup(symbol); if (!api->field) return false; } while (0)
+    do { api->field = am_il2cpp_lookup(symbol); if (!api->field) return false; } while (0)
 
 bool am_il2cpp_api_load(AMIl2cppApi *api) {
     LOAD(domain_get, "il2cpp_domain_get");
@@ -32,13 +32,13 @@ bool am_il2cpp_api_load(AMIl2cppApi *api) {
     LOAD(class_get_method_from_name, "il2cpp_class_get_method_from_name");
     LOAD(get_corlib, "il2cpp_get_corlib");
     // optional: without them nested classes are not found
-    api->class_get_nested_types = lookup("il2cpp_class_get_nested_types");
-    api->class_get_name = lookup("il2cpp_class_get_name");
+    api->class_get_nested_types = am_il2cpp_lookup("il2cpp_class_get_nested_types");
+    api->class_get_name = am_il2cpp_lookup("il2cpp_class_get_name");
     // optional: without them AM_HOOK_POINTER swaps only the MethodInfo
-    api->image_get_class_count = lookup("il2cpp_image_get_class_count");
-    api->image_get_class = lookup("il2cpp_image_get_class");
-    api->class_is_subclass_of = lookup("il2cpp_class_is_subclass_of");
-    api->method_get_flags = lookup("il2cpp_method_get_flags");
+    api->image_get_class_count = am_il2cpp_lookup("il2cpp_image_get_class_count");
+    api->image_get_class = am_il2cpp_lookup("il2cpp_image_get_class");
+    api->class_is_subclass_of = am_il2cpp_lookup("il2cpp_class_is_subclass_of");
+    api->method_get_flags = am_il2cpp_lookup("il2cpp_method_get_flags");
     return true;
 }
 

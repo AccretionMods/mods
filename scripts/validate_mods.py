@@ -127,11 +127,12 @@ def tweaks_problems(folder):
     return problems
 
 
-RUNTIME_FILES = ("runtime/am_il2cpp.c", "runtime/AMIl2cpp.m", "runtime/am_hooks_data.c")
+RUNTIME_FILES = ("runtime/am_il2cpp.c", "runtime/AMIl2cpp.m", "runtime/AMMachSymbols.c", "runtime/am_hooks_data.c")
 
 
 def runtime_problems(folder):
-    """A mod with a hooks.json must compile the IL2CPP runtime (runtime/), or its hooks are never installed."""
+    """A mod with a hooks.json must compile the IL2CPP runtime (runtime/), or its hooks are never installed.
+    AMMachSymbols.c is part of it: without it a game that hides its il2cpp_* exports gets no hooks."""
     path = os.path.join(folder, "Makefile")
     if not os.path.isfile(path):
         return []  # a mod built from a ready-made .deb has no Makefile

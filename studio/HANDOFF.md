@@ -74,6 +74,22 @@ chose a local web app in this repo over a desktop app, a Claude panel or an iOS 
   only); the `fetch` job waits for the download in Downloads and files it in intake/. Build & phone tab: "Get the
   newest from the decrypt site". Checked in the page against the live site (paused, captcha shown); no real download yet.
 
+## Runtime: il2cpp_* names from the symbol table (2026-11-03)
+- `am_il2cpp_lookup` is the one ladder for every `il2cpp_*` name: `dlsym`, then `runtime/AMMachSymbols.c` reads
+  `LC_SYMTAB` of UnityFramework (or the app binary when there is no framework) for a build with hidden exports.
+  Hooks (`am_il2cpp_api_load`) and the data layer's pins (`AMIl2cppData.m` `IL2CPP()`) both use it. The
+  reference is weak: a Makefile without `AMMachSymbols.c` links and stays dlsym-only; `validate_mods.py` now
+  requires the file, `dev.py new` lists it, and the local personal mods' Makefiles were updated on this PC.
+- Checks: `tests/mach_symbols_harness.c` (framework and executable shapes, malformed tables; the reader used to
+  segfault on an executable behind `__PAGEZERO`), `tests/test_il2cpp_runtime.py` resolver cases,
+  `scripts/inspect_il2cpp_symbols.py` on a real decrypted IPA (Fallout Shelter 2.7.0: 42/42 exported; the first
+  version reported 0/42 because Darwin names carry a leading underscore). `am report` shows `il2cpp API:
+  exported / symbol table only / not found`; symbol-table-only is "good" with a note, not found is "not supported".
+  Shared Mach-O fixtures: `tests/macho_fixtures.py`.
+- Not verified: the weak import under the device build (the "Mods: runtime probe" workflow compiles it on a PR)
+  and any phone run of a symbol-table-only game. No such game is on this PC; BLEACH Mirrors High strips the names
+  from both tables, so it stays unsupported.
+
 ## Working on Studio: run, test, change safely (2026-10-28)
 - Run: `uv run --no-project --python 3.12 studio/server.py` (port 8765; `.claude/launch.json` "mod-studio"). After a
   code change the header says "Studio update available": Load update restarts it (it watches `studio/*.py|html|js|css`

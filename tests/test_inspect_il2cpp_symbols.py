@@ -1,11 +1,11 @@
 """The IL2CPP symbol inspector classifies export-trie, symtab and undefined symbols.
 
-Fixtures are synthetic 64-bit arm64 Mach-O images (thin, fat, and zipped as an
-.ipa), so the test needs no real IPA.
+Fixtures are synthetic 64-bit Mach-O images (tests/macho_fixtures.py: thin, fat, executable, and zipped as
+an .ipa) whose names carry Darwin's leading underscore, as a real UnityFramework's do.
 """
 
 import json
-import struct
+import os
 import subprocess
 import sys
 import tempfile
@@ -13,84 +13,21 @@ import unittest
 import zipfile
 from pathlib import Path
 
+sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+
+import inspect_il2cpp_symbols as inspector
+import macho_fixtures as fx
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "inspect_il2cpp_symbols.py"
 PY = sys.executable
-
-MH_MAGIC_64 = 0xFEEDFACF
-MH_DYLIB = 6
-LC_SEGMENT_64 = 0x19
-LC_SYMTAB = 0x02
-LC_DYLD_EXPORTS_TRIE = 0x80000033
-N_SECT = 0x0E
-N_EXT = 0x01
-N_UNDF = 0x00
-ARM64 = 0x0100000C
-X86_64 = 0x01000007
+TOTAL = len(inspector.SYMBOLS)
 
 
-def _uleb(value):
-    out = bytearray()
-    while True:
-        byte = value & 0x7F
-        value >>= 7
-        out.append(byte | (0x80 if value else 0))
-        if not value:
-            return bytes(out)
-
-
-def _thin():
-    symoff, nsyms = 0x4100, 3
-    stroff, strsize = 0x4200, 0x200
-    dataoff = 0x4400
-
-    name = b"il2cpp_domain_get"
-    payload = _uleb(0) + _uleb(0x4000)          # flags=0, address
-    child = _uleb(len(payload)) + payload + b"\x00"
-    root_len = 1 + 1 + len(name) + 1 + 1
-    trie = b"\x00\x01" + name + b"\x00" + _uleb(root_len) + child
-
-    strings = b"\x00il2cpp_domain_get\x00il2cpp_class_from_name\x00il2cpp_runtime_invoke\x00"
-    strx = {
-        "il2cpp_domain_get": 1,
-        "il2cpp_class_from_name": 1 + len("il2cpp_domain_get") + 1,
-        "il2cpp_runtime_invoke": 1 + len("il2cpp_domain_get") + 1 + len("il2cpp_class_from_name") + 1,
-    }
-
-    def nlist(key, ntype, value):
-        return struct.pack("<IBBHQ", strx[key], ntype, 1, 0, value)
-
-    data = bytearray(0x8000)
-    data[stroff:stroff + len(strings)] = strings
-    data[symoff:symoff + 48] = b"".join([
-        nlist("il2cpp_domain_get", N_SECT | N_EXT, 0x4000),
-        nlist("il2cpp_class_from_name", N_SECT, 0x4100),
-        nlist("il2cpp_runtime_invoke", N_UNDF | N_EXT, 0),
-    ])
-    data[dataoff:dataoff + len(trie)] = trie
-
-    cmds = bytearray()
-    cmds += struct.pack("<II16sQQQQIIII", LC_SEGMENT_64, 72, b"__TEXT", 0, 0x4000, 0, 0x4000, 5, 5, 0, 0)
-    cmds += struct.pack("<II16sQQQQIIII", LC_SEGMENT_64, 72, b"__LINKEDIT", 0x4000, 0x4000, 0x4000, 0x4000, 1, 1, 0, 0)
-    cmds += struct.pack("<IIIIII", LC_SYMTAB, 24, symoff, nsyms, stroff, strsize)
-    cmds += struct.pack("<IIII", LC_DYLD_EXPORTS_TRIE, 16, dataoff, len(trie))
-    header = struct.pack("<IiiIIIII", MH_MAGIC_64, ARM64, 0, MH_DYLIB, 4, len(cmds), 0, 0)
-    data[0:len(header)] = header
-    data[len(header):len(header) + len(cmds)] = cmds
-    return bytes(data)
-
-
-def _fat(thin):
-    align = 0x1000
-    off_x = align
-    off_a = off_x + ((len(thin) + align - 1) // align) * align
-    out = bytearray(off_a + len(thin))
-    struct.pack_into(">II", out, 0, 0xCAFEBABE, 2)
-    struct.pack_into(">IIIII", out, 8, X86_64, 0, off_x, len(thin), 12)
-    struct.pack_into(">IIIII", out, 28, ARM64, 0, off_a, len(thin), 12)
-    out[off_x:off_x + len(thin)] = thin
-    out[off_a:off_a + len(thin)] = thin
-    return bytes(out)
+def image(**kw):
+    return fx.thin_image(exported=("_il2cpp_domain_get",), defined=("_il2cpp_class_from_name",),
+                         undefined=("_il2cpp_runtime_invoke",), **kw)
 
 
 class Inspector(unittest.TestCase):
@@ -98,9 +35,13 @@ class Inspector(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.dir = Path(self.tmp.name)
-        self.thin = _thin()
+        self.thin = image()
         (self.dir / "UnityFramework").write_bytes(self.thin)
-        (self.dir / "fat.bin").write_bytes(_fat(self.thin))
+        (self.dir / "fat.bin").write_bytes(fx.fat_image([(fx.X86_64, self.thin), (fx.ARM64, self.thin)]))
+        (self.dir / "Game").write_bytes(image(executable=True))
+        framework = self.dir / "UnityFramework.framework"
+        framework.mkdir()
+        (framework / "UnityFramework").write_bytes(self.thin)
         with zipfile.ZipFile(self.dir / "Test.ipa", "w") as archive:
             archive.writestr("Payload/Test.app/Test", b"dummy")
             archive.writestr(
@@ -108,7 +49,7 @@ class Inspector(unittest.TestCase):
             )
 
     def run_tool(self, *args):
-        return subprocess.run([PY, str(SCRIPT), *args], capture_output=True, text=True)
+        return subprocess.run([PY, str(SCRIPT), *args], check=False, capture_output=True, text=True)
 
     def test_classifies_export_symtab_and_import(self):
         result = self.run_tool(str(self.dir / "UnityFramework"))
@@ -116,7 +57,25 @@ class Inspector(unittest.TestCase):
         self.assertIn("export  il2cpp_domain_get", result.stdout)
         self.assertIn("symtab  il2cpp_class_from_name", result.stdout)
         self.assertIn("import  il2cpp_runtime_invoke", result.stdout)
-        self.assertIn("resolved 2/42", result.stdout)
+        self.assertIn(f"resolved 2/{TOTAL}", result.stdout)
+
+    def test_names_match_with_or_without_the_underscore(self):
+        parsed = inspector.parse_thin(self.thin)
+        self.assertEqual(inspector.classify(parsed, "il2cpp_domain_get"), "export")
+        self.assertEqual(inspector.classify(parsed, "_il2cpp_domain_get"), "export")
+        self.assertEqual(inspector.classify(parsed, "_il2cpp_class_from_name"), "symtab")
+        result = self.run_tool(str(self.dir / "UnityFramework"), "--symbol", "_il2cpp_domain_get", "--json")
+        self.assertEqual(json.loads(result.stdout)["rows"], [
+            {"symbol": "il2cpp_domain_get", "status": "export", "required": True}])
+
+    def test_executable_and_framework_folder(self):
+        result = self.run_tool(str(self.dir / "Game"), "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["counts"]["export"], 1)
+        result = self.run_tool(str(self.dir / "UnityFramework.framework"))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("UnityFramework.framework", result.stdout)
+        self.assertIn("symtab  il2cpp_class_from_name", result.stdout)
 
     def test_fat_prefers_arm64(self):
         result = self.run_tool(str(self.dir / "fat.bin"), "--json")
@@ -132,16 +91,24 @@ class Inspector(unittest.TestCase):
     def test_json_counts(self):
         result = self.run_tool(str(self.dir / "UnityFramework"), "--json")
         report = json.loads(result.stdout)
-        self.assertEqual(report["counts"], {"export": 1, "symtab": 1, "import": 1, "missing": 39})
+        self.assertEqual(report["counts"], {"export": 1, "symtab": 1, "import": 1, "missing": TOTAL - 3})
         self.assertIn("il2cpp_get_corlib", report["required_missing"])
 
     def test_require_all_exit_code(self):
         result = self.run_tool(str(self.dir / "UnityFramework"), "--require-all")
         self.assertEqual(result.returncode, 1)
 
-    def test_unknown_file_is_an_error(self):
-        result = self.run_tool(str(self.dir / "does-not-exist.ipa"))
+    def test_bad_inputs_are_errors_not_tracebacks(self):
+        self.assertEqual(self.run_tool(str(self.dir / "does-not-exist.ipa")).returncode, 2)
+        (self.dir / "not.ipa").write_bytes(b"not a zip")
+        result = self.run_tool(str(self.dir / "not.ipa"))
         self.assertEqual(result.returncode, 2)
+        self.assertIn("error:", result.stderr)
+        (self.dir / "empty").mkdir()
+        result = self.run_tool(str(self.dir / "empty"))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("error:", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
 
 
 if __name__ == "__main__":

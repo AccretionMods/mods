@@ -68,6 +68,9 @@ typedef bool (*AMHookFn)(void *target, void *replacement, void **original);
 // the required set still decides whether the API counts as loaded.
 typedef void *(*AMSymbolResolver)(void *context, const char *name);
 void am_il2cpp_set_symbol_resolver(AMSymbolResolver resolve, void *context);
+// One il2cpp_* name through the same ladder the loader uses: dlsym, then the resolver. Every
+// lookup in the runtime goes through here so a symtab-only build works for hooks and pins alike.
+void *am_il2cpp_lookup(const char *symbol);
 
 typedef struct {
     int hooked;

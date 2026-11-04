@@ -13,28 +13,31 @@ import zipfile
 from pathlib import Path
 from unittest import mock
 
+sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "studio"))
 
 import dev
+import macho_fixtures as fx
 import moddability
 
 
-def macho(cryptid):
-    cmd = struct.pack("<IIIIII", 0x2C, 24, 0x4000, 0x1000, cryptid, 0)
-    return struct.pack("<IiiIIIII", 0xFEEDFACF, 0x0100000C, 0, 2, 1, len(cmd), 0, 0) + cmd
-
-
-def ipa(path, unity=True, cryptid=0, metadata=b"", bundle="com.example.game", exports=True):
+def ipa(path, unity=True, cryptid=0, metadata=b"", bundle="com.example.game", symbols="export"):
+    """symbols: where UnityFramework keeps il2cpp_domain_get: "export" (trie + symbol table), "symtab" (symbol
+    table only, as a build with hidden exports), "missing" (stripped; BLEACH Mirrors High 1.0.1), or "app" (an
+    older Unity build without UnityFramework's exports: the app binary exports it instead)."""
+    il2cpp = ("_il2cpp_domain_get", "_il2cpp_init")
     with zipfile.ZipFile(path, "w") as z:
         app = "Payload/Game.app"
         z.writestr(f"{app}/Info.plist", plistlib.dumps({"CFBundleIdentifier": bundle, "CFBundleExecutable": "Game",
                                                          "CFBundleShortVersionString": "1.2", "CFBundleName": "Game"}))
-        z.writestr(f"{app}/Game", macho(cryptid))
+        z.writestr(f"{app}/Game", fx.thin_image(executable=True, cryptid=cryptid,
+                                                 exported=il2cpp if symbols == "app" else ()))
         if unity:
             z.writestr(f"{app}/Frameworks/UnityFramework.framework/Info.plist", b"x")
             z.writestr(f"{app}/Frameworks/UnityFramework.framework/UnityFramework",
-                       macho(0) + (b"_il2cpp_domain_get\0_il2cpp_init\0" if exports else b"_sub_1234\0"))
+                       fx.thin_image(exported=il2cpp if symbols == "export" else (),
+                                     defined=il2cpp if symbols == "symtab" else ("_sub_1234",)))
             z.writestr(f"{app}/Data/Managed/Metadata/global-metadata.dat",
                        struct.pack("<Ii", 0xFAB11BAF, 39) + metadata)
     return path
@@ -64,15 +67,26 @@ class Report(unittest.TestCase):
         self.assertEqual(moddability.verdict(f)[0], "good")
         f = moddability.inspect_ipa(ipa(self.dir / "n.ipa", unity=False))
         self.assertEqual((f["engine"], moddability.verdict(f)[0]), ("native or another engine", "not supported"))
-        f = moddability.inspect_ipa(ipa(self.dir / "s.ipa", exports=False))  # BLEACH Mirrors High 1.0.1
+        f = moddability.inspect_ipa(ipa(self.dir / "s.ipa", symbols="missing"))  # BLEACH Mirrors High 1.0.1
         level, lines = moddability.verdict(f)
-        self.assertEqual((f["il2cpp_exports"], level), (False, "not supported"))
+        self.assertEqual((f["il2cpp_symbols"], level), ("missing", "not supported"))
         self.assertIn("Unity runtime not found", lines[0])
-        self.assertTrue(moddability.inspect_ipa(ipa(self.dir / "x.ipa"))["il2cpp_exports"])
+        self.assertIn("il2cpp API: not found", moddability.report_text(f))
+        self.assertEqual(moddability.inspect_ipa(ipa(self.dir / "x.ipa"))["il2cpp_symbols"], "export")
+        self.assertIsNone(moddability.inspect_ipa(ipa(self.dir / "n.ipa", unity=False))["il2cpp_symbols"])
         f = moddability.inspect_ipa(ipa(self.dir / "e.ipa", cryptid=1))
         level, lines = moddability.verdict(f)
         self.assertEqual(level, "not supported")
         self.assertIn("encrypted", lines[0])
+
+    def test_symbol_table_only_and_app_binary_count_as_supported(self):
+        f = moddability.inspect_ipa(ipa(self.dir / "t.ipa", symbols="symtab"))  # hidden exports, LC_SYMTAB kept
+        level, lines = moddability.verdict(f)
+        self.assertEqual((f["il2cpp_symbols"], level), ("symtab", "good"))
+        self.assertTrue(any("AMMachSymbols.c" in l for l in lines), lines)
+        self.assertIn("il2cpp API: symbol table only", moddability.report_text(f))
+        f = moddability.inspect_ipa(ipa(self.dir / "o.ipa", symbols="app"))  # the app binary exports IL2CPP
+        self.assertEqual((f["il2cpp_symbols"], moddability.verdict(f)[0]), ("export", "good"))
 
     def test_name_is_the_english_one_and_slugs_are_never_empty(self):
         game = ipa(self.dir / "jp.ipa", bundle="jp.co.example.BNEI0455")

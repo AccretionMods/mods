@@ -11,11 +11,14 @@ The runtime resolves every il2cpp_* export through a short ladder:
 Run this on your own builds to see which step each symbol takes. It only reads
 load commands; it never loads or executes the binary. This is the offline test
 bed for the fallback: run it on an IPA whose ground truth you know, then run the
-same IPA through the device build and compare.
+same IPA through the device build and compare. Darwin stores C names with a
+leading underscore (_il2cpp_domain_get); names are compared without it, as the
+runtime does, so --symbol takes either spelling. scripts/moddability.py uses the
+same classification for its verdict.
 
 Usage:
   python3 scripts/inspect_il2cpp_symbols.py path/to/app.ipa
-  python3 scripts/inspect_il2cpp_symbols.py path/to/UnityFramework --json
+  python3 scripts/inspect_il2cpp_symbols.py path/to/UnityFramework.framework --json
   python3 scripts/inspect_il2cpp_symbols.py path/to/app.ipa --require-all
 """
 
@@ -96,9 +99,6 @@ N_EXT = 0x01
 N_UNDF = 0x00
 N_SECT = 0x0E
 
-EXPORT_FLAG_REEXPORT = 0x08
-EXPORT_FLAG_STUB_AND_RESOLVER = 0x10
-
 CPU_NAMES = {
     0x0100000C: "arm64",
     0x0100000D: "arm64_32",
@@ -110,6 +110,11 @@ CPU_NAMES = {
 
 class MachOError(Exception):
     """The file is not a Mach-O image this tool can read."""
+
+
+def plain(name: str) -> str:
+    """A symbol name without Darwin's leading underscore, the spelling the runtime looks up."""
+    return name[1:] if name.startswith("_") else name
 
 
 def _uleb(data: bytes, off: int) -> tuple[int, int]:
@@ -150,12 +155,9 @@ def parse_export_trie(trie: bytes) -> set[str]:
             payload_end = off + size
             if payload_end > len(trie):
                 raise MachOError("export trie terminal out of range")
-            flags, _ = _uleb(trie, off)
-            if flags & EXPORT_FLAG_REEXPORT:
-                pass  # ordinal + import name follow; the name is still exported
-            elif flags & EXPORT_FLAG_STUB_AND_RESOLVER:
-                pass
-            names.add(prefix)
+            # The payload (flags, then address or re-export ordinal) says how the name is
+            # exported; this tool only needs that it is.
+            names.add(plain(prefix))
             off = payload_end
         if off >= len(trie):
             return
@@ -230,6 +232,7 @@ def parse_thin(data: bytes) -> dict:
                 continue
             if not name:
                 continue
+            name = plain(name)
             kind = n_type & N_TYPE
             if kind == N_UNDF:
                 undefined.add(name)
@@ -302,21 +305,39 @@ def binary_from_ipa(path: Path) -> tuple[bytes, str]:
     raise MachOError("no UnityFramework or app executable found in the IPA")
 
 
+def classify(image: dict, symbol: str) -> str:
+    """How the runtime reaches `symbol` in a parsed image: "export" (dlsym), "symtab" (the LC_SYMTAB
+    fallback), "import" (defined elsewhere) or "missing"."""
+    symbol = plain(symbol)
+    if symbol in image["exported"]:
+        return "export"
+    if symbol in image["defined"]:
+        return "symtab"
+    if symbol in image["undefined"]:
+        return "import"
+    return "missing"
+
+
+def read_binary(path: Path) -> tuple[bytes, str]:
+    """The bytes of an .ipa's Unity framework or app, a .framework folder's binary, or a plain file."""
+    if path.suffix.lower() == ".ipa":
+        return binary_from_ipa(path)
+    if path.is_dir():
+        binary = path / path.name.removesuffix(".framework")
+        if not binary.is_file():
+            raise MachOError(f"{path} is a folder without a {binary.name} binary")
+        return binary.read_bytes(), str(binary)
+    return path.read_bytes(), str(path)
+
+
 def inspect(data: bytes, symbols: tuple[str, ...]):
     _cputype, body = choose_slice(data)
     image = parse_thin(body)
     cputype = image["cputype"]
     rows = []
     for symbol in symbols:
-        if symbol in image["exported"]:
-            status = "export"
-        elif symbol in image["defined"]:
-            status = "symtab"
-        elif symbol in image["undefined"]:
-            status = "import"
-        else:
-            status = "missing"
-        rows.append({"symbol": symbol, "status": status, "required": symbol in REQUIRED})
+        symbol = plain(symbol)
+        rows.append({"symbol": symbol, "status": classify(image, symbol), "required": symbol in REQUIRED})
     counts = {k: sum(1 for r in rows if r["status"] == k) for k in ("export", "symtab", "import", "missing")}
     return {
         "arch": CPU_NAMES.get(cputype, f"cputype(0x{cputype:08x})") if cputype else "unknown",
@@ -356,7 +377,7 @@ def print_report(source: str, report: dict) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("path", help="an .ipa, a Mach-O binary, or a .framework")
+    parser.add_argument("path", help="an .ipa, a Mach-O binary, or a .framework folder")
     parser.add_argument("--json", action="store_true", help="machine-readable output")
     parser.add_argument("--require-all", action="store_true", help="exit 1 if a required symbol is missing")
     parser.add_argument("--symbol", action="append", default=None, help="inspect only this symbol (repeatable)")
@@ -369,12 +390,9 @@ def main(argv: list[str] | None = None) -> int:
     symbols = tuple(args.symbol) if args.symbol else SYMBOLS
 
     try:
-        if path.suffix.lower() == ".ipa":
-            data, source = binary_from_ipa(path)
-        else:
-            data, source = path.read_bytes(), str(path)
+        data, source = read_binary(path)
         report = inspect(data, symbols)
-    except MachOError as exc:
+    except (MachOError, zipfile.BadZipFile, struct.error, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 

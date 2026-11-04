@@ -150,6 +150,7 @@ class Runtime(unittest.TestCase):
         self.assertIn("domain=1", out)
         self.assertIn("corlib=1", out)
         self.assertIn("optional=1", out)
+        self.assertIn("lookup=1", out)
 
     def test_api_load_without_resolver_fails(self):
         out = subprocess.run([self.exe, "no-resolver"], check=True, capture_output=True, text=True).stdout

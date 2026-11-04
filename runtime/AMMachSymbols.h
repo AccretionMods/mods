@@ -23,8 +23,10 @@ typedef struct { uint32_t strx; uint8_t type, sect; uint16_t desc; uint64_t valu
 #define AM_MACH_LC_SYMTAB 0x02
 
 // The runtime address of `name` from the image's LC_SYMTAB, or NULL when the name
-// is absent, undefined in this image, or the table is malformed. The image must be
-// mapped at its preferred vmaddrs. `name` may omit Darwin's leading underscore.
+// is absent, undefined in this image, or the table is malformed. `header` is the
+// image as dyld mapped it (a slide is fine: addresses are taken relative to the
+// segment that holds the header, so a framework at 0 and an executable at
+// 0x100000000 behind __PAGEZERO both work). `name` may omit Darwin's leading underscore.
 void *ammach_lookup_symbol(const void *header, size_t header_bytes, const char *name);
 
 #endif

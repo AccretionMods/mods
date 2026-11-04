@@ -62,21 +62,23 @@ static bool readMemory(const void *address, void *out, size_t size) {
     return kr == KERN_SUCCESS && got == size;
 }
 
-// The Unity framework image, found once. A build that hides its il2cpp_* exports still
-// names them in LC_SYMTAB, which AMMachSymbols reads (no dlsym handle needed).
-static const struct mach_header_64 *unityImage(void) {
-    static const struct mach_header_64 *found;
-    static bool scanned;
-    if (scanned) return found;
-    scanned = true;
-    for (uint32_t i = 0; i < _dyld_image_count(); i++) {
+// The image that holds IL2CPP: UnityFramework when the game has one, else the app's own
+// executable (older Unity builds link IL2CPP into it). A build that hides its il2cpp_*
+// exports still names them in LC_SYMTAB, which AMMachSymbols reads (no dlsym handle needed).
+// UnityFramework is kept once found; until then every attempt looks again, so a framework
+// that is mapped after the first try is still picked up.
+static const struct mach_header_64 *il2cppImage(void) {
+    static const struct mach_header_64 *unity;
+    if (unity) return unity;
+    uint32_t count = _dyld_image_count();
+    for (uint32_t i = 0; i < count; i++) {
         const char *name = _dyld_get_image_name(i);
-        if (name && strstr(name, "UnityFramework")) {
-            found = (const struct mach_header_64 *)_dyld_get_image_header(i);
-            break;
+        if (name && strstr(name, "/UnityFramework.framework/")) {
+            unity = (const struct mach_header_64 *)_dyld_get_image_header(i);
+            return unity;
         }
     }
-    return found;
+    return count ? (const struct mach_header_64 *)_dyld_get_image_header(0) : NULL;
 }
 
 // Weak: a mod that does not compile runtime/AMMachSymbols.c keeps the dlsym-only path.
@@ -126,7 +128,7 @@ static void logExit(void) {
 
 static void attempt(int triesLeft) {
     AMIl2cppApi api;
-    const struct mach_header_64 *image = unityImage();
+    const struct mach_header_64 *image = il2cppImage();
     if (image) am_il2cpp_set_symbol_resolver(machoSymbol, (void *)image);
     bool loaded = am_il2cpp_api_load(&api);
     if (triesLeft % 20 == 0) {
