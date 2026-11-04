@@ -32,11 +32,13 @@ void AMIl2cppRegister(const char *name, void *replacement, void **original);
 // Waits for Unity's runtime (up to 60 s), then installs the registered hooks once.
 void AMIl2cppStart(void);
 
-// For a game that hides every il2cpp_* name: instead of AMIl2cppStart, register the replacements with
-// AMIl2cppRegister("Class.Method", ...) and pass the table scripts/table_hooks.py generated for this build.
-// The runtime swaps Il2CppCodeGenModule.methodPointers before IL2CPP initialises its MethodInfos; it needs
-// no il2cpp_* function and touches no executable page.
-void AMIl2cppStartTable(AMTableHookSpec *specs, size_t count, uint64_t registrationRva);
+// For a game that hides every il2cpp_* name. A mod with a hooks.json "table" section gets here through
+// AMIl2cppStart (scripts/embed_hooks.py generates the table). By hand: register the replacements with
+// AMIl2cppRegister("Namespace.Class.Method", ...) and pass the table scripts/table_hooks.py generated for
+// this build, with the registration RVA and the codeGenModules offset it found. The runtime swaps
+// Il2CppCodeGenModule.methodPointers before IL2CPP initialises its MethodInfos; it needs no il2cpp_*
+// function and touches no executable page. The report handler runs right after the table is installed.
+void AMIl2cppStartTable(AMTableHookSpec *specs, size_t count, uint64_t registrationRva, uint32_t modulesOffset);
 
 // True when JIT is on, so the hooks are code hooks that catch every call. A mod can label or hide the
 // switches whose hooks need JIT (hooks.json "needs_jit") when this is false.

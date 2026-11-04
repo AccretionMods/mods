@@ -196,7 +196,7 @@ classes as leads. CI validates every `hooks.json` with `scripts/validate_mods.py
 ```
 
 and list the runtime in the mod's Makefile:
-`<Tweak>_FILES = Tweak.x menu/AMMenu.m runtime/am_il2cpp.c runtime/AMIl2cpp.m runtime/AMMachSymbols.c runtime/am_hooks_data.c`.
+`<Tweak>_FILES = Tweak.x menu/AMMenu.m runtime/am_il2cpp.c runtime/AMIl2cpp.m runtime/AMMachSymbols.c runtime/AMTableHook.c runtime/am_hooks_data.c`.
 
 The runtime waits for Unity to start and finds each method through the game's own `il2cpp_*` functions (class
 by namespace and name, method by name and argument count): `dlsym` first, then UnityFramework's symbol table
@@ -206,6 +206,13 @@ table, missing), and `am report` says the same in one line. A method that is gon
 no replacement, is skipped and logged to the device log (`[AccretionMods] skipped Class.method: ...`);
 the other hooks and the app carry on. This is what `scripts/intake_auto.py` relies on when it only checks
 names. A nested class is named `Outer.Inner`, as in dump.cs (generic classes can't be hooked). `AMIl2cppSetReportHandler` hands the mod the same lines, for example to show them in its menu.
+
+A game that strips the `il2cpp_*` names from both tables gets a third path: a `"table"` section in
+hooks.json (`registration_rva` from Il2CppDumper's output; `am dump` saves it next to the dump). The build then
+resolves each hook, and each pin's method, to its slot in IL2CPP's own method-pointer table
+(`scripts/table_hooks.py`, from dump.cs and the UnityFramework binary) and the runtime swaps that slot before
+IL2CPP starts (`runtime/AMTableHook.c`): no `il2cpp_*` call and no code page touched. A pin on this path needs
+an instance method with no parameters that returns void (an `Update`), and a dump with field offsets.
 
 How it hooks depends on the phone:
 

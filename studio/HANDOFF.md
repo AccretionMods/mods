@@ -91,6 +91,29 @@ chose a local web app in this repo over a desktop app, a Claude panel or an iOS 
   untouched; see the next section). BLEACH Mirrors High and Pokémon TCG Pocket strip both tables and stay
   unsupported.
 
+## Runtime: data-table hooks for games that strip every il2cpp_* name (2026-11-04)
+- hooks.json `"table": {registration_rva, dump, binary, module}` switches a mod to `AMIl2cppStartTable`: the
+  build resolves each hook and pin method to (Il2CppCodeGenModule, methodPointers index) with
+  `scripts/table_hooks.py` and `runtime/AMTableHook.c` swaps the slot from a dyld add-image callback, before
+  IL2CPP builds its MethodInfos. `am dump` writes `il2cpp.json` (`registration_rva`) next to the dump from the
+  dumper's `CodeRegistration :` line; `scripts/build.sh` passes it with `AM_DUMP_DIR` (`am build` sets it). A
+  cached dump made before this has no `il2cpp.json`; `am dump --force` makes one.
+- Review fixes (same day): `runtime/AMTableHook.c` is now in every Makefile and in the validator's
+  `RUNTIME_FILES` (the probe build was red: undefined `_AMTableHookInstall`). The codeGenModules offset is no
+  longer fixed at 120: `table_hooks.detect_layout` tries 120 / 104 / 96 (IL2CPP 29.1+, 27.1 to 29.0, 27.0) and
+  keeps the one whose table reads as `*.dll` assemblies; the generated C carries it as
+  `am_hook_table_modules_offset`. The runtime reads the registration and modules through `vm_read_overwrite` with
+  sanity caps, so a wrong RVA logs `table: no codeGenModules ...` instead of crashing the game. Spec names keep
+  the namespace (`Namespace.Class.Method`, what `AMIl2cppRegister` uses); before, a namespaced hook never got its
+  replacement. Table names are encoded like the hook names (no plain `Class.Method` in the .dylib). Pins:
+  static and const fields are skipped (their dump offset is into static storage) and a pin's method must be a
+  parameterless void instance method, else the build stops with the signature. One pointer map per build
+  instead of a lief parse per hook. `AMIl2cppStartTable` calls the report handler after installing.
+  `tests/test_table_hooks.py` is a unittest module now (the pytest-style file never ran under CI's
+  `unittest discover`).
+- Not verified on a phone: the table path itself (The Wanderer 10.1 keeps `LC_SYMTAB`, so the probe used the
+  symbol-table path). The flat-image fixtures in the tests cover the layouts and the fixup decoding.
+
 ## Runtime: JIT code hooks fault on iOS 27; pointer hooks are the default (2026-11-04)
 - Device test (Apple-ID signed The Wanderer 10.1, symbol-table-only build, StikDebug JIT): no JIT → pointer hooks,
   `ExperienceLevel.Update` counts (1,854+). JIT → `JIT is on: code hooks`; all four probe hooks install through

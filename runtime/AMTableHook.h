@@ -19,8 +19,11 @@ typedef struct {
 } AMTableHookSpec;
 
 // Install the hooks once UnityFramework is mapped. Call from a constructor, before IL2CPP starts.
-// registrationRva is the Il2CppCodeRegistration RVA that Il2CppDumper prints for this build.
-void AMTableHookInstall(AMTableHookSpec *hooks, size_t count, uint64_t registrationRva);
+// registrationRva is the Il2CppCodeRegistration RVA that Il2CppDumper prints for this build; modulesOffset
+// is where codeGenModulesCount sits inside it (120, 104 or 96 by IL2CPP version), as scripts/table_hooks.py
+// detected from the binary. Every read goes through vm_read_overwrite, so a wrong RVA or offset logs a line
+// instead of crashing the game.
+void AMTableHookInstall(AMTableHookSpec *hooks, size_t count, uint64_t registrationRva, uint32_t modulesOffset);
 
 #ifdef __cplusplus
 }

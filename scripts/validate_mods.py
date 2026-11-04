@@ -127,7 +127,7 @@ def tweaks_problems(folder):
     return problems
 
 
-RUNTIME_FILES = ("runtime/am_il2cpp.c", "runtime/AMIl2cpp.m", "runtime/AMMachSymbols.c", "runtime/am_hooks_data.c")
+RUNTIME_FILES = ("runtime/am_il2cpp.c", "runtime/AMIl2cpp.m", "runtime/AMMachSymbols.c", "runtime/AMTableHook.c", "runtime/am_hooks_data.c")
 
 
 def runtime_problems(folder):

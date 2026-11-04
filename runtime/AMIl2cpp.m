@@ -19,6 +19,7 @@ extern void am_hook_specs_reveal(void);  // the names are encoded in the .dylib 
 extern AMTableHookSpec *am_hook_table_specs;
 extern const size_t am_hook_table_count;
 extern const uint64_t am_hook_table_registration;
+extern const uint32_t am_hook_table_modules_offset;
 
 static AMHookReplacement replacements[64];
 static size_t replacement_count = 0;
@@ -212,7 +213,9 @@ void AMIl2cppStart(void) {
     if (started) return;
     if (am_hook_table_count > 0) {
         // hooks.json "table": the names resolved by scripts/table_hooks.py, patched before IL2CPP starts
-        AMIl2cppStartTable(am_hook_table_specs, am_hook_table_count, am_hook_table_registration);
+        am_hook_specs_reveal();  // the table's names are encoded like the hooks' (used in logs)
+        AMIl2cppStartTable(am_hook_table_specs, am_hook_table_count, am_hook_table_registration,
+                           am_hook_table_modules_offset);
         return;
     }
     started = YES;
@@ -220,7 +223,7 @@ void AMIl2cppStart(void) {
     dispatch_async(dispatch_get_main_queue(), ^{ attempt(120); });
 }
 
-void AMIl2cppStartTable(AMTableHookSpec *specs, size_t count, uint64_t registrationRva) {
+void AMIl2cppStartTable(AMTableHookSpec *specs, size_t count, uint64_t registrationRva, uint32_t modulesOffset) {
     if (started) return;
     started = YES;
     atexit(logExit);
@@ -240,5 +243,6 @@ void AMIl2cppStartTable(AMTableHookSpec *specs, size_t count, uint64_t registrat
     snprintf(line, sizeof line, "table hooks: %zu specs, %zu with a replacement", count, matched);
     logLine(line);
     // AMTableHookInstall defers to the dyld image callback, before IL2CPP initialises its MethodInfos.
-    AMTableHookInstall(specs, count, registrationRva);
+    AMTableHookInstall(specs, count, registrationRva, modulesOffset);
+    finish();  // the report handler gets the table lines; without il2cpp_* there is nothing more to wait for
 }
