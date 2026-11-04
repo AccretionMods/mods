@@ -19,6 +19,7 @@ extern void am_hook_specs_reveal(void);  // the names are encoded in the .dylib 
 static AMHookReplacement replacements[64];
 static size_t replacement_count = 0;
 static BOOL started = NO;
+static BOOL codeHooksEnabled = NO;  // pointer hooks by default: code hooks fault on iOS 26+ (see AMIl2cpp.h)
 static NSMutableArray<NSString *> *lines;
 static void (^reportHandler)(NSString *);
 
@@ -33,13 +34,38 @@ static void finish(void) {
     if (reportHandler) reportHandler([lines componentsJoinedByString:@"\n"]);
 }
 
-// Cydia Substrate (cyan injects it); looked up so a missing one skips the hooks instead of failing to load.
+// Cydia Substrate / ElleKit, looked up so a missing one skips the hooks instead of failing to load.
+// ElleKit's EKJITLessHook sets a hardware breakpoint instead of patching a code page: on iOS 26+ a
+// patched page faults (KERN_PROTECTION_FAILURE) when executed, so it is preferred when present. Its
+// original stub only works for a pacibsp prologue; other methods use MSHookFunction.
 static bool substrateHook(void *target, void *replacement, void **original) {
     typedef void (*MSHookFunctionFn)(void *, void *, void **);
+    typedef void (*EKJITLessHookFn)(void *, void *, void **);
+    static EKJITLessHookFn jitless;
     static MSHookFunctionFn hook;
-    if (!hook) hook = (MSHookFunctionFn)dlsym(RTLD_DEFAULT, "MSHookFunction");
-    if (!hook) return false;
+    static bool looked;
+    char line[128];
+    if (!looked) {
+        looked = true;
+        jitless = (EKJITLessHookFn)dlsym(RTLD_DEFAULT, "EKJITLessHook");
+        hook = (MSHookFunctionFn)dlsym(RTLD_DEFAULT, "MSHookFunction");
+    }
+    if (jitless && target && original && *(const uint32_t *)target == 0xD503237F) {  // pacibsp
+        *original = NULL;
+        jitless(target, replacement, original);
+        snprintf(line, sizeof line, "hook %p via EKJITLessHook (original %s)", target,
+                 *original ? "set" : "missing");
+        logLine(line);
+        return *original != NULL;
+    }
+    if (!hook) {
+        snprintf(line, sizeof line, "hook %p: no EKJITLessHook or MSHookFunction", target);
+        logLine(line);
+        return false;
+    }
     hook(target, replacement, original);
+    snprintf(line, sizeof line, "hook %p via MSHookFunction", target);
+    logLine(line);
     return true;
 }
 
@@ -50,10 +76,13 @@ static bool substrateHook(void *target, void *replacement, void **original) {
 int csops(pid_t pid, unsigned int ops, void *useraddr, size_t usersize);
 
 static AMHookMode hookMode(void) {
+    if (!codeHooksEnabled) return AM_HOOK_POINTER;
     uint32_t flags = 0;
     if (csops(getpid(), CS_OPS_STATUS, &flags, sizeof flags) == 0 && (flags & CS_DEBUGGED)) return AM_HOOK_CODE;
     return AM_HOOK_POINTER;
 }
+
+void AMIl2cppSetCodeHooks(BOOL enabled) { codeHooksEnabled = enabled; }
 
 // vm_read_overwrite reports unmapped memory as an error instead of crashing.
 static bool readMemory(const void *address, void *out, size_t size) {

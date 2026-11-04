@@ -4,17 +4,19 @@
 // the game and wait. After about 20 s an alert shows the hook mode (code hooks with JIT, pointer hooks
 // without), each probe hook and how often each was called; Copy puts the text on the clipboard.
 //
-// The three hooks (hooks.json) exist in every Unity game and only count calls, then call the original:
+// The hooks (hooks.json) only count calls, then call the original:
 //   UnityEngine.Object.ToString     virtual: pointer hooks catch it, through every subclass's vtable
 //   Application.get_targetFrameRate static: pointer hooks catch it only through reflection
 //   Time.get_deltaTime              static, called directly by game code: only code hooks (JIT) catch it
+//   ExperienceLevel.Update          a game method Unity calls every frame (The Wanderer); pointer hooks
+//   FoodThirstStats.Update          catch Unity callbacks, so these count without JIT too
 
 #import <UIKit/UIKit.h>
 #import <stdatomic.h>
 
 #import "runtime/AMIl2cpp.h"
 
-static atomic_int toStringCalls, frameRateCalls, deltaTimeCalls;
+static atomic_int toStringCalls, frameRateCalls, deltaTimeCalls, experienceUpdateCalls, foodUpdateCalls;
 
 static void *(*orig_ToString)(void *self, const void *method);
 static void *rep_ToString(void *self, const void *method) {
@@ -34,6 +36,20 @@ static float rep_get_deltaTime(const void *method) {
     return orig_get_deltaTime(method);
 }
 
+// Game methods Unity calls every frame: with pointer hooks these are reached through the
+// class vtable / MethodInfo, so they count without JIT (unlike get_deltaTime).
+static void (*orig_experienceUpdate)(void *self, const void *method);
+static void rep_experienceUpdate(void *self, const void *method) {
+    atomic_fetch_add(&experienceUpdateCalls, 1);
+    orig_experienceUpdate(self, method);
+}
+
+static void (*orig_foodUpdate)(void *self, const void *method);
+static void rep_foodUpdate(void *self, const void *method) {
+    atomic_fetch_add(&foodUpdateCalls, 1);
+    orig_foodUpdate(self, method);
+}
+
 static UIViewController *topController(void) {
     for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
         if (![scene isKindOfClass:UIWindowScene.class]) continue;
@@ -48,8 +64,9 @@ static UIViewController *topController(void) {
 }
 
 static void showReport(NSString *report) {
-    NSString *text = [NSString stringWithFormat:@"%@\n\ncalls: ToString %d, get_targetFrameRate %d, get_deltaTime %d",
-                      report, atomic_load(&toStringCalls), atomic_load(&frameRateCalls), atomic_load(&deltaTimeCalls)];
+    NSString *text = [NSString stringWithFormat:@"%@\n\ncalls: ToString %d, get_targetFrameRate %d, get_deltaTime %d, ExperienceLevel.Update %d, FoodThirstStats.Update %d",
+                      report, atomic_load(&toStringCalls), atomic_load(&frameRateCalls), atomic_load(&deltaTimeCalls),
+                      atomic_load(&experienceUpdateCalls), atomic_load(&foodUpdateCalls)];
     NSLog(@"[AccretionMods] probe: %@", text);
     UIViewController *vc = topController();
     if (!vc) return;
@@ -68,11 +85,26 @@ __attribute__((constructor)) static void probeStart(void) {
     AMIl2cppRegister("UnityEngine.Application.get_targetFrameRate", (void *)rep_get_targetFrameRate,
                      (void **)&orig_get_targetFrameRate);
     AMIl2cppRegister("UnityEngine.Time.get_deltaTime", (void *)rep_get_deltaTime, (void **)&orig_get_deltaTime);
+    AMIl2cppRegister("ExperienceLevel.Update", (void *)rep_experienceUpdate, (void **)&orig_experienceUpdate);
+    AMIl2cppRegister("FoodThirstStats.Update", (void *)rep_foodUpdate, (void **)&orig_foodUpdate);
     AMIl2cppSetReportHandler(^(NSString *report) {
         // give the game time to call the hooked methods before counting
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             showReport(report);
         });
     });
+    // Counts keep arriving after the alert (the game may still be loading when it shows):
+    // every 5 s one log line, so a capture started later still sees them climb.
+    static dispatch_source_t countsTimer;
+    countsTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+    dispatch_source_set_timer(countsTimer, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC),
+                              5 * NSEC_PER_SEC, NSEC_PER_SEC);
+    dispatch_source_set_event_handler(countsTimer, ^{
+        NSLog(@"[AccretionMods] probe counts: ToString %d, targetFrameRate %d, deltaTime %d, ExperienceLevel.Update %d, FoodThirstStats.Update %d",
+              atomic_load(&toStringCalls), atomic_load(&frameRateCalls), atomic_load(&deltaTimeCalls),
+              atomic_load(&experienceUpdateCalls), atomic_load(&foodUpdateCalls));
+    });
+    dispatch_resume(countsTimer);
+    AMIl2cppSetCodeHooks(YES);  // the probe tests the JIT path; mods keep the safe pointer default
     AMIl2cppStart();
 }

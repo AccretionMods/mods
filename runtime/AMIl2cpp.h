@@ -35,6 +35,11 @@ void AMIl2cppStart(void);
 // switches whose hooks need JIT (hooks.json "needs_jit") when this is false.
 BOOL AMIl2cppHasJIT(void);
 
+// Code hooks patch executable pages, which iOS 26+ faults (KERN_PROTECTION_FAILURE) with ElleKit's
+// MSHookFunction; pointer hooks are the default. Call with YES before AMIl2cppStart to opt in (the
+// runtime then prefers ElleKit's hardware-breakpoint EKJITLessHook, which touches no code page).
+void AMIl2cppSetCodeHooks(BOOL enabled);
+
 // The game's own function behind one of our replacements (what the runtime saved in *original), or NULL when
 // pointer is not a registered replacement. AMIl2cppCall uses it so a pin acts on the game, not on our hook.
 void *AMIl2cppOriginalOf(void *pointer);

@@ -3,6 +3,8 @@
   "hooks": [
     {"assembly": "UnityEngine.CoreModule", "namespace": "UnityEngine", "class": "Object", "method": "ToString", "args": 0, "return_type": "string"},
     {"assembly": "UnityEngine.CoreModule", "namespace": "UnityEngine", "class": "Application", "method": "get_targetFrameRate", "args": 0, "return_type": "int"},
-    {"assembly": "UnityEngine.CoreModule", "namespace": "UnityEngine", "class": "Time", "method": "get_deltaTime", "args": 0, "return_type": "float"}
+    {"assembly": "UnityEngine.CoreModule", "namespace": "UnityEngine", "class": "Time", "method": "get_deltaTime", "args": 0, "return_type": "float"},
+    {"assembly": "Assembly-CSharp", "namespace": "", "class": "ExperienceLevel", "method": "Update", "args": 0, "return_type": "void"},
+    {"assembly": "Assembly-CSharp", "namespace": "", "class": "FoodThirstStats", "method": "Update", "args": 0, "return_type": "void"}
   ]
 }

@@ -88,7 +88,8 @@ class Probe(unittest.TestCase):
         with open(os.path.join(ROOT, "runtime", "probe", "Probe.m")) as f:
             source = f.read()
         for h in hooks:
-            self.assertIn(f'AMIl2cppRegister("{h["namespace"]}.{h["class"]}.{h["method"]}"', source)
+            prefix = f'{h["namespace"]}.' if h["namespace"] else ""
+            self.assertIn(f'AMIl2cppRegister("{prefix}{h["class"]}.{h["method"]}"', source)
 
 
 class MakefileCheck(unittest.TestCase):
