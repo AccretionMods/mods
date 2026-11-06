@@ -230,3 +230,30 @@ chose a local web app in this repo over a desktop app, a Claude panel or an iOS 
 ## Open
 - Phone-side use (`--host 0.0.0.0`): no login; decide whether a token is wanted before using it off the PC.
 - Nice to have: live log tail as a dedicated view, edit tweaks.json in place, drag to reorder the menu.
+
+## 2026-11-06: mod rebuilds on newer bases, plain app version
+- New mod.json key `keep_app_version: true` (scripts/local_ipa.sh, validated in scripts/validate_mods.py, personal
+  mods only): the built .ipa keeps the game's own CFBundleShortVersionString instead of `<app>-mod<mod version>`.
+  The build file name keeps the -mod tag (dev.py's newest-build lookup relies on it). Set on bleach-plus,
+  mirrors-high-plus and last-day-on-earth-survival-plus. PR #97, merged (checks green).
+- Mirrors High+ 1.0.2 on base 1.0.3 (store-current): app reports 1.0.3, installed. The 1.0.1-mod1.0.1 build files
+  were deleted from builds/ by mistake (misread request); superseded, nothing current lost.
+- Bleach+ 1.0.3 on base 18.1.12 (store-current): app reports 18.1.12, installed. Pin `accessoryATK` fixed for
+  18.1.12: the game inlined `BaseCharacterModel.get_AccessoryAtk()` (RVA -1), so the pin is `when: always`
+  (no read before the write). dev.py's pin check is what caught it.
+- Last Day On Earth+ 1.0.4 on base 1.53.0 (store-current): app reports 1.53.0, installed. First fetch failed: two
+  fetches ran in parallel and the decrypt site allows one at a time, so it fell to the Telegram bot and got nothing in
+  30 min; the retry alone worked. dev.py's pin check then rejected 11 pins. 9 were Auto-build artifacts that never
+  worked: 8 routed through `InputController._inputSystemSubscription` (an IDisposable subscription handle) and
+  narrowed it to game models, valid only while BaseCoreController implemented IDisposable (1.53.0 dropped it);
+  `noDeathAnimationDelay` narrowed a UI player-bar IController to a world-entity controller. All 9 removed with
+  `dev.py remove` (snapshots taken): trophyRoadPremiumUnlocked, trophyRoadPremiumRewardsClaimed,
+  unlockTrophyRoadSections, superVIPStatus, vipStatus, dogEnergyBoost, encounterStageAlwaysComplete,
+  moreConfigLoadAttempts, noDeathAnimationDelay. The 2 kitchen pins (instantCooking, instantKitchenCooking) were real:
+  KitchenStructureController lost its `_kitchenWorkbench` field; re-routed via `_workbench` (IWorkbench) narrowed to
+  KitchenWorkbench (fields `_cookingEndTs` 0xE8, `_cookingTime` 0xF0 unchanged). 196 tweaks remain.
+- Follow-up worth doing: dump_scan's path finder should refuse to narrow through System interfaces (IDisposable) and
+  other semantic-free interfaces; that is how the 9 bogus paths were generated.
+- Tests: `python -m unittest discover -s tests` on Windows died mid-run with no summary (a test killed the process
+  tree); the WSL run (CI's command) passed: 434 tests OK, 4 skipped. Use WSL for the suite.
+- Lesson: run `dev.py fetch` one at a time. Piping dev.py through `tail` hides its exit code; capture to a file.
