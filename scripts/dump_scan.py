@@ -230,6 +230,16 @@ LIBRARY = re.compile(r"^(Unity|UnityEngine|System|Mono|mscorlib|Microsoft|netsta
                      r"ICSharpCode|Assembly-CSharp-firstpass|Mirror|FishNet|Fusion|Steamworks|Dreamteck|ProCamera|"
                      r"Il2Cpp|__Generated|BestHTTP|VoxelBusters|AdinmoPlugin|IngameDebugConsole|Gametoolkit|glTFast|"
                      r"SwrveUnity)", re.IGNORECASE)
+
+
+def _library_type(cls):
+    """True for a class from an engine or platform assembly (mscorlib:System.IDisposable, UnityEngine...:Component).
+    Such a type says nothing about which game object a reference holds, so a path never narrows through it: a
+    subscription handle typed IDisposable is not the TrophyRoad model that happens to implement IDisposable."""
+    assembly = cls.partition(":")[0] if ":" in cls else ""
+    return bool(assembly) and LIBRARY.match(assembly) is not None
+
+
 # a struct that holds a position, size, curve or range rather than a stat: its values rank lower
 STRUCT_SHAPE = re.compile(r"vector|int[23]$|point|rect|coord|bounds|size|curve|colou?r|quaternion|range", re.IGNORECASE)
 # store-bought packages that games compile into their own assemblies (or ship as their own): animation, tweening,
@@ -563,7 +573,8 @@ def object_paths(classes, max_hops=8):
     """One deterministic shortest route per reference class, from singleton, static field or Unity object.
 
     Steps name a field/getter, the resulting class and optional collection operation. A class-only step
-    narrows a base/interface to a concrete subclass; the runtime must check each object's actual type.
+    narrows a base/interface to a concrete subclass; the runtime must check each object's actual type. The
+    base must be the game's own: an engine or platform type (IDisposable, Component) is never narrowed.
     """
     paths, queue = {}, deque()
     resolve = _type_resolver(classes)
@@ -606,7 +617,7 @@ def object_paths(classes, max_hops=8):
             continue
         for base in info.get("parents", [info.get("base", "")]):
             parent = resolve(base, cls)
-            if parent:
+            if parent and not _library_type(parent):  # every IDisposable is not a route to every disposable class
                 children.setdefault(parent, []).append(cls)
     while queue:
         cls = queue.popleft()
@@ -793,6 +804,9 @@ def path_errors(classes, obj, root_class, path):
         if not selectors:
             if "each" in step or not derives(target, cls):
                 return [f"Path step {i} cannot narrow {cls} to {target}"]
+            if _library_type(cls):
+                return [f"Path step {i} cannot narrow through {cls}: an engine or platform type says nothing about "
+                        f"the object it holds; use a field or getter typed as {target}"]
         elif len(selectors) != 1 or not isinstance(step[selectors[0]], str):
             return [f"Path step {i} needs exactly one field or getter"]
         else:

@@ -353,6 +353,30 @@ class ObjectGraph(unittest.TestCase):
         self.assertTrue(dump_scan.path_errors(self.classes, "HotFix:HotFix.BattleGame.missing", bullet["root_class"], []))
         self.assertTrue(dump_scan.path_errors(self.classes, bullet["object"], "HotFixBattle:HotFixBattle.Player", []))
 
+    def test_paths_never_narrow_through_an_engine_or_platform_type(self):
+        # a field typed IDisposable (a subscription handle) is not a route to every class that implements IDisposable
+        blank = {"base": "", "parents": [], "statics": [], "fields": {}, "props": {}, "getters": set(), "holds": set(),
+                 "references": {}, "object_fields": {}, "object_getters": {}}
+        self.classes["mscorlib:System.IDisposable"] = dict(blank, type_kind="interface", outside=True)
+        self.classes["HotFixBattle:HotFixBattle.Secret"] = dict(blank, type_kind="class", base="IDisposable",
+                                                                parents=["IDisposable"])
+        self.classes["HotFix:HotFix.WorldBattle"]["object_fields"]["_sub"] = "IDisposable"
+        paths = dump_scan.object_paths(self.classes)
+        self.assertNotIn("HotFixBattle:HotFixBattle.Secret", paths)
+        errors = dump_scan.path_errors(self.classes, "HotFix:HotFix.BattleGame._world", "HotFix:HotFix.WorldBattle", [
+            {"field": "_sub", "class": "mscorlib:System.IDisposable"}, {"class": "HotFixBattle:HotFixBattle.Secret"}])
+        self.assertEqual(len(errors), 1)
+        self.assertIn("cannot narrow through mscorlib:System.IDisposable", errors[0])
+        # the game's own interface still narrows: IEntityBase -> EntityBullet, the bullet route
+        bullet = paths["HotFixBattle:HotFixBattle.EntityBullet"]
+        self.assertEqual(bullet["path"][-1], {"class": "HotFixBattle:HotFixBattle.EntityBullet"})
+        self.assertEqual(dump_scan.path_errors(self.classes, bullet["object"], bullet["root_class"], bullet["path"]), [])
+        for cls, library in [("mscorlib:System.IDisposable", True), ("UnityEngine.CoreModule:UnityEngine.Component", True),
+                             ("Client:Assets.Core.Any.BaseCoreController", False), ("HotFixBattle:HotFixBattle.Player", False),
+                             ("SkillsManager", False)]:
+            with self.subTest(cls=cls):
+                self.assertEqual(dump_scan._library_type(cls), library)
+
     def test_automatic_paths_skip_transient_work_lists_but_explicit_paths_validate(self):
         world = self.classes["HotFix:HotFix.WorldBattle"]
         world["object_fields"].update({"_tmpBullets": "List<HotFixBattle.EntityBullet>",
