@@ -11,6 +11,8 @@
 #
 # The .ipa's version (CFBundleShortVersionString) becomes "<app version>-mod<mod version>", like
 # 4.0.0-mod1.1.0: the version it's published under, so installed copies match the store.
+# mod.json "keep_app_version": true leaves the app's own version string in place instead (personal mods
+# only: a published copy needs the -mod version to match the store). The file name keeps the -mod tag.
 set -euo pipefail
 
 sign=0
@@ -110,6 +112,9 @@ print(info.get("CFBundleShortVersionString") or "0")
 PY
 )"
 published="${version}-mod$(field version)"
+# the version written into the app: the published one, or the app's own with keep_app_version
+visible="$published"
+case "$(field keep_app_version)" in True|true|1) visible="$version" ;; esac
 flags=(-u -w)
 case "$(field remove_extensions)" in all) flags+=(-e) ;; *) flags+=(-g) ;; esac
 
@@ -119,8 +124,8 @@ echo "==> Injecting into $out"
 "$HOME/.cyan/bin/cyan" -i "$work/base.ipa" -o "$out" -f "$dylib" \
     -n "$(field display_name)" -b "${AM_INSTALL_BUNDLE:-$(field bundle_id)}" "${flags[@]}" --overwrite
 
-# The visible version becomes the published one; the build number (CFBundleVersion) stays as is.
-python3 - "$out" "$published" <<'PY'
+# The visible version becomes the published one (or stays the app's own); the build number (CFBundleVersion) stays as is.
+python3 - "$out" "$visible" <<'PY'
 import os, plistlib, re, shutil, sys, tempfile, zipfile
 path, version = sys.argv[1], sys.argv[2]
 tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".ipa", dir=os.path.dirname(os.path.abspath(path)))
@@ -135,7 +140,7 @@ with zipfile.ZipFile(path) as src, zipfile.ZipFile(tmp.name, "w", zipfile.ZIP_DE
         dst.writestr(item, data)
 shutil.move(tmp.name, path)
 PY
-echo "==> Version: $published"
+echo "==> Version: $published (in the app: $visible)"
 echo "==> Built: $out (unsigned)"
 # for the Mods: build a mod workflow
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
