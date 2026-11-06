@@ -60,6 +60,11 @@ def check(mod, meta):
         problems.append("remove_extensions must be encrypted or all")
     if "branding" in meta and not isinstance(meta["branding"], bool):
         problems.append("branding must be true or false (false: the menu has no Accretion link, mark or wording)")
+    if "keep_app_version" in meta:
+        if not isinstance(meta["keep_app_version"], bool):
+            problems.append("keep_app_version must be true or false (true: the app keeps its own version string)")
+        elif meta["keep_app_version"] and meta.get("personal") is not True:
+            problems.append("keep_app_version is for personal mods: a published copy needs the -mod version to match the store")
     if meta.get("icon_url") and not https(meta["icon_url"]):
         problems.append("icon_url must be an https link")
     base = meta.get("base") or {}
