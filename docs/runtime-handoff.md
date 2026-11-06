@@ -364,3 +364,55 @@ Useful artifact paths:
   signatures; root dylibs with entitlements are rejected by AMFI.
 - The phone must be unlocked and awake; the lock screen silently defeats `dvt launch`.
 - Reinstalling is the only reliable way to force a fresh process; `dvt kill` does not work on this device.
+
+---
+
+## 13. Into the Dead 2: menu-dead gate and the save-carry plan (2026-11-05)
+
+Symptom: the modded ITD (`com.pikpok.dr2.iosstore`, re-signed) runs, clears the splash, reaches the
+menu, but no tap registers; a fresh tutorial run plays until its first chest and then stalls. Thread
+samples show the main thread in a normal run loop (not hung). The state persists across kill/reopen, so
+it is saved, not a transient hang.
+
+Key change this session: the detection bypass is **off by default** — `#include "AMDetectBypass.c"` is
+commented out in `runtime/AMIl2cpp.m` (uncommitted). With it off, ITD clears the splash and reaches the
+menu; with it on, ITD exits at the splash. Single-player mods don't need the bypass, so leaving it off is
+correct for ITD. Re-enable per-mod only after a device test.
+
+Diagnosis (corrected by the owner's A/B against the legit app): the blocker is the tutorial **loot
+grant**, not an abstract "store service ready" flag. In the legit App Store app the first chest grants
+the tutorial shotgun and proceeds, and there is no "pay 999 gold to search again" prompt. In the modded
+copy the shotgun is never granted and it drops onto the paid re-search screen (999 = the cost to search
+again, not a reward) and stalls. The chest contents are decided by PikPok's economy backend
+(`anx-relay-prod.pikpok.com`); the re-signed session isn't getting the grant. The mod itself has no path
+into that exchange, so this is the re-sign, not the mod code. Clean isolation test (not yet run): a plain
+re-signed copy, no mod, run fresh through the tutorial — if it also fails to grant the shotgun, it's the
+re-sign, full stop.
+
+Not server-side circumvention: the owner's goal is a cleanly re-signed app that enters normally, not
+beating validation. Save-carry respects that — it uses a save the legit app earned legitimately.
+
+### Save-carry plan (durable fix)
+The legit App Store ITD (confirmed the only ITD installed: v1.88.0, source app_store) is being played
+past the tutorial to serve as the save source. Both copies share the bundle ID, so installing the modded
+copy wipes the on-device container — hence export first. Sequence:
+
+1. `app_data_info` — confirm the past-tutorial save is captured.
+2. `backup_create` — fresh backup so it holds current progress.
+3. `app_data_export` com.pikpok.dr2.iosstore — save to the PC.
+4. Reinstall the modded build (replaces the legit app, wipes its data).
+5. `app_data_restore` into the modded build, app killed first (`confirm=true`).
+
+**Blocked on:** the Accretion Link **Personal data** permission is off (gates app_data_info/export/
+restore); the owner must turn it on in Accretion Link > Remote access > Personal data. Nothing leaves the
+PC. Open risk after restore: later server reward grants (dailies, crate opens) may still fail on the
+re-signed session; the core run-levels loop should not depend on them.
+
+### Update (2026-11-05, later): save-carry paused
+Personal data permission resolved — the Accretion Link server had been closed; relaunching it
+(Start Menu > Accretion > Accretion Link) and reconnecting the `accretion-link` MCP fixed the "off"
+error. But `app_data_export` reads an app's data out of a **whole-device backup**, and the existing
+backup predated ITD, so a fresh backup was needed. That's a ~203 GB device backup (incremental); the
+owner declined it as too much effort for a test whose payoff is uncertain. Backup was halted at 22%
+(a harmless partial sits under `~/ios-device/<udid>/backup/`). No app-data-only backup path is exposed
+by this toolset. Save-carry is parked unless the owner later wants the full backup.
