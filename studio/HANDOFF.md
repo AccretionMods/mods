@@ -252,8 +252,9 @@ chose a local web app in this repo over a desktop app, a Claude panel or an iOS 
   moreConfigLoadAttempts, noDeathAnimationDelay. The 2 kitchen pins (instantCooking, instantKitchenCooking) were real:
   KitchenStructureController lost its `_kitchenWorkbench` field; re-routed via `_workbench` (IWorkbench) narrowed to
   KitchenWorkbench (fields `_cookingEndTs` 0xE8, `_cookingTime` 0xF0 unchanged). 196 tweaks remain.
-- Follow-up worth doing: dump_scan's path finder should refuse to narrow through System interfaces (IDisposable) and
-  other semantic-free interfaces; that is how the 9 bogus paths were generated.
+- Done the same day (PR #99): dump_scan's path finder and validator no longer narrow through engine or platform
+  types (`_library_type`: the class key's assembly against `LIBRARY`), which is how the 9 bogus paths were generated.
+  Game interfaces (IEntityBase, IWorkbench) still narrow; `tests/test_dump_scan.py` covers both.
 - Tests: `python -m unittest discover -s tests` on Windows died mid-run with no summary (a test killed the process
   tree); the WSL run (CI's command) passed: 434 tests OK, 4 skipped. Use WSL for the suite.
 - Lesson: run `dev.py fetch` one at a time. Piping dev.py through `tail` hides its exit code; capture to a file.
